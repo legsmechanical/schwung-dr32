@@ -3,6 +3,10 @@
 #include <math.h>
 #include <string.h>
 
+// M_PI is not in ISO C11; the cross toolchain builds with -std=c11 and would
+// not see glibc's extension.
+#define DR32_PI 3.14159265358979323846f
+
 // A choke is a fast fade, not a hard stop — a hard stop clicks.
 #define CHOKE_SECONDS 0.003f
 // Envelope floor below which the voice is considered finished.
@@ -38,9 +42,12 @@ static void filter_coeffs(dr32_voice *v, float cutoff, float reso, float peak_ga
     float fc = cutoff;
     if (fc < 20.0f) fc = 20.0f;
     if (fc > DR32_SR * 0.49f) fc = DR32_SR * 0.49f;
-    v->g = tanf((float)M_PI * fc / DR32_SR);
+
+    v->g = tanf(DR32_PI * fc / DR32_SR);
     // resonance 0..1 -> damping. k = 2 is fully damped, k -> 0 self-oscillates.
-    float r = reso; if (r < 0.0f) r = 0.0f; if (r > 0.98f) r = 0.98f;
+    float r = reso;
+    if (r < 0.0f) r = 0.0f;
+    if (r > 0.98f) r = 0.98f;
     v->k = 2.0f - 1.98f * r;
     v->a_peak = peak_gain;
 }
@@ -85,8 +92,12 @@ void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
     v->sample_frames = frames;
 
     // Playback region. PlaybackStart/Length are fractions of the whole sample.
-    double s = p->play_start; if (s < 0) s = 0; if (s > 1) s = 1;
-    double l = p->play_length; if (l < 0) l = 0; if (l > 1) l = 1;
+    double s = p->play_start;
+    if (s < 0.0) s = 0.0;
+    if (s > 1.0) s = 1.0;
+    double l = p->play_length;
+    if (l < 0.0) l = 0.0;
+    if (l > 1.0) l = 1.0;
     size_t start = (size_t)(s * (double)frames);
     size_t end = start + (size_t)(l * (double)frames);
     if (end > frames) end = frames;
@@ -103,7 +114,8 @@ void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
     // Velocity -> volume. vel_to_volume is the depth of velocity's control:
     // at 0 the pad is velocity-independent, at 1 it tracks velocity fully.
     float vel = (float)velocity / 127.0f;
-    if (vel < 0.0f) vel = 0.0f; if (vel > 1.0f) vel = 1.0f;
+    if (vel < 0.0f) vel = 0.0f;
+    if (vel > 1.0f) vel = 1.0f;
     float vscale = 1.0f - p->vel_to_volume + p->vel_to_volume * vel;
 
     v->amp = p->gain * db_to_lin(p->volume_db) * vscale;
@@ -113,7 +125,9 @@ void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
     // Equal-power would put every centred pad 3 dB below the native rack.
     // ⚠ The exact taper away from centre is assumed linear and unverified;
     // worth a device null-test when the FX phase adds a comparison rig.
-    float pan = p->pan; if (pan < -1) pan = -1; if (pan > 1) pan = 1;
+    float pan = p->pan;
+    if (pan < -1.0f) pan = -1.0f;
+    if (pan > 1.0f) pan = 1.0f;
     v->panl = (pan > 0.0f) ? (1.0f - pan) : 1.0f;
     v->panr = (pan < 0.0f) ? (1.0f + pan) : 1.0f;
 
