@@ -14,8 +14,23 @@
 # EnginePerfTool while the normal Move stack is live has both fighting over the
 # audio device.
 #
-# Until that is understood, prefer STOP_STACK=1, which stops the launcher for
-# the duration of the capture and restarts it afterwards.
+# ⚠ KNOWN DEFECT IN THIS SCRIPT (2026-07-26, raised by Josh): the STOP_STACK
+# teardown below is NOT canonical. It stops the launcher only, which is exactly
+# the partial-stop anti-pattern `scripts/restart_move.sh` exists to prevent —
+# it leaves shadow_ui / schwung / display-server / schwung-manager running, the
+# /dev/shm rings stale, and /dev/ablspi0.0 held, and THEN starts a second
+# engine on top of all that.
+#
+# The restarts here ARE canonical (they call scripts/restart_move.sh).
+#
+# What the evidence actually says: both lockups happened BEFORE any stop
+# existed — captures against a fully live stack. The batch that used the
+# partial stop survived. So "capture while the stack is live" is still the
+# better-supported theory, but the partial stop should be replaced regardless.
+#
+# PROPOSED FIX (needs Josh's OK — shared tooling): add `MOVE_ACTION=stop` to
+# scripts/restart_move.sh so the same clean teardown can run without starting
+# again, and call that here instead of the launcher stop.
 #
 # Usage: STOP_STACK=1 tools/oracle.sh <song.abl> <out.wav> [frames]
 set -euo pipefail
