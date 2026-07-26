@@ -29,7 +29,27 @@
           ".json"
         ],
         "default": "",
-        "live_preview": true
+        "live_preview": true,
+        "browser_hooks": {
+          "on_open": [
+            {
+              "key": "kit_mark",
+              "value": "1"
+            }
+          ],
+          "on_cancel": [
+            {
+              "key": "kit_restore",
+              "value": "1"
+            }
+          ],
+          "on_commit": [
+            {
+              "key": "kit_mark",
+              "value": "0"
+            }
+          ]
+        }
       },
       {
         "key": "master",
@@ -56,7 +76,27 @@
                 ".ablpreset",
                 ".json"
               ],
-              "live_preview": true
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "kit_mark",
+                    "value": "1"
+                  }
+                ],
+                "on_cancel": [
+                  {
+                    "key": "kit_restore",
+                    "value": "1"
+                  }
+                ],
+                "on_commit": [
+                  {
+                    "key": "kit_mark",
+                    "value": "0"
+                  }
+                ]
+              }
             },
             {
               "level": "pads",

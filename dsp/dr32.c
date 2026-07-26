@@ -1,5 +1,6 @@
-/* clock_gettime/CLOCK_MONOTONIC are POSIX, not ISO C11, and we build -std=c11. */
-#define _POSIX_C_SOURCE 199309L
+/* clock_gettime/CLOCK_MONOTONIC are POSIX, not ISO C11, and we build -std=c11.
+ * Use 200809L, not 199309L: the older level hides C99 functions like snprintf. */
+#define _POSIX_C_SOURCE 200809L
 
 // dr32.c — Schwung plugin entry (API v2) for DR32.
 //
@@ -36,6 +37,12 @@ typedef struct {
     // extraction — out of the picture.
     char    *ui_hierarchy;
     int      ui_hierarchy_len;
+    // Snapshot taken when the kit browser opens, so cancelling can put the
+    // previous kit back. The host's own live_preview restore writes
+    // `previewOriginalValue || ""`, and for this param that value is routinely
+    // empty — an empty path cannot be loaded, so the previewed kit used to
+    // stick after backing out.
+    char     kit_saved[DR32_MAX_PATH];
 } dr32_instance;
 
 /** Pull the ui_hierarchy object out of our own module.json, so the UI contract
@@ -139,6 +146,11 @@ static void set_param(void *instance, const char *key, const char *val) {
         // Load HERE, on the host thread. This used to raise a dirty flag for
         // ui.js to notice, but that file never runs in a chain slot, so the
         // kit was never actually loaded and the module was silent.
+        if (!val[0]) {
+            // An empty path is the host's cancel-restore when it has no original
+            // value to give back. Not an error, and not a reason to unload.
+            return;
+        }
         dr32_preset_report rep;
         // Timed because the kit browser previews live: every cursor move parses
         // a preset and loads up to 32 samples, so this cost is felt directly
@@ -150,6 +162,10 @@ static void set_param(void *instance, const char *key, const char *val) {
         double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
         char msg[360];
         if (ok) {
+            // Clear any previous error. Without this a single failed load stuck
+            // a "could not load kit" warning on the synth forever, including on
+            // every later re-entry into the module.
+            in->err[0] = '\0';
             snprintf(msg, sizeof(msg),
                      "dr32: kit '%s' loaded in %.1f ms — %d pads, %d samples, %d empty, %d unresolved, %d failed",
                      val, ms, rep.pads, rep.loaded, rep.empty, rep.unresolved, rep.failed);
@@ -162,6 +178,28 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "kit_dirty")) { in->kit_dirty = atoi(val); return; }
+
+    if (!strcmp(key, "kit_mark")) {
+        // Browser opened: remember what was loaded. Cleared on commit.
+        snprintf(in->kit_saved, sizeof(in->kit_saved), "%s",
+                 atoi(val) ? in->kit_path : "");
+        return;
+    }
+    if (!strcmp(key, "kit_restore")) {
+        if (in->kit_saved[0] && strcmp(in->kit_saved, in->kit_path) != 0) {
+            dr32_preset_report rep;
+            char saved[DR32_MAX_PATH];
+            snprintf(saved, sizeof(saved), "%s", in->kit_saved);
+            if (dr32_preset_load(&in->kit, saved, &rep)) {
+                snprintf(in->kit_path, sizeof(in->kit_path), "%s", saved);
+                char msg[360];
+                snprintf(msg, sizeof(msg), "dr32: kit preview cancelled — restored '%s'", saved);
+                logmsg(msg);
+            }
+        }
+        in->kit_saved[0] = '\0';
+        return;
+    }
 
     dr32_apply_param(&in->kit, key, val);
 }
