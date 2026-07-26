@@ -21,17 +21,32 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
         --external:'/data/UserData/schwung/*' --log-level=warning
     rm -f src/ablpreset.mjs
 
-    echo "==> building dsp in Docker (move-anything-builder)"
+    echo "==> building dsp in Docker"
     # Reuse the existing toolchain image if present. Rebuilding it on an arm64
     # Mac fails (the gcc-aarch64-linux-gnu package resolves differently for an
     # arm64 host), and the image we already have is the one that built the other
     # modules — so only build it when it is genuinely missing.
-    if ! docker image inspect move-anything-builder >/dev/null 2>&1; then
+    # Toolchain image. `davebox-builder` is a native arm64 Debian image that
+    # already carries aarch64-linux-gnu-gcc, so it needs no emulation; prefer
+    # it and fall back to building our own only if it is gone.
+    #
+    # ⚠ Do NOT rebuild scripts/Dockerfile on an arm64 Mac: the cross packages
+    # are x86_64-only, and building it emulated fails with apt GPG "invalid
+    # signature" errors under qemu. Docker Desktop prunes images periodically,
+    # so this fallback order matters.
+    BUILDER=""
+    for img in davebox-builder schwung-builder move-anything-builder; do
+        if docker image inspect "$img" >/dev/null 2>&1; then BUILDER="$img"; break; fi
+    done
+    if [ -z "$BUILDER" ]; then
+        echo "==> no toolchain image found; building one" >&2
         docker build -q -t move-anything-builder -f scripts/Dockerfile scripts >/dev/null
+        BUILDER=move-anything-builder
     fi
+    echo "==> using $BUILDER" 
     docker run --rm -v "$HERE":/work -w /work \
         -e CROSS_PREFIX=aarch64-linux-gnu- \
-        move-anything-builder bash scripts/build.sh
+        "$BUILDER" bash scripts/build.sh
     exit 0
 fi
 
@@ -42,7 +57,8 @@ echo "==> compiling with $CC"
 mkdir -p build
 $CC -O2 -shared -fPIC -march=armv8-a -mtune=cortex-a72 \
     -DNDEBUG -std=c11 -Wall -Wextra \
-    dsp/dr32.c dsp/dr32_kit.c dsp/dr32_voice.c dsp/wav.c \
+    dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
+    dsp/dr32_effects.c dsp/wav.c \
     -Idsp \
     -o build/dsp.so -lm
 

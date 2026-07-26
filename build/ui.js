@@ -8,6 +8,17 @@ var URI_ROOTS = [
   ["ableton:/user-library", USER_LIBRARY],
   ["ableton:/packs/abl-core-library", CORE_LIBRARY]
 ];
+var EFFECT_PARAMS = {
+  "Stretch": ["Effect_StretchFactor", "Effect_StretchGrainSize"],
+  "Loop": ["Effect_LoopOffset", "Effect_LoopLength"],
+  "Pitch Env": ["Effect_PitchEnvelopeAmount", "Effect_PitchEnvelopeDecay"],
+  "Punch": ["Effect_PunchAmount", "Effect_PunchTime"],
+  "8-bit": ["Effect_EightBitResamplingRate", "Effect_EightBitFilterDecay"],
+  "FM": ["Effect_FmAmount", "Effect_FmFrequency"],
+  "Ring Mod": ["Effect_RingModAmount", "Effect_RingModFrequency"],
+  "Sub Osc": ["Effect_SubOscAmount", "Effect_SubOscFrequency"],
+  "Noise": ["Effect_NoiseAmount", "Effect_NoiseFrequency"]
+};
 var FILTER_TYPES = {
   // `engine` is the native filter_type index used in the 320-kernel
   // specialization (DRUM_FILTER_RECON.md): 0 LP12, 1 LP24, 2 HP24, 3 Peak.
@@ -215,6 +226,11 @@ function padWrites(i, pad) {
   put("mod_target", p.Voice_ModulationTarget ?? "Filter");
   put("mod_amount", p.Voice_ModulationAmount ?? 0);
   put("pitch_env", p.Voice_PitchToEnvelopeModulation ? 1 : 0);
+  const fxType = p.Effect_On === false ? "Standard" : p.Effect_Type ?? "Standard";
+  put("fx_type", fxType);
+  const keys = EFFECT_PARAMS[fxType] || [];
+  put("fx_p1", keys[0] ? p[keys[0]] ?? 0 : 0);
+  put("fx_p2", keys[1] ? p[keys[1]] ?? 0 : 0);
   put("volume", pad.mixer.volume ?? 0);
   put("cell_volume", p.Volume ?? 0);
   put("pan", pad.mixer.pan ?? 0);

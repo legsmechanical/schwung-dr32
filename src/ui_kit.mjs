@@ -4,7 +4,7 @@
 // this polls that, parses the preset, and pushes the pads down. The DSP never
 // sees JSON.
 
-import { parseKit, isDrumKit, FILTER_TYPES } from './ablpreset.mjs';
+import { parseKit, isDrumKit, FILTER_TYPES, EFFECT_PARAMS } from './ablpreset.mjs';
 
 const PADS = 32;
 
@@ -35,6 +35,14 @@ function padWrites(i, pad) {
     put('mod_target', p.Voice_ModulationTarget ?? 'Filter');
     put('mod_amount', p.Voice_ModulationAmount ?? 0);
     put('pitch_env', p.Voice_PitchToEnvelopeModulation ? 1 : 0);
+    // Playback effect: the JSON always carries ALL nine effects' params, so we
+    // send only the active type's two, mapped by EFFECT_PARAMS. The DSP stays
+    // generic (fx_p1/fx_p2) and never learns the per-effect key names.
+    const fxType = (p.Effect_On === false) ? 'Standard' : (p.Effect_Type ?? 'Standard');
+    put('fx_type', fxType);
+    const keys = EFFECT_PARAMS[fxType] || [];
+    put('fx_p1', keys[0] ? (p[keys[0]] ?? 0) : 0);
+    put('fx_p2', keys[1] ? (p[keys[1]] ?? 0) : 0);
     // Per-pad mixer. Volume is dB (gain = 10^(dB/20), measured). Pan is the
     // -50..+50 serialized domain — NOT -1..+1 — and feeds the engine's
     // equal-power law.

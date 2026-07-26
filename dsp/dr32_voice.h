@@ -15,6 +15,8 @@
 
 #include <stddef.h>
 
+#include "dr32_effects.h"
+
 #define DR32_SR 44100.0f
 
 /** Voice_Envelope_Mode. A-H-D = manual's "Trigger" (ignores note-off);
@@ -88,6 +90,8 @@ typedef struct {
     dr32_mod_target mod_target;
     float mod_amount;
     int   choke_group;     // 0 = none, 1..16
+    dr32_fx_type fx_type;  // Effect_Type
+    float fx_p1, fx_p2;    // the slot's two exposed controls
     int   sending_note;    // note the rack feeds the cell (factory kits: 60)
     int   speaker_on;      // mixer speakerOn; 0 = sample-exact silence
 } dr32_pad;
@@ -123,6 +127,7 @@ typedef struct {
     dr32_filter_type ftype;
     int    filter_on;      // effective (post-bypass-test)
 
+    dr32_fx fx;            // playback-effect state
     int    note;           // note this voice was started with (choke priority)
     unsigned block;        // render block it started in (simultaneity test)
 } dr32_voice;

@@ -216,6 +216,8 @@ void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
     dr32_filter_k(p->resonance, &v->k1, &v->k2);
     v->peak_coef = p->peak_gain * (5.0f / 3.0f);
 
+    dr32_fx_start(&v->fx, p->fx_type, p->fx_p1, p->fx_p2, v->step, DR32_SR);
+
     v->active = (sample != NULL && v->region_end > v->region_start + 1);
 }
 
@@ -289,7 +291,8 @@ int dr32_voice_render(dr32_voice *v, float *out, int n) {
 
         float l, r;
         read_frame(v, v->pos, &l, &r);
-        v->pos += v->step;
+        v->pos += dr32_fx_step(&v->fx, v->step);
+        dr32_fx_output(&v->fx, &l, &r);
 
         if (v->filter_on) {
             l = run_filter(v, &v->fL1, &v->fL2, l);

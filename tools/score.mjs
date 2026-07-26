@@ -10,7 +10,7 @@
 // the renderer can run off-device.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { parseKit, USER_LIBRARY, CORE_LIBRARY } from '../lib/ablpreset.mjs';
+import { parseKit, USER_LIBRARY, CORE_LIBRARY, EFFECT_PARAMS } from '../lib/ablpreset.mjs';
 
 const [songPath, outPath, ...flags] = process.argv.slice(2);
 if (!songPath || !outPath) {
@@ -87,6 +87,14 @@ pads.forEach((pad, i) => {
     put('mod_target', p.Voice_ModulationTarget ?? 'Filter');
     put('mod_amount', p.Voice_ModulationAmount ?? 0);
     put('pitch_env', p.Voice_PitchToEnvelopeModulation ? 1 : 0);
+    // Playback effect: the JSON always carries ALL nine effects' params, so we
+    // send only the active type's two, mapped by EFFECT_PARAMS. The DSP stays
+    // generic (fx_p1/fx_p2) and never learns the per-effect key names.
+    const fxType = (p.Effect_On === false) ? 'Standard' : (p.Effect_Type ?? 'Standard');
+    put('fx_type', fxType);
+    const keys = EFFECT_PARAMS[fxType] || [];
+    put('fx_p1', keys[0] ? (p[keys[0]] ?? 0) : 0);
+    put('fx_p2', keys[1] ? (p[keys[1]] ?? 0) : 0);
     put('volume', pad.mixer.volume ?? 0);
     put('cell_volume', p.Volume ?? 0);
     put('pan', pad.mixer.pan ?? 0);

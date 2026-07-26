@@ -82,6 +82,9 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "pitch_env"))     p->pitch_to_env = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "speaker_on"))    p->speaker_on = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "sending_note"))  p->sending_note = atoi(val);
+        else if (!strcmp(sub, "fx_type"))       p->fx_type = dr32_fx_from_name(val);
+        else if (!strcmp(sub, "fx_p1"))         p->fx_p1 = f;
+        else if (!strcmp(sub, "fx_p2"))         p->fx_p2 = f;
         else if (!strcmp(sub, "play"))          dr32_kit_note_on(kit, s->note, atoi(val));
         return 1;
     }
