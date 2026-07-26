@@ -20,34 +20,55 @@
     "chain_params": [
       {
         "key": "kit",
-        "label": "Kit",
+        "name": "Kit",
         "type": "filepath",
         "root": "/data/UserData/UserLibrary/Track Presets",
         "start_path": "/data/UserData/UserLibrary/Track Presets",
-        "filter": ".ablpreset",
-        "requireContains": "drumRack"
-      }
+        "filter": ".ablpreset"
+      },
+      { "key": "master", "name": "Master", "type": "float", "min": 0.0, "max": 2.0, "step": 0.02, "default": 1.0 }
     ],
     "ui_hierarchy": {
       "levels": {
         "root": {
           "name": "Drum Rack 32",
           "params": [
-            { "key": "kit", "label": "Kit" },
-            { "key": "pad", "label": "Pad", "type": "int", "min": 1, "max": 32, "default": 1 },
-            { "key": "transpose", "label": "Transpose", "type": "float", "min": -48, "max": 48, "default": 0, "step": 1, "unit": "st" },
-            { "key": "attack", "label": "Attack", "type": "float", "min": 0.0001, "max": 10, "default": 0.0001, "step": 0.001, "unit": "s" },
-            { "key": "hold", "label": "Hold", "type": "float", "min": 0.0, "max": 60.0, "default": 0.3, "step": 0.01, "unit": "s" },
-            { "key": "decay", "label": "Decay", "type": "float", "min": 0.001, "max": 60.0, "default": 1.0, "step": 0.01, "unit": "s" },
-            { "key": "cutoff", "label": "Filter Freq", "type": "float", "min": 20, "max": 22000, "default": 22000, "step": 50, "unit": "Hz" },
-            { "key": "resonance", "label": "Filter Reso", "type": "float", "min": 0.0, "max": 1.0, "default": 0.0, "step": 0.01 },
-            { "key": "pan", "label": "Pan", "type": "float", "min": -1.0, "max": 1.0, "default": 0.0, "step": 0.02 },
-            { "key": "volume", "label": "Volume", "type": "float", "min": -36.0, "max": 12.0, "default": 0.0, "step": 0.5, "unit": "dB" },
-            { "key": "master", "label": "Master", "type": "float", "min": 0.0, "max": 2.0, "default": 1.0, "step": 0.02 }
+            {
+              "key": "kit",
+              "name": "Kit",
+              "type": "filepath",
+              "root": "/data/UserData/UserLibrary/Track Presets",
+              "start_path": "/data/UserData/UserLibrary/Track Presets",
+              "filter": ".ablpreset"
+            },
+            { "level": "pads", "label": "Pads" },
+            { "key": "master", "name": "Master", "type": "float", "min": 0.0, "max": 2.0, "step": 0.02 }
           ],
-          "knobs": [
-            "pad", "transpose", "attack", "hold", "decay", "cutoff", "resonance", "volume"
-          ]
+          "knobs": ["master"]
+        },
+        "pads": {
+          "name": "Pads",
+          "child_prefix": "pad",
+          "child_count": 32,
+          "child_label": "Pad",
+          "params": [
+            { "key": "transpose", "name": "Transpose", "type": "int", "min": -48, "max": 48, "unit": "st" },
+            { "key": "attack", "name": "Attack", "type": "float", "min": 0.0001, "max": 20.0, "step": 0.001, "unit": "s" },
+            { "key": "hold", "name": "Hold", "type": "float", "min": 0.001, "max": 60.0, "step": 0.01, "unit": "s" },
+            { "key": "decay", "name": "Decay", "type": "float", "min": 0.001, "max": 60.0, "step": 0.01, "unit": "s" },
+            { "key": "cutoff", "name": "Filter Freq", "type": "float", "min": 30.0, "max": 22000.0, "step": 50.0, "unit": "Hz" },
+            { "key": "resonance", "name": "Filter Reso", "type": "float", "min": 0.0, "max": 0.9, "step": 0.01 },
+            { "key": "filter_type", "name": "Filter Type", "type": "enum", "options": ["Lowpass 12dB", "Lowpass", "Highpass", "Peak"] },
+            { "key": "env_mode", "name": "Envelope", "type": "enum", "options": ["A-H-D", "A-S-R"] },
+            { "key": "pan", "name": "Pan", "type": "float", "min": -50.0, "max": 50.0, "step": 1.0 },
+            { "key": "volume", "name": "Volume", "type": "float", "min": -36.0, "max": 12.0, "step": 0.5, "unit": "dB" },
+            { "key": "choke", "name": "Choke", "type": "int", "min": 0, "max": 16 },
+            { "key": "detune", "name": "Detune", "type": "float", "min": -50.0, "max": 50.0, "step": 1.0, "unit": "ct" },
+            { "key": "start", "name": "Start", "type": "float", "min": 0.0, "max": 1.0, "step": 0.01 },
+            { "key": "length", "name": "Length", "type": "float", "min": 0.0, "max": 1.0, "step": 0.01 },
+            { "key": "note", "name": "Note", "type": "int", "min": 0, "max": 127 }
+          ],
+          "knobs": ["transpose", "attack", "hold", "decay", "cutoff", "resonance", "pan", "volume"]
         }
       }
     }

@@ -33,17 +33,6 @@ static void logmsg(const char *s) {
 
 // ------------------------------------------------------------------ helpers
 
-/** Parse "pad12_attack" -> pad index 12, key "attack". Returns -1 if not a pad key. */
-static int split_pad_key(const char *key, const char **rest) {
-    if (strncmp(key, "pad", 3) != 0) return -1;
-    const char *p = key + 3;
-    int idx = 0, digits = 0;
-    while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; digits++; }
-    if (!digits || *p != '_') return -1;
-    *rest = p + 1;
-    return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
-}
-
 // ------------------------------------------------------------------ v2 API
 
 static void *create_instance(const char *module_dir, const char *json_defaults) {
@@ -97,20 +86,10 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || !key || !buf || buf_len <= 0) return 0;
 
-    const char *sub;
-    int pad = split_pad_key(key, &sub);
-    if (pad >= 0) {
-        dr32_pad_slot *s = &in->kit.pads[pad];
-        if (!strcmp(sub, "sample")) return snprintf(buf, buf_len, "%s", s->path);
-        if (!strcmp(sub, "loaded")) return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);
-        if (!strcmp(sub, "frames")) return snprintf(buf, buf_len, "%zu", s->frames);
-        if (!strcmp(sub, "note"))   return snprintf(buf, buf_len, "%d", s->note);
-        return 0;
-    }
-    if (!strcmp(key, "voices"))    return snprintf(buf, buf_len, "%d", dr32_kit_active_voices(&in->kit));
     if (!strcmp(key, "kit"))       return snprintf(buf, buf_len, "%s", in->kit_path);
     if (!strcmp(key, "kit_dirty")) return snprintf(buf, buf_len, "%d", in->kit_dirty);
-    return 0;
+
+    return dr32_read_param(&in->kit, key, buf, buf_len);
 }
 
 static int get_error(void *instance, char *buf, int buf_len) {

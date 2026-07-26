@@ -45,6 +45,73 @@ static int parse_mod_target(const char *v) {
 }
 
 
+static const char *filter_type_name(dr32_filter_type t) {
+    switch (t) {
+        case DR32_FILT_LP12: return "Lowpass 12dB";
+        case DR32_FILT_LP24: return "Lowpass";
+        case DR32_FILT_HP24: return "Highpass";
+        case DR32_FILT_PEAK: return "Peak";
+    }
+    return "Lowpass";
+}
+
+static const char *mod_target_name(dr32_mod_target t) {
+    switch (t) {
+        case DR32_MOD_FILTER: return "Filter";
+        case DR32_MOD_ATTACK: return "Attack";
+        case DR32_MOD_HOLD:   return "Hold";
+        case DR32_MOD_DECAY:  return "Decay";
+        case DR32_MOD_FX1:    return "FX1";
+        case DR32_MOD_FX2:    return "FX2";
+    }
+    return "Filter";
+}
+
+int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len) {
+    if (!kit || !key || !buf || buf_len <= 0) return 0;
+
+    const char *sub;
+    int pad = split_pad_key(key, &sub);
+    if (pad >= 0) {
+        const dr32_pad_slot *s = &kit->pads[pad];
+        const dr32_pad *p = &s->params;
+        if (!strcmp(sub, "sample"))      return snprintf(buf, buf_len, "%s", s->path);
+        if (!strcmp(sub, "loaded"))      return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);
+        if (!strcmp(sub, "frames"))      return snprintf(buf, buf_len, "%zu", s->frames);
+        if (!strcmp(sub, "note"))        return snprintf(buf, buf_len, "%d", s->note);
+        if (!strcmp(sub, "choke"))       return snprintf(buf, buf_len, "%d", p->choke_group);
+        if (!strcmp(sub, "transpose"))   return snprintf(buf, buf_len, "%g", (double)p->transpose);
+        if (!strcmp(sub, "detune"))      return snprintf(buf, buf_len, "%g", (double)p->detune);
+        if (!strcmp(sub, "start"))       return snprintf(buf, buf_len, "%g", (double)p->play_start);
+        if (!strcmp(sub, "length"))      return snprintf(buf, buf_len, "%g", (double)p->play_length);
+        if (!strcmp(sub, "gain"))        return snprintf(buf, buf_len, "%g", (double)p->gain);
+        if (!strcmp(sub, "volume"))      return snprintf(buf, buf_len, "%g", (double)p->volume_db);
+        if (!strcmp(sub, "cell_volume")) return snprintf(buf, buf_len, "%g", (double)p->cell_volume_db);
+        if (!strcmp(sub, "pan"))         return snprintf(buf, buf_len, "%g", (double)p->pan);
+        if (!strcmp(sub, "vel_vol"))     return snprintf(buf, buf_len, "%g", (double)p->vel_to_volume);
+        if (!strcmp(sub, "attack"))      return snprintf(buf, buf_len, "%g", (double)p->attack);
+        if (!strcmp(sub, "hold"))        return snprintf(buf, buf_len, "%g", (double)p->hold);
+        if (!strcmp(sub, "decay"))       return snprintf(buf, buf_len, "%g", (double)p->decay);
+        if (!strcmp(sub, "env_mode"))    return snprintf(buf, buf_len, "%s",
+                                                        p->env_mode == DR32_ENV_ASR ? "A-S-R" : "A-H-D");
+        if (!strcmp(sub, "filter_on"))   return snprintf(buf, buf_len, "%d", p->filter_on);
+        if (!strcmp(sub, "filter_type")) return snprintf(buf, buf_len, "%s", filter_type_name(p->filter_type));
+        if (!strcmp(sub, "cutoff"))      return snprintf(buf, buf_len, "%g", (double)p->cutoff);
+        if (!strcmp(sub, "resonance"))   return snprintf(buf, buf_len, "%g", (double)p->resonance);
+        if (!strcmp(sub, "peak_gain"))   return snprintf(buf, buf_len, "%g", (double)p->peak_gain);
+        if (!strcmp(sub, "mod_target"))  return snprintf(buf, buf_len, "%s", mod_target_name(p->mod_target));
+        if (!strcmp(sub, "mod_amount"))  return snprintf(buf, buf_len, "%g", (double)p->mod_amount);
+        if (!strcmp(sub, "pitch_env"))   return snprintf(buf, buf_len, "%d", p->pitch_to_env);
+        if (!strcmp(sub, "sending_note"))return snprintf(buf, buf_len, "%d", p->sending_note);
+        if (!strcmp(sub, "speaker_on"))  return snprintf(buf, buf_len, "%d", p->speaker_on);
+        return 0;
+    }
+
+    if (!strcmp(key, "master")) return snprintf(buf, buf_len, "%g", (double)kit->master_gain);
+    if (!strcmp(key, "voices")) return snprintf(buf, buf_len, "%d", dr32_kit_active_voices(kit));
+    return 0;
+}
+
 int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
     if (!kit || !key || !val) return 0;
 
