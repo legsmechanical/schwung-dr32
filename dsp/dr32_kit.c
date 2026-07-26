@@ -18,7 +18,11 @@ void dr32_kit_init(dr32_kit *k) {
     for (int i = 0; i < 2; i++) {
         k->send_p[i][0] = k->send_p[i][1] = k->send_p[i][2] = 0.5f;
         k->send_p[i][3] = 1.0f;                 // a send bus runs fully wet
-        k->insert_p[i][0] = k->insert_p[i][1] = k->insert_p[i][2] = 0.5f;
+        // Insert defaults: Compress/Crunch off, Transients CENTRED (0.5 is
+        // neutral for a bipolar control), fully wet.
+        k->insert_p[i][0] = 0.0f;
+        k->insert_p[i][1] = 0.0f;
+        k->insert_p[i][2] = 0.5f;
         k->insert_p[i][3] = 1.0f;
     }
 }

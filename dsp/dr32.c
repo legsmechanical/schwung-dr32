@@ -160,7 +160,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         int ok = dr32_preset_load(&in->kit, val, &rep);
         clock_gettime(CLOCK_MONOTONIC, &t1);
         double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
-        char msg[360];
+        char msg[DR32_MAX_PATH + 200];
         if (ok) {
             // Clear any previous error. Without this a single failed load stuck
             // a "could not load kit" warning on the synth forever, including on
@@ -192,7 +192,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             snprintf(saved, sizeof(saved), "%s", in->kit_saved);
             if (dr32_preset_load(&in->kit, saved, &rep)) {
                 snprintf(in->kit_path, sizeof(in->kit_path), "%s", saved);
-                char msg[360];
+                char msg[DR32_MAX_PATH + 200];
                 snprintf(msg, sizeof(msg), "dr32: kit preview cancelled — restored '%s'", saved);
                 logmsg(msg);
             }

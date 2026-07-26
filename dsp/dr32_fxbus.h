@@ -8,10 +8,10 @@
 //
 // Signal flow per rendered block:
 //
-//     pads --(post-fader dB send amounts)--> send bus 1 -> FX -> +
-//          \                              -> send bus 2 -> FX -> +
-//           \                                                    \
-//            ----------------- dry ---------------------------> mix
+//     pads --(post-fader dB send amounts)--> send bus 1 -> FX --+
+//        |                                 -> send bus 2 -> FX --+
+//        |                                                       |
+//        +------------------ dry ------------------------------> mix
 //                                                                 |
 //                                          insert 1 -> insert 2 -> out
 //

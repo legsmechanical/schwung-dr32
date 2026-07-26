@@ -469,7 +469,7 @@
             },
             {
               "key": "insert1_p2",
-              "name": "Drive",
+              "name": "Crunch",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
@@ -481,7 +481,7 @@
             },
             {
               "key": "insert1_p3",
-              "name": "Boom",
+              "name": "Transients",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
@@ -489,7 +489,8 @@
               "visible_if": {
                 "param": "insert1_type",
                 "equals": "Drum Buss"
-              }
+              },
+              "default": 0.5
             },
             {
               "key": "insert1_mix",
@@ -572,7 +573,7 @@
             },
             {
               "key": "insert2_p2",
-              "name": "Drive",
+              "name": "Crunch",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
@@ -584,7 +585,7 @@
             },
             {
               "key": "insert2_p3",
-              "name": "Boom",
+              "name": "Transients",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
@@ -592,7 +593,8 @@
               "visible_if": {
                 "param": "insert2_type",
                 "equals": "Drum Buss"
-              }
+              },
+              "default": 0.5
             },
             {
               "key": "insert2_mix",

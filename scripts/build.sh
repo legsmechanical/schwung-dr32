@@ -37,9 +37,16 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
     # and reclaim with `docker builder prune -af` (and/or remove unused images).
     # A full VM also makes `docker image inspect` fail intermittently, which
     # looks like the image "disappearing" and silently leaves dist/ stale.
+    # DR32 needs BOTH gcc and g++ (the FX bus is C++ — vendored reverbs).
+    # davebox-builder ships only the C cross compiler, so merely existing is not
+    # enough: probe each candidate for aarch64-linux-gnu-g++ before choosing it.
     BUILDER=""
-    for img in davebox-builder schwung-builder move-anything-builder; do
-        if docker image inspect "$img" >/dev/null 2>&1; then BUILDER="$img"; break; fi
+    for img in schwung-builder move-anything-builder davebox-builder; do
+        docker image inspect "$img" >/dev/null 2>&1 || continue
+        if docker run --rm "$img" sh -c 'command -v aarch64-linux-gnu-g++' >/dev/null 2>&1; then
+            BUILDER="$img"; break
+        fi
+        echo "==> $img has no aarch64 g++, skipping" >&2
     done
 
     # Fail loudly on a full VM rather than limping on with a stale dist/.

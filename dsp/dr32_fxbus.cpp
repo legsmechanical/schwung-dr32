@@ -20,87 +20,91 @@
 namespace {
 
 /** Drum Buss — a drum-bus glue insert in the spirit of Ableton's Drum Buss,
- *  cut down to three controls plus wet/dry.
+ *  cut to three controls plus wet/dry.
  *
- *    Compress — Airwindows *Pressure4* vari-mu compression (MIT, © Chris
- *               Johnson) as ported in PALETTE's SQUASH.
- *    Drive    — tube/Spiral soft-fold saturation from PALETTE's DRIVE, which
- *               splits at ~200 Hz and drives only the upper band so the low end
- *               stays intact. That split is what makes it usable on a kit.
- *    Boom     — resonant low shelf around 60-90 Hz for kick weight.
+ *    Compress   — Airwindows *Pressure4* vari-mu compression (MIT, © Chris
+ *                 Johnson) as ported in PALETTE's SQUASH.
+ *    Crunch     — high-frequency grit: splits at ~1.2 kHz and hard-folds only
+ *                 the upper band, so it adds bite without smearing the kick.
+ *    Transients — bipolar attack/sustain shaping from the difference between a
+ *                 fast and a slow envelope follower. 0.5 is neutral; below
+ *                 softens the hit and lets the tail up, above sharpens it.
  *
- *  Deliberately omitted from Drum Buss's full control set: Crunch, Damp,
- *  Transients and Output. Three controls that each do something obvious beat
- *  eight that interact. */
+ *  Dropped from the full Drum Buss set: Drive, Damp, Boom, Output. Three
+ *  controls that each do something obvious beat eight that interact.
+ *  Pressure4's release is fixed at a musical value rather than exposed, to hold
+ *  that budget. */
 struct DrumBuss {
     float fs = 44100.0f;
     // Pressure4 state (A/B ping-pong, as in the original)
     float spdA = 10000.0f, spdB = 10000.0f, cofA = 1.0f, cofB = 1.0f;
     int   flip = 0;
-    // drive band-split state
-    float lpL = 0.0f, lpR = 0.0f;
-    // boom resonator state
-    float b1L = 0.0f, b2L = 0.0f, b1R = 0.0f, b2R = 0.0f;
-    float boomG = 0.0f, boomF = 0.0f;
+    // crunch band-split state
+    float hpL = 0.0f, hpR = 0.0f;
+    // transient envelope followers (fast + slow), per channel
+    float envF[2] = { 0.0f, 0.0f }, envS[2] = { 0.0f, 0.0f };
+    float aFast = 0.0f, aSlow = 0.0f, rel = 0.0f;
 
-    float comp = 0.0f, drive = 0.0f, boom = 0.0f;
+    float comp = 0.0f, crunch = 0.0f, trans = 0.5f;
 
     void setSampleRate(float sr) { fs = (sr > 1.0f) ? sr : 44100.0f; recalc(); }
 
     void setParams(float p1, float p2, float p3) {
-        comp  = (p1 < 0.0f) ? 0.0f : (p1 > 1.0f ? 1.0f : p1);
-        drive = (p2 < 0.0f) ? 0.0f : (p2 > 1.0f ? 1.0f : p2);
-        boom  = (p3 < 0.0f) ? 0.0f : (p3 > 1.0f ? 1.0f : p3);
+        comp   = clamp01(p1);
+        crunch = clamp01(p2);
+        trans  = clamp01(p3);
         recalc();
     }
 
+    static float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
+
     void recalc() {
-        // Boom: a gentle resonant lift, tuned lower as it is pushed.
-        float f = 90.0f - 30.0f * boom;
-        boomF = 2.0f * 3.14159265358979f * f / fs;
-        boomG = boom * 1.8f;
+        // Followers: ~1 ms vs ~40 ms attack; their difference IS the transient.
+        aFast = 1.0f - std::exp(-1.0f / (0.001f * fs));
+        aSlow = 1.0f - std::exp(-1.0f / (0.040f * fs));
+        rel   = 1.0f - std::exp(-1.0f / (0.150f * fs));
     }
 
     void reset() {
         spdA = spdB = 10000.0f;
         cofA = cofB = 1.0f;
-        lpL = lpR = b1L = b2L = b1R = b2R = 0.0f;
+        hpL = hpR = 0.0f;
+        envF[0] = envF[1] = envS[0] = envS[1] = 0.0f;
         flip = 0;
     }
 
     inline void tick(float &l, float &r) {
         float xl = l, xr = r;
 
-        // --- drive: split at ~200 Hz, fold only the upper band
-        if (drive > 0.0f) {
-            const float aBass = 0.030f;
-            const float drv = 1.0f + drive * 6.0f + drive * drive * 30.0f;
-            const float himk = 0.7f + drive * 0.5f;
-            float *lp[2] = { &lpL, &lpR };
+        // --- transients: gain from the fast/slow envelope difference
+        if (trans < 0.49f || trans > 0.51f) {
+            const float depth = (trans - 0.5f) * 2.0f;      // -1..+1
             float *ch[2] = { &xl, &xr };
             for (int c = 0; c < 2; c++) {
-                float x = *ch[c];
-                *lp[c] += aBass * (x - *lp[c]);
-                float bass = *lp[c], high = x - *lp[c];
-                float d = high * drv, ad = d < 0 ? -d : d;
-                float sh = (ad > 1e-6f) ? std::sin(d * ad) / ad : d;
-                *ch[c] = x + drive * ((bass + sh * himk) - x);
+                float mag = std::fabs(*ch[c]);
+                envF[c] += (mag > envF[c] ? aFast : rel) * (mag - envF[c]);
+                envS[c] += (mag > envS[c] ? aSlow : rel) * (mag - envS[c]);
+                float diff = envF[c] - envS[c];             // >0 during an attack
+                float g = 1.0f + depth * diff * 4.0f;
+                if (g < 0.05f) g = 0.05f;
+                if (g > 4.0f)  g = 4.0f;
+                *ch[c] *= g;
             }
         }
 
-        // --- boom: resonant low lift (state-variable, low output)
-        if (boomG > 0.0f) {
-            float g = boomF;
-            float *b1[2] = { &b1L, &b1R };
-            float *b2[2] = { &b2L, &b2R };
+        // --- crunch: fold only the HF band so the low end stays clean
+        if (crunch > 0.0f) {
+            const float aHi = 0.14f;                        // ~1.2 kHz split
+            const float drv = 1.0f + crunch * 12.0f + crunch * crunch * 60.0f;
+            float *lp[2] = { &hpL, &hpR };
             float *ch[2] = { &xl, &xr };
             for (int c = 0; c < 2; c++) {
-                float hp = (*ch[c] - (1.4f + g) * *b1[c] - *b2[c]) / (1.0f + g * (1.4f + g));
-                float bp = *b1[c] + g * hp;
-                float lo = *b2[c] + g * bp;
-                *b1[c] = 2.0f * bp - *b1[c];
-                *b2[c] = 2.0f * lo - *b2[c];
-                *ch[c] += lo * boomG;
+                float x = *ch[c];
+                *lp[c] += aHi * (x - *lp[c]);
+                float low = *lp[c], high = x - *lp[c];
+                float d = high * drv;
+                float sh = std::tanh(d);                    // harder than the fold: grit
+                *ch[c] = x + crunch * ((low + sh * 0.8f) - x);
             }
         }
 
@@ -131,7 +135,6 @@ struct DrumBuss {
             *spd = ns / (*spd);
             float coeff = *cof;
             cl *= coeff; cr *= coeff;
-            // Pressure4's second-stage sin() overdrive
             float br = std::fabs(cl); br = (br > 1.57079633f) ? 1.0f : std::sin(br);
             cl = (cl > 0) ? br : -br;
             br = std::fabs(cr); br = (br > 1.57079633f) ? 1.0f : std::sin(br);
