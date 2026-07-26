@@ -413,6 +413,7 @@
               "type": "enum",
               "options": [
                 "Off",
+                "Drum Buss",
                 "Plate",
                 "Room",
                 "Hall"
@@ -424,7 +425,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert1_type",
+                "not_equals": "Drum Buss"
+              }
             },
             {
               "key": "insert1_p2",
@@ -432,7 +437,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert1_type",
+                "not_equals": "Drum Buss"
+              }
             },
             {
               "key": "insert1_p3",
@@ -440,11 +449,51 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert1_type",
+                "not_equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert1_p1",
+              "name": "Compress",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert1_type",
+                "equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert1_p2",
+              "name": "Drive",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert1_type",
+                "equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert1_p3",
+              "name": "Boom",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert1_type",
+                "equals": "Drum Buss"
+              }
             },
             {
               "key": "insert1_mix",
-              "name": "Mix",
+              "name": "Dry/Wet",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
@@ -467,6 +516,7 @@
               "type": "enum",
               "options": [
                 "Off",
+                "Drum Buss",
                 "Plate",
                 "Room",
                 "Hall"
@@ -478,7 +528,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert2_type",
+                "not_equals": "Drum Buss"
+              }
             },
             {
               "key": "insert2_p2",
@@ -486,7 +540,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert2_type",
+                "not_equals": "Drum Buss"
+              }
             },
             {
               "key": "insert2_p3",
@@ -494,11 +552,51 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert2_type",
+                "not_equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert2_p1",
+              "name": "Compress",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert2_type",
+                "equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert2_p2",
+              "name": "Drive",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert2_type",
+                "equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert2_p3",
+              "name": "Boom",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "insert2_type",
+                "equals": "Drum Buss"
+              }
             },
             {
               "key": "insert2_mix",
-              "name": "Mix",
+              "name": "Dry/Wet",
               "type": "float",
               "min": 0.0,
               "max": 1.0,

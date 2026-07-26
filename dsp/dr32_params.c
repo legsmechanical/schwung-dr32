@@ -192,7 +192,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
             else if (!strcmp(f2, "mix")) idx = 3;
             if (idx >= 0) {
                 cache[idx] = v;
-                if (is_send) dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+                if (is_send) dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2]);
                 else         dr32_fxbus_set_insert_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
                 return 1;
             }

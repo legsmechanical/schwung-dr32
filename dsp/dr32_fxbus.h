@@ -32,6 +32,7 @@ typedef enum {
     DR32_EFX_PLATE,        // Dattorro figure-eight plate tank — the drum reverb
     DR32_EFX_ROOM,         // Airwindows Chamber — natural small space
     DR32_EFX_HALL,         // Airwindows InfinityVerb — long, large
+    DR32_EFX_DRUMBUSS,     // drum-bus glue: compress + drive + boom, wet/dry
     DR32_EFX_COUNT
 } dr32_efx_type;
 
@@ -45,10 +46,13 @@ void dr32_fxbus_set_send_type(dr32_fxbus *fx, int slot, dr32_efx_type type);
 void dr32_fxbus_set_insert_type(dr32_fxbus *fx, int slot, dr32_efx_type type);
 
 /** Generic per-slot controls, all 0..1. `p1`/`p2`/`p3` mean whatever the type
- *  says (for reverbs: size, damping, bigness); `mix` is the slot's wet amount.
- *  A send bus is fully wet by convention — its level is set by the pad sends. */
+ *  says — reverbs: size / damping / bigness; Drum Buss: compress / drive / boom.
+ *
+ *  A send bus is ALWAYS 100% wet: its return carries only the effect, and its
+ *  level is set by the pad send amounts and the return gain. There is
+ *  deliberately no wet/dry on a send. */
 void dr32_fxbus_set_send_params(dr32_fxbus *fx, int slot,
-                                float p1, float p2, float p3, float mix);
+                                float p1, float p2, float p3);
 void dr32_fxbus_set_insert_params(dr32_fxbus *fx, int slot,
                                   float p1, float p2, float p3, float mix);
 
