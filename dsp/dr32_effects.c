@@ -100,6 +100,13 @@ void dr32_fx_start(dr32_fx *fx, dr32_fx_type type, float p1, float p2,
             fx->rng_b = 0x243F6A88u;      // own seeding is not yet attributed
             break;
         }
+        case DR32_FX_PUNCH:
+            // EXACT: punch_gain = 1 + amount^3; punch_time_samples = SR * time.
+            fx->punch_gain = 1.0f + p1 * p1 * p1;
+            fx->punch_samples = sample_rate * p2;
+            fx->punch_pos = 0.0f;
+            fx->punch_smoothed = 1.0f;
+            break;
         case DR32_FX_FM:
             fx->osc_inc = p2 / sample_rate;
             break;
@@ -128,8 +135,57 @@ double dr32_fx_step(dr32_fx *fx, double base_step) {
     }
 }
 
+void dr32_fx_set_window(dr32_fx *fx, size_t region_start, size_t region_frames,
+                        float sample_rate, float source_rate) {
+    if (fx->type != DR32_FX_LOOP) return;
+    // loop_start_frames = loop_offset * selected_frame_count
+    // loop_end_frames   = loop_start + loop_length * output_rate_frame_count
+    // Loop Length is in the OUTPUT rate's frames, so it is scaled by the
+    // source/output rate relation before being added to the source-domain start.
+    double start = (double)region_start + (double)fx->p1 * (double)region_frames;
+    double len   = (double)fx->p2 * (double)sample_rate * (double)(source_rate / sample_rate);
+    fx->loop_start = start;
+    fx->loop_end   = start + len;
+}
+
+double dr32_fx_wrap(dr32_fx *fx, double pos) {
+    if (fx->type != DR32_FX_LOOP) return pos;
+    if (fx->loop_end <= fx->loop_start) return pos;
+    if (pos < fx->loop_end) return pos;
+    // The engine crossfades main and wrapped cursors across the transition;
+    // that crossfade is NOT modelled yet (it needs the crossfade width, which
+    // is not in the reconstruction). This is the hard wrap only — expect a
+    // shallow null on Loop until the crossfade is measured.
+    double span = fx->loop_end - fx->loop_start;
+    double over = pos - fx->loop_end;
+    return fx->loop_start + fmod(over, span);
+}
+
 void dr32_fx_output(dr32_fx *fx, float *l, float *r) {
     switch (fx->type) {
+        case DR32_FX_PUNCH: {
+            // Two-region transient curve: a square-root attack up to the
+            // amount-derived boundary, then a power-law tail to punch_samples.
+            // The engine smooths the target and enforces a 0.15 gain floor.
+            // ⚠ The tail's exact exponent comes from polynomial(cbrt(u)) in the
+            // setter, which the reconstruction does not spell out — so this is
+            // structurally right but not yet numerically pinned.
+            float t = fx->punch_pos / (fx->punch_samples > 1.0f ? fx->punch_samples : 1.0f);
+            float target;
+            if (t >= 1.0f) {
+                target = 1.0f;
+            } else {
+                float boundary = 0.25f;
+                if (t < boundary) target = fx->punch_gain * sqrtf(t / boundary);
+                else target = 1.0f + (fx->punch_gain - 1.0f) * powf(1.0f - (t - boundary) / (1.0f - boundary), 2.0f);
+            }
+            if (target < 0.15f) target = 0.15f;
+            fx->punch_smoothed += (target - fx->punch_smoothed) * 0.05f;
+            *l *= fx->punch_smoothed;
+            *r *= fx->punch_smoothed;
+            fx->punch_pos += 1.0f;
+            break;
+        }
         case DR32_FX_RINGMOD: {
             // Signed parabolic phase, the same family FM uses:
             //   ring = trim * (1 - osc^2 * depth * |parabolic|)

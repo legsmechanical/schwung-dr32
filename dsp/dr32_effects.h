@@ -13,6 +13,8 @@
 #ifndef DR32_EFFECTS_H
 #define DR32_EFFECTS_H
 
+#include <stddef.h>
+
 /** Effect slot indices — the NATIVE ordering (DRUM_EFFECTS_RECON.md "effect
  *  bank map"), which is also the order the JSON's Effect_Type strings map to. */
 typedef enum {
@@ -48,6 +50,15 @@ typedef struct {
 
     // Noise PRNG (xorshift family, per DRUM_EFFECTS_RECON)
     unsigned rng_a, rng_b;
+
+    // Loop
+    double loop_start, loop_end;
+
+    // Punch
+    float punch_gain;      // 1 + amount^3
+    float punch_samples;   // time * sample_rate
+    float punch_pos;       // samples since note start
+    float punch_smoothed;  // the engine smooths the target gain
 } dr32_fx;
 
 /** Model-domain clamps, exactly as the engine's parameter combiner applies
@@ -65,6 +76,14 @@ double dr32_fx_step(dr32_fx *fx, double base_step);
 /** Per-sample output stage (Ring Mod, Sub Osc, Noise, Punch, 8-bit).
  *  Operates in place on one stereo frame. */
 void dr32_fx_output(dr32_fx *fx, float *l, float *r);
+
+/** Loop wrap: called with the current read position, returns the position to
+ *  use. Zero-length/disabled loops return `pos` unchanged. */
+double dr32_fx_wrap(dr32_fx *fx, double pos);
+
+/** Configure the Loop effect's frame bounds once the sample window is known. */
+void dr32_fx_set_window(dr32_fx *fx, size_t region_start, size_t region_frames,
+                        float sample_rate, float source_rate);
 
 /** Map a JSON `Effect_Type` string to the native slot index. */
 dr32_fx_type dr32_fx_from_name(const char *name);

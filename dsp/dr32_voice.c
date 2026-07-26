@@ -217,6 +217,8 @@ void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
     v->peak_coef = p->peak_gain * (5.0f / 3.0f);
 
     dr32_fx_start(&v->fx, p->fx_type, p->fx_p1, p->fx_p2, v->step, DR32_SR);
+    dr32_fx_set_window(&v->fx, v->region_start, v->region_end - v->region_start,
+                       DR32_SR, (float)v->sample_rate);
 
     v->active = (sample != NULL && v->region_end > v->region_start + 1);
 }
@@ -291,7 +293,7 @@ int dr32_voice_render(dr32_voice *v, float *out, int n) {
 
         float l, r;
         read_frame(v, v->pos, &l, &r);
-        v->pos += dr32_fx_step(&v->fx, v->step);
+        v->pos = dr32_fx_wrap(&v->fx, v->pos + dr32_fx_step(&v->fx, v->step));
         dr32_fx_output(&v->fx, &l, &r);
 
         if (v->filter_on) {
