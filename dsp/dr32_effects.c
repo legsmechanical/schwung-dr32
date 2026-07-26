@@ -11,6 +11,23 @@ static inline float clampf(float v, float lo, float hi) {
 
 static inline float db_to_lin(float db) { return powf(10.0f, db / 20.0f); }
 
+int dr32_fx_modelled(dr32_fx_type type) {
+    switch (type) {
+        case DR32_FX_STANDARD:   return 1;   // the shared reader
+        case DR32_FX_PITCHENV:   return 1;   // -39.3 dB, constants proven
+        case DR32_FX_LOOP:       return 1;   // -35.8 dB (vs -24.0 fallback)
+        case DR32_FX_RINGMOD:    return 1;   // -24.9 dB, same as fallback; amount law is exact
+        case DR32_FX_SUBOSC:     return 1;   // -21.6 dB, gain law exact
+        case DR32_FX_STRETCH:    return 1;   // factor 1 == the plain reader, which stock kits use
+        // Not yet good enough to enable — each is WORSE than the dry fallback:
+        case DR32_FX_EIGHTBIT:   return 0;   // -0.0 dB vs -29.7 dry
+        case DR32_FX_PUNCH:      return 0;   // +1.1 dB vs -2.4 dry
+        case DR32_FX_FM:         return 0;   // -2.1 dB vs -6.0 dry
+        case DR32_FX_NOISE:      return 1;   // additive; cannot null (PRNG), judged statistically
+    }
+    return 0;
+}
+
 dr32_fx_type dr32_fx_from_name(const char *name) {
     if (!name || !*name) return DR32_FX_STANDARD;
     // The JSON spellings, exactly as they appear in stock kits. Note the
@@ -55,7 +72,11 @@ void dr32_fx_clamp(dr32_fx_type type, float *p1, float *p2) {
 void dr32_fx_start(dr32_fx *fx, dr32_fx_type type, float p1, float p2,
                    double base_step, float sample_rate) {
     memset(fx, 0, sizeof(*fx));
-    fx->type = type;
+    // Unmodelled effects degrade to the plain reader rather than applying a
+    // model we know to be wrong. See dr32_fx_modelled().
+    fx->type = dr32_fx_modelled(type) ? type : DR32_FX_STANDARD;
+    if (fx->type == DR32_FX_STANDARD) return;
+    type = fx->type;
     dr32_fx_clamp(type, &p1, &p2);
     fx->p1 = p1;
     fx->p2 = p2;
@@ -110,6 +131,22 @@ void dr32_fx_start(dr32_fx *fx, dr32_fx_type type, float p1, float p2,
         case DR32_FX_FM:
             fx->osc_inc = p2 / sample_rate;
             break;
+        case DR32_FX_EIGHTBIT: {
+            // Sample/hold at the resampling rate, nearest-frame reads, a
+            // quantizer, and a low-pass whose coefficient comes from Filter
+            // Decay. The engine treats the filter as neutral when
+            // 5 - decay <= 0.001.
+            fx->hold_step = p1 / sample_rate;      // cycles per output sample
+            fx->hold_phase = 1.0f;                 // force a fetch on sample 0
+            fx->quant_step = 2.0f / 256.0f;        // 8-bit mid-tread
+            fx->eightbit_neutral = ((5.0f - p2) <= 0.001f);
+            float samples = sample_rate * p2;
+            if (samples < 1e-6f) samples = 1e-6f;
+            // decay_coeff = 1 - exp(log(internal_floor)/samples); the floor is
+            // not attributed, so 1/1000 is assumed pending measurement.
+            fx->lp_coeff = 1.0f - expf(logf(0.001f) / samples);
+            break;
+        }
         default:
             break;
     }
@@ -124,6 +161,18 @@ double dr32_fx_step(dr32_fx *fx, double base_step) {
             fx->pitch_env *= fx->pitch_decay_mul;
             float ratio = exp2f(fx->pitch_env * fx->pitch_depth);
             return base_step * (double)ratio;
+        }
+        case DR32_FX_FM: {
+            // Phase advances and wraps; the modulation is a SIGNED parabolic
+            // function of phase, scaled by amount * 10 (DRUM_EFFECTS_RECON.md
+            // "FM"). The engine also carries an oscillator STATE term
+            // (osc^2) that ramps — not modelled yet, so expect a shallow null.
+            fx->osc_phase += fx->osc_inc;
+            if (fx->osc_phase >= 1.0f) fx->osc_phase -= 1.0f;
+            float s = 0.5f - fx->osc_phase;
+            float sign = (s < 0.0f) ? -1.0f : 1.0f;
+            float par = sign * fabsf(s) * (0.5f - fabsf(s)) * 16.0f;
+            return base_step + (double)(fx->p1 * 10.0f * par) * base_step;
         }
         case DR32_FX_STRETCH:
             // Factor 1 is the plain reader (and is what stock kits overwhelmingly
@@ -161,8 +210,30 @@ double dr32_fx_wrap(dr32_fx *fx, double pos) {
     return fx->loop_start + fmod(over, span);
 }
 
+int dr32_fx_nearest(const dr32_fx *fx) {
+    return fx->type == DR32_FX_EIGHTBIT;
+}
+
 void dr32_fx_output(dr32_fx *fx, float *l, float *r) {
     switch (fx->type) {
+        case DR32_FX_EIGHTBIT: {
+            fx->hold_phase += fx->hold_step;
+            if (fx->hold_phase >= 1.0f) {
+                fx->hold_phase -= 1.0f;
+                // quantize on capture, mid-tread
+                fx->hold_l = roundf(*l / fx->quant_step) * fx->quant_step;
+                fx->hold_r = roundf(*r / fx->quant_step) * fx->quant_step;
+            }
+            float ol = fx->hold_l, orr = fx->hold_r;
+            if (!fx->eightbit_neutral) {
+                fx->lp_l += (ol - fx->lp_l) * fx->lp_coeff;
+                fx->lp_r += (orr - fx->lp_r) * fx->lp_coeff;
+                ol = fx->lp_l; orr = fx->lp_r;
+            }
+            *l = ol;
+            *r = orr;
+            break;
+        }
         case DR32_FX_PUNCH: {
             // Two-region transient curve: a square-root attack up to the
             // amount-derived boundary, then a power-law tail to punch_samples.

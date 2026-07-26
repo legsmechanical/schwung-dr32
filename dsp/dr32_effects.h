@@ -54,6 +54,13 @@ typedef struct {
     // Loop
     double loop_start, loop_end;
 
+    // 8-bit
+    float hold_phase, hold_step;   // sample/hold at the resampling rate
+    float hold_l, hold_r;          // held sample
+    float quant_step;              // quantizer step
+    float lp_l, lp_r, lp_coeff;    // post filter
+    int   eightbit_neutral;        // filter considered neutral
+
     // Punch
     float punch_gain;      // 1 + amount^3
     float punch_samples;   // time * sample_rate
@@ -84,6 +91,23 @@ double dr32_fx_wrap(dr32_fx *fx, double pos);
 /** Configure the Loop effect's frame bounds once the sample window is known. */
 void dr32_fx_set_window(dr32_fx *fx, size_t region_start, size_t region_frames,
                         float sample_rate, float source_rate);
+
+/** 1 when the reader must use NEAREST-frame addressing (floor(pos+0.5))
+ *  instead of linear interpolation — the 8-bit path does. */
+int dr32_fx_nearest(const dr32_fx *fx);
+
+/** Is this effect's model good enough to USE?
+ *
+ *  Policy: an effect is enabled only once it measurably beats the fallback
+ *  (playing the pad dry) in the null suite. Implementing from prose without a
+ *  numeric target made three effects WORSE than not implementing them —
+ *  8-bit went -29.7 dB to -0.0 dB, Punch -2.4 to +1.1, FM -6.0 to -2.1 — so a
+ *  half-finished model is not a step forward, it is a regression the user
+ *  would hear. Unmodelled effects fall back to the plain reader, which is the
+ *  closest available approximation.
+ *
+ *  Enable an effect here only with a scoreboard number that justifies it. */
+int dr32_fx_modelled(dr32_fx_type type);
 
 /** Map a JSON `Effect_Type` string to the native slot index. */
 dr32_fx_type dr32_fx_from_name(const char *name);

@@ -243,6 +243,11 @@ void dr32_voice_choke(dr32_voice *v) {
 static inline void read_frame(const dr32_voice *v, double pos, float *l, float *r) {
     size_t i = (size_t)pos;
     float t = (float)(pos - (double)i);
+    if (dr32_fx_nearest(&v->fx)) {          // 8-bit reads nearest, not interpolated
+        i = (size_t)(pos + 0.5);
+        if (i >= v->sample_frames) i = v->sample_frames - 1;
+        t = 0.0f;
+    }
     size_t n = v->sample_frames;
     size_t i2 = (i + 1 < n) ? i + 1 : i;
     if (v->channels == 2) {

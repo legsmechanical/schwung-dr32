@@ -92,11 +92,30 @@ decay 2.0, one pad param set per effect.
 | noise | −13.1 dB | stochastic — **cannot** null sample-exactly, see below |
 | fm | −6.0 dB | **not implemented** — no step modulation yet |
 | punch | −2.4 dB | curve structure only; tail exponent unknown |
-| stretch | +3.1 dB | **wrong** — granular path not modelled; factor≠1 currently just slows the reader |
+| stretch | +3.1 dB | granular path not modelled; factor≠1 currently just slows the reader |
 
-Read these honestly: three of them (`eightbit`, `fm`, `stretch` at factor≠1) are
-**not implemented**, and their numbers are what the fallback path happens to
-score, not a measure of an implementation.
+Read these honestly: several are **not implemented**, and their numbers are what
+the fallback path happens to score, not a measure of an implementation.
+
+### The enable policy (`dr32_fx_modelled`)
+
+Implementing 8-bit, FM and Punch from the reconstruction's prose — without a
+numeric target to check against — made all three **worse than not implementing
+them**:
+
+| Effect | dry fallback | first implementation |
+|---|---:|---:|
+| eightbit | −29.7 dB | **−0.0 dB** |
+| punch | −2.4 dB | **+1.1 dB** |
+| fm | −6.0 dB | **−2.1 dB** |
+
+So an effect is only enabled once it measurably beats the fallback. The others
+degrade to the plain reader — the closest available approximation — instead of
+applying DSP we know to be wrong. A half-finished effect is not partial credit;
+it is a regression the user would hear.
+
+Currently enabled: Standard, Pitch Env, Loop, Ring Mod, Sub Osc, Stretch
+(factor 1), Noise. Disabled: 8-bit, Punch, FM.
 
 **Noise will never null sample-exactly.** Its generator is a PRNG whose seeding
 is not attributed, so two correct implementations still diverge sample by
