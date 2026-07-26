@@ -57,9 +57,18 @@ batch several deploys.
 happily ship it.** Always check that build.sh printed `==> done:` before trusting
 an install.
 
-⚠ `scripts/Dockerfile` cannot be rebuilt on an arm64 Mac (x86-only cross packages; emulated apt
-fails on GPG). If the toolchain image is missing, the build falls back through
-`davebox-builder` → `schwung-builder` → `move-anything-builder`.
+**⚠ apt "invalid signature" during a docker build = the Docker VM's disk is FULL**, not an
+architecture or GPG problem (I misdiagnosed it as arm64/emulation for several cycles). Check
+and reclaim:
+
+```sh
+docker run --rm ubuntu:22.04 df -h /     # 0 available = this is your bug
+docker builder prune -af                 # reclaims build cache, images untouched
+```
+
+A full VM also makes `docker image inspect` fail intermittently, which looks like the toolchain
+image vanishing. `build.sh` now fails loudly on a full VM; it prefers the native arm64
+`davebox-builder` image, falling back through `schwung-builder` → `move-anything-builder`.
 
 ⚠ Do not run `EnginePerfTool` captures against a live Move stack — that is the suspected cause
 of two full device lockups needing a power cycle.
