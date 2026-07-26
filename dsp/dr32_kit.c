@@ -58,6 +58,7 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
 
     s->sample = w.data;
     s->frames = w.frames;
+    s->channels = w.channels;
     snprintf(s->path, sizeof(s->path), "%s", path);
     return DR32_WAV_OK;
 }
@@ -68,19 +69,30 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
     if (pad < 0) return;
     dr32_pad_slot *s = &k->pads[pad];
 
-    // Choke: a pad cuts every OTHER pad sharing its group. Note the pad does not
-    // choke itself — retrigger handles that, and self-choking would apply the
-    // 3 ms fade to a voice we're about to restart anyway.
+    // Choke arbitration, per the native DrumChainMidiNode: among note-ons that
+    // arrive at the SAME time in the same nonzero group, the HIGHEST incoming
+    // MIDI note wins and the lower ones are killed. Sequential hits behave the
+    // usual way (the newer note chokes the older).
+    //
+    // "Same time" is approximated as "same render block", which is the finest
+    // grain available to us: the host hands us a block's MIDI before rendering.
     int grp = s->params.choke_group;
     if (grp > 0) {
         for (int i = 0; i < DR32_PADS; i++) {
             if (i == pad) continue;
-            if (k->pads[i].params.choke_group == grp && k->pads[i].voice.active)
-                dr32_voice_choke(&k->pads[i].voice);
+            dr32_pad_slot *o = &k->pads[i];
+            if (o->params.choke_group != grp || !o->voice.active) continue;
+            if (o->voice.block == k->block && o->voice.note > note) {
+                // A higher note already won this block: the incoming note loses.
+                return;
+            }
+            dr32_voice_choke(&o->voice);
         }
     }
 
-    dr32_voice_start(&s->voice, &s->params, s->sample, s->frames, velocity);
+    dr32_voice_start(&s->voice, &s->params, s->sample, s->frames, s->channels, velocity);
+    s->voice.note = note;              // arbitration uses the INCOMING note
+    s->voice.block = k->block;
 }
 
 void dr32_kit_note_off(dr32_kit *k, int note) {
@@ -95,6 +107,7 @@ void dr32_kit_all_off(dr32_kit *k) {
 }
 
 void dr32_kit_render(dr32_kit *k, float *out, int frames) {
+    k->block++;
     memset(out, 0, sizeof(float) * 2 * (size_t)frames);
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_voice *v = &k->pads[i].voice;

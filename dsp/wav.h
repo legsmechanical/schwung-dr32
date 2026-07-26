@@ -5,9 +5,10 @@
 // Preset Samples are PCM, mono, 44100 Hz, **24-bit** (not 16), so 24-bit
 // support is mandatory, not optional.
 //
-// Output is always float32, deinterleaved to a single mono buffer (drum pads
-// are mono voices; a stereo source is downmixed at load, once, rather than
-// costing us a second read every note).
+// Output is float32, INTERLEAVED, preserving the source channel count. The
+// native engine keeps stereo samples stereo (it reads L/R separately in the
+// render kernel and carries a mono/stereo bit in its 320-way specialization
+// index), so downmixing at load would be a fidelity bug.
 //
 // NEVER call this from the audio thread — it does file I/O and allocates.
 
@@ -17,10 +18,10 @@
 #include <stddef.h>
 
 typedef struct {
-    float *data;        // mono float32, owned; NULL if load failed
-    size_t frames;      // number of samples in `data`
+    float *data;        // interleaved float32, owned; NULL if load failed
+    size_t frames;      // frames (NOT samples: data holds frames*channels)
     int    sample_rate; // source rate (44100 for everything in the Move library)
-    int    channels;    // source channel count, before downmix
+    int    channels;    // 1 or 2 (higher counts are downmixed to stereo)
     int    bits;        // source bit depth
 } dr32_wav;
 

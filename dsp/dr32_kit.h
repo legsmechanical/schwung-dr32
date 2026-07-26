@@ -19,8 +19,9 @@ typedef struct {
     dr32_pad  params;
     dr32_voice voice;
 
-    float  *sample;          // owned, may be NULL (empty pad)
+    float  *sample;          // owned, interleaved, may be NULL (empty pad)
     size_t  frames;
+    int     channels;        // 1 or 2
     float  *retired;         // previous buffer, freed on the NEXT load
     char    path[DR32_MAX_PATH];
 
@@ -32,6 +33,7 @@ typedef struct {
     dr32_pad_slot pads[DR32_PADS];
     signed char   note_to_pad[128];   // -1 = unmapped
     float         master_gain;        // linear
+    unsigned      block;              // render-block counter (choke simultaneity)
 } dr32_kit;
 
 void dr32_kit_init(dr32_kit *k);

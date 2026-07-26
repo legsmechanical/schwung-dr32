@@ -116,28 +116,38 @@ dr32_wav_err dr32_wav_load(const char *path, dr32_wav *out) {
             if (frames == 0) { err = DR32_WAV_ERR_FORMAT; goto fail; }
             if (frames > DR32_WAV_MAX_FRAMES) frames = DR32_WAV_MAX_FRAMES;  // clamp, don't fail
 
+            // Keep 1 or 2 channels as-is; fold anything wider down to stereo.
+            int out_ch = (channels >= 2) ? 2 : 1;
+
             unsigned char *raw = (unsigned char *)malloc(frames * frame_bytes);
-            float *mono = (float *)malloc(frames * sizeof(float));
-            if (!raw || !mono) { free(raw); free(mono); err = DR32_WAV_ERR_MEMORY; goto fail; }
+            float *pcm = (float *)malloc(frames * (size_t)out_ch * sizeof(float));
+            if (!raw || !pcm) { free(raw); free(pcm); err = DR32_WAV_ERR_MEMORY; goto fail; }
 
             if (fread(raw, 1, frames * frame_bytes, f) != frames * frame_bytes) {
-                free(raw); free(mono); err = DR32_WAV_ERR_FORMAT; goto fail;
+                free(raw); free(pcm); err = DR32_WAV_ERR_FORMAT; goto fail;
             }
 
-            const float inv_ch = 1.0f / (float)channels;
             for (size_t i = 0; i < frames; i++) {
                 const unsigned char *p = raw + i * frame_bytes;
-                float acc = 0.0f;
-                for (int c = 0; c < channels; c++)
-                    acc += decode(p + (size_t)c * bytes_per_sample, bits, is_float);
-                mono[i] = acc * inv_ch;   // downmix once, at load
+                if (out_ch == 1) {
+                    pcm[i] = decode(p, bits, is_float);
+                } else {
+                    pcm[2 * i]     = decode(p, bits, is_float);
+                    pcm[2 * i + 1] = decode(p + bytes_per_sample, bits, is_float);
+                    // >2 channels: extra channels are summed into the pair so
+                    // nothing is silently dropped.
+                    for (int c = 2; c < channels; c++) {
+                        float extra = decode(p + (size_t)c * bytes_per_sample, bits, is_float);
+                        pcm[2 * i + (c & 1)] += extra;
+                    }
+                }
             }
             free(raw);
 
-            out->data        = mono;
+            out->data        = pcm;
             out->frames      = frames;
             out->sample_rate = (int)rate;
-            out->channels    = (int)channels;
+            out->channels    = out_ch;
             out->bits        = (int)bits;
             fclose(f);
             return DR32_WAV_OK;

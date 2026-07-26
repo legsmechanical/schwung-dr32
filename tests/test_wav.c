@@ -81,10 +81,13 @@ static void expect_ramp(const char *label, const char *path, int frames, float t
     if (e != DR32_WAV_OK) return;
     CHECK(w.frames == (size_t)frames, "%s: frames %zu != %d", label, w.frames, frames);
     CHECK(w.sample_rate == 44100, "%s: rate %d", label, w.sample_rate);
+    // Data is INTERLEAVED and keeps the source channel count — the native
+    // engine plays stereo samples in stereo, so we no longer downmix.
     for (int i = 0; i < frames; i++) {
         float want = (2.0f * (float)i / (float)(frames - 1) - 1.0f) * 0.999f;
-        if (fabsf(w.data[i] - want) > tol) {
-            CHECK(0, "%s: frame %d = %.6f, want %.6f (tol %.6f)", label, i, w.data[i], want, tol);
+        if (fabsf(w.data[i * w.channels] - want) > tol) {
+            CHECK(0, "%s: frame %d = %.6f, want %.6f (tol %.6f)", label, i,
+                  w.data[i * w.channels], want, tol);
             break;
         }
     }
@@ -104,8 +107,18 @@ int main(int argc, char **argv) {
     write_wav(tmp,  8, 1, 0, N, 0, 0); expect_ramp("8-bit unsigned",tmp, N, 1e-2f);
     write_wav(tmp, 32, 1, 1, N, 0, 0); expect_ramp("float32 mono",  tmp, N, 1e-6f);
 
-    // Stereo with identical channels must downmix to the same ramp.
-    write_wav(tmp, 24, 2, 0, N, 0, 0); expect_ramp("24-bit stereo downmix", tmp, N, 1e-6f);
+    // Stereo is PRESERVED (not downmixed): both channels carry the ramp.
+    write_wav(tmp, 24, 2, 0, N, 0, 0);
+    expect_ramp("24-bit stereo", tmp, N, 1e-6f);
+    {
+        dr32_wav w;
+        dr32_wav_load(tmp, &w);
+        CHECK(w.channels == 2, "stereo file reported %d channels", w.channels);
+        int mismatch = 0;
+        for (int i = 0; i < N; i++) if (w.data[2 * i] != w.data[2 * i + 1]) mismatch++;
+        CHECK(mismatch == 0, "%d frames where L != R in an identical-channel file", mismatch);
+        dr32_wav_free(&w);
+    }
 
     // WAVE_FORMAT_EXTENSIBLE and a leading unknown odd-sized chunk.
     write_wav(tmp, 24, 1, 0, N, 1, 0); expect_ramp("extensible 24-bit", tmp, N, 1e-6f);

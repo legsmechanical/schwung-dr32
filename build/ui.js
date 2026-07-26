@@ -5,14 +5,13 @@ import { createSoundGeneratorUI } from "/data/UserData/schwung/shared/sound_gene
 var USER_LIBRARY = "/data/UserData/UserLibrary";
 var URI_PREFIX = "ableton:/user-library";
 var FILTER_TYPES = {
-  "Lowpass": { mode: "lp", slope: 24 },
-  // device UI: "Low-Pass 24dB"
-  "Lowpass 12dB": { mode: "lp", slope: 12 },
-  // device UI: "Low-Pass 12dB"
-  "Highpass": { mode: "hp", slope: 24 },
-  // device UI: "High-Pass 24dB"
-  "Peak": { mode: "peak", slope: 0 }
-  // uses Voice_Filter_PeakGain
+  // `engine` is the native filter_type index used in the 320-kernel
+  // specialization (DRUM_FILTER_RECON.md): 0 LP12, 1 LP24, 2 HP24, 3 Peak.
+  // Note "Lowpass" — the JSON default — is the 24 dB slope, not 12.
+  "Lowpass": { mode: "lp", slope: 24, engine: 1 },
+  "Lowpass 12dB": { mode: "lp", slope: 12, engine: 0 },
+  "Highpass": { mode: "hp", slope: 24, engine: 2 },
+  "Peak": { mode: "peak", slope: 0, engine: 3 }
 };
 var CELL_DEFAULTS = {
   Voice_PitchToEnvelopeModulation: false,
@@ -158,10 +157,12 @@ function parseKit(jsonText) {
       name: cell && cell.name || chain.name || "",
       mixer: {
         volume: mixer.volume ?? 0,
-        // dB
+        // dB; gain = 10^(dB/20)
         pan: mixer.pan ?? 0,
-        // -1..1
-        send: mixer.sends && mixer.sends[0] ? mixer.sends[0].amount : -70
+        // -50..+50 (see PAN_MIN/PAN_MAX)
+        send: mixer.sends && mixer.sends[0] ? mixer.sends[0].amount : -70,
+        speakerOn: mixer.speakerOn !== false
+        // false = sample-exact silence
       },
       sampleUri: uri || null,
       // null = empty pad (112 in corpus)
@@ -210,6 +211,8 @@ function padWrites(i, pad) {
   put("pitch_env", p.Voice_PitchToEnvelopeModulation ? 1 : 0);
   put("volume", pad.mixer.volume ?? 0);
   put("pan", pad.mixer.pan ?? 0);
+  put("speaker_on", pad.mixer.speakerOn === false ? 0 : 1);
+  put("sending_note", pad.sendingNote ?? 60);
   return w;
 }
 function createKitLoader({ setParam, getParam, readFile, log }) {

@@ -35,10 +35,13 @@ function padWrites(i, pad) {
     put('mod_target', p.Voice_ModulationTarget ?? 'Filter');
     put('mod_amount', p.Voice_ModulationAmount ?? 0);
     put('pitch_env', p.Voice_PitchToEnvelopeModulation ? 1 : 0);
-    // Per-pad mixer: cell Volume (dB) and the chain mixer's volume are separate
-    // controls; the chain mixer is the pad fader, so it wins for level.
+    // Per-pad mixer. Volume is dB (gain = 10^(dB/20), measured). Pan is the
+    // -50..+50 serialized domain — NOT -1..+1 — and feeds the engine's
+    // equal-power law.
     put('volume', pad.mixer.volume ?? 0);
     put('pan', pad.mixer.pan ?? 0);
+    put('speaker_on', pad.mixer.speakerOn === false ? 0 : 1);
+    put('sending_note', pad.sendingNote ?? 60);
     return w;
 }
 

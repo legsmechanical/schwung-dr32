@@ -46,8 +46,10 @@ static int split_pad_key(const char *key, const char **rest) {
 static int parse_filter_type(const char *v) {
     // The JSON's own spellings, measured on device. Accept the numeric form too
     // so the UI can send either.
-    if (!strcmp(v, "Lowpass") || !strcmp(v, "0")) return DR32_FILT_LP24;
-    if (!strcmp(v, "Lowpass 12dB") || !strcmp(v, "1")) return DR32_FILT_LP12;
+    // Numeric values follow the NATIVE engine indices (0 LP12, 1 LP24, 2 HP24,
+    // 3 Peak); the JSON default "Lowpass" is the 24 dB slope.
+    if (!strcmp(v, "Lowpass") || !strcmp(v, "1")) return DR32_FILT_LP24;
+    if (!strcmp(v, "Lowpass 12dB") || !strcmp(v, "0")) return DR32_FILT_LP12;
     if (!strcmp(v, "Highpass") || !strcmp(v, "2")) return DR32_FILT_HP24;
     if (!strcmp(v, "Peak") || !strcmp(v, "3")) return DR32_FILT_PEAK;
     return DR32_FILT_LP24;
@@ -130,6 +132,8 @@ static void set_param(void *instance, const char *key, const char *val) {
         else if (!strcmp(sub, "mod_target"))    p->mod_target = (dr32_mod_target)parse_mod_target(val);
         else if (!strcmp(sub, "mod_amount"))    p->mod_amount = f;
         else if (!strcmp(sub, "pitch_env"))     p->pitch_to_env = atoi(val) ? 1 : 0;
+        else if (!strcmp(sub, "speaker_on"))    p->speaker_on = atoi(val) ? 1 : 0;
+        else if (!strcmp(sub, "sending_note"))  p->sending_note = atoi(val);
         else if (!strcmp(sub, "play"))          dr32_kit_note_on(&in->kit, s->note, atoi(val));
         return;
     }
