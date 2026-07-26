@@ -7,6 +7,7 @@
 #include "host/plugin_api_v1.h"
 #include "dr32_kit.h"
 #include "dr32_params.h"
+#include "dr32_preset.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -131,8 +132,22 @@ static void set_param(void *instance, const char *key, const char *val) {
     // everything else goes through the shared dispatch.
     if (!strcmp(key, "kit")) {
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
-        in->kit_dirty = 1;
-        dr32_kit_all_off(&in->kit);
+        // Load HERE, on the host thread. This used to raise a dirty flag for
+        // ui.js to notice, but that file never runs in a chain slot, so the
+        // kit was never actually loaded and the module was silent.
+        dr32_preset_report rep;
+        int ok = dr32_preset_load(&in->kit, val, &rep);
+        char msg[320];
+        if (ok) {
+            snprintf(msg, sizeof(msg),
+                     "dr32: kit '%s' loaded — %d pads, %d samples, %d empty, %d unresolved, %d failed",
+                     val, rep.pads, rep.loaded, rep.empty, rep.unresolved, rep.failed);
+        } else {
+            snprintf(msg, sizeof(msg), "dr32: kit '%s' FAILED to load", val);
+            snprintf(in->err, sizeof(in->err), "could not load kit: %s", val);
+        }
+        logmsg(msg);
+        in->kit_dirty = 0;
         return;
     }
     if (!strcmp(key, "kit_dirty")) { in->kit_dirty = atoi(val); return; }

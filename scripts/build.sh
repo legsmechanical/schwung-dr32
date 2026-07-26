@@ -27,17 +27,30 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
     # arm64 host), and the image we already have is the one that built the other
     # modules — so only build it when it is genuinely missing.
     # Toolchain image. `davebox-builder` is a native arm64 Debian image that
-    # already carries aarch64-linux-gnu-gcc, so it needs no emulation; prefer
-    # it and fall back to building our own only if it is gone.
+    # already carries aarch64-linux-gnu-gcc; prefer it, and only build our own
+    # if none of the known images exist.
     #
-    # ⚠ Do NOT rebuild scripts/Dockerfile on an arm64 Mac: the cross packages
-    # are x86_64-only, and building it emulated fails with apt GPG "invalid
-    # signature" errors under qemu. Docker Desktop prunes images periodically,
-    # so this fallback order matters.
+    # ⚠ If `docker build` here fails with apt "At least one invalid signature
+    # was encountered", that is NOT an architecture or GPG problem — it is the
+    # Docker VM's disk being FULL. Check with:
+    #     docker run --rm ubuntu:22.04 df -h /
+    # and reclaim with `docker builder prune -af` (and/or remove unused images).
+    # A full VM also makes `docker image inspect` fail intermittently, which
+    # looks like the image "disappearing" and silently leaves dist/ stale.
     BUILDER=""
     for img in davebox-builder schwung-builder move-anything-builder; do
         if docker image inspect "$img" >/dev/null 2>&1; then BUILDER="$img"; break; fi
     done
+
+    # Fail loudly on a full VM rather than limping on with a stale dist/.
+    if [ -z "$BUILDER" ]; then
+        free_kb=$(docker run --rm ubuntu:22.04 df -k / 2>/dev/null | awk 'NR==2{print $4}')
+        if [ -n "$free_kb" ] && [ "$free_kb" -lt 262144 ]; then
+            echo "ERROR: Docker VM disk is nearly full (${free_kb} KB free)." >&2
+            echo "       Reclaim space first:  docker builder prune -af" >&2
+            exit 1
+        fi
+    fi
     if [ -z "$BUILDER" ]; then
         echo "==> no toolchain image found; building one" >&2
         docker build -q -t move-anything-builder -f scripts/Dockerfile scripts >/dev/null
@@ -58,7 +71,7 @@ mkdir -p build
 $CC -O2 -shared -fPIC -march=armv8-a -mtune=cortex-a72 \
     -DNDEBUG -std=c11 -Wall -Wextra \
     dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
-    dsp/dr32_effects.c dsp/wav.c \
+    dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/wav.c \
     -Idsp \
     -o build/dsp.so -lm
 
