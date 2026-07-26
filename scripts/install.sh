@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# install.sh — deploy dist/dr32/ to the Move.
+# install.sh — deploy dist/dr32/ to the Move AND restart the stack.
+#
+# ⚠ A RESTART IS REQUIRED, not optional. Swapping the synth out and back in does
+# NOT pick up new module code — the old dsp.so/module.json stay live and the
+# deploy silently appears to do nothing. So this script always restarts, via the
+# canonical scripts/restart_move.sh.
+#
 # Usage: scripts/install.sh                          (WiFi / ssh-config alias)
 #        MOVE_HOST=172.16.254.1 scripts/install.sh   (USB tether)
+#        SKIP_RESTART=1 scripts/install.sh           (deploy only — you restart)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,4 +27,11 @@ for f in module.json ui.js; do
     scp "$HERE/dist/${MODULE_ID}/$f" "ableton@${HOST}:${DEST}/"
 done
 ssh "ableton@${HOST}" "chmod -R a+rw '${DEST}'"
-echo "==> installed. Swap the synth out/in (or restart) to reload a live .so."
+echo "==> installed"
+
+if [ "${SKIP_RESTART:-0}" = "1" ]; then
+    echo "==> SKIP_RESTART set — remember the module will NOT reload until you restart"
+    exit 0
+fi
+
+MOVE_HOST="root@${HOST}" "$HERE/../scripts/restart_move.sh"

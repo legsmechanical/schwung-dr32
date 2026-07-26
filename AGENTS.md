@@ -43,8 +43,19 @@ implementing them at all.
 ## Device
 
 ```sh
-./scripts/build.sh && ./scripts/install.sh    # prefers the native arm64 davebox-builder image
+./scripts/build.sh && ./scripts/install.sh    # install ALWAYS restarts the stack
 ```
+
+**⚠ A restart is required after every deploy — swapping the synth out and back in
+is NOT enough.** Without a restart the old `dsp.so`/`module.json` stay live and the
+deploy silently appears to have done nothing (this cost a debugging cycle where a
+"deployed" fix wasn't running at all). `install.sh` therefore always runs the
+canonical `scripts/restart_move.sh`; `SKIP_RESTART=1` opts out if you want to
+batch several deploys.
+
+**⚠ If `build.sh` fails, `dist/` keeps the PREVIOUS build and `install.sh` will
+happily ship it.** Always check that build.sh printed `==> done:` before trusting
+an install.
 
 ⚠ `scripts/Dockerfile` cannot be rebuilt on an arm64 Mac (x86-only cross packages; emulated apt
 fails on GPG). If the toolchain image is missing, the build falls back through
