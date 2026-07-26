@@ -95,14 +95,13 @@ int main(int argc, char **argv) {
         dr32_kit_free(&kit);
     }
 
-    // ---- live preview: assigning a sample auditions the pad ONLY while the
-    //      browser is open, so kit loads and patch restores stay silent.
+    // ---- assigning a sample must NEVER sound on its own, and playing a pad
+    //      must use the incoming velocity (not a fixed audition level).
     {
         const char *wav = "/tmp/dr32_preview.wav";
         FILE *f = fopen(wav, "wb");
         if (f) {
-            /* 0.1 s of 16-bit mono DC */
-            int n = 4410;
+            int n = 4410;                       /* 0.1 s of 16-bit mono DC */
             unsigned char hdr[44] = {0};
             memcpy(hdr, "RIFF", 4); memcpy(hdr + 8, "WAVEfmt ", 8);
             unsigned fmtsz = 16, rate = 44100, brate = 88200, data = (unsigned)n * 2, riff = 36 + data;
@@ -117,17 +116,17 @@ int main(int argc, char **argv) {
 
             dr32_kit kit;
             dr32_kit_init(&kit);
-
             dr32_apply_param(&kit, "pad0_sample", wav);
-            CHECK(!kit.pads[0].voice.active, "assigning a sample must NOT sound when preview is off");
+            CHECK(!kit.pads[0].voice.active, "assigning a sample must not sound by itself");
 
-            dr32_apply_param(&kit, "preview_mode", "1");
-            dr32_apply_param(&kit, "pad1_sample", wav);
-            CHECK(kit.pads[1].voice.active, "assigning a sample SHOULD audition while previewing");
-
-            dr32_apply_param(&kit, "preview_mode", "0");
-            dr32_apply_param(&kit, "pad2_sample", wav);
-            CHECK(!kit.pads[2].voice.active, "preview must stop auditioning once the browser closes");
+            /* velocity reaches the voice: the engine's dB law is centred on 70,
+             * so a hard hit is louder than a soft one for the same sample. */
+            kit.pads[0].params.vel_to_volume = 0.5f;
+            dr32_kit_note_on(&kit, kit.pads[0].note, 20);
+            float soft = kit.pads[0].voice.amp;
+            dr32_kit_note_on(&kit, kit.pads[0].note, 120);
+            float hard = kit.pads[0].voice.amp;
+            CHECK(hard > soft * 2.0f, "velocity must scale playback: soft %.4f vs hard %.4f", soft, hard);
 
             dr32_kit_free(&kit);
             remove(wav);
