@@ -94,6 +94,7 @@ typedef struct {
     float fx_p1, fx_p2;    // the slot's two exposed controls
     int   sending_note;    // note the rack feeds the cell (factory kits: 60)
     int   speaker_on;      // mixer speakerOn; 0 = sample-exact silence
+    float send_db[2];      // post-fader send amounts, dB (-70 = off), like native
 } dr32_pad;
 
 /** One TPT SVF stage's integrator state. */

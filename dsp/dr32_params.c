@@ -104,6 +104,8 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "pitch_env"))   return snprintf(buf, buf_len, "%d", p->pitch_to_env);
         if (!strcmp(sub, "sending_note"))return snprintf(buf, buf_len, "%d", p->sending_note);
         if (!strcmp(sub, "speaker_on"))  return snprintf(buf, buf_len, "%d", p->speaker_on);
+        if (!strcmp(sub, "send1"))       return snprintf(buf, buf_len, "%g", (double)p->send_db[0]);
+        if (!strcmp(sub, "send2"))       return snprintf(buf, buf_len, "%g", (double)p->send_db[1]);
         return 0;
     }
 
@@ -153,11 +155,48 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "pitch_env"))     p->pitch_to_env = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "speaker_on"))    p->speaker_on = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "sending_note"))  p->sending_note = atoi(val);
+        else if (!strcmp(sub, "send1"))         p->send_db[0] = f;
+        else if (!strcmp(sub, "send2"))         p->send_db[1] = f;
         else if (!strcmp(sub, "fx_type"))       p->fx_type = dr32_fx_from_name(val);
         else if (!strcmp(sub, "fx_p1"))         p->fx_p1 = f;
         else if (!strcmp(sub, "fx_p2"))         p->fx_p2 = f;
         else if (!strcmp(sub, "play"))          dr32_kit_note_on(kit, s->note, atoi(val));
         return 1;
+    }
+
+    // --- FX buses: send1_*/send2_* and insert1_*/insert2_*
+    if (!strncmp(key, "send", 4) || !strncmp(key, "insert", 6)) {
+        int is_send = (key[0] == 's');
+        const char *p = key + (is_send ? 4 : 6);
+        int slot = (*p >= '1' && *p <= '2') ? (*p - '1') : -1;
+        if (slot >= 0 && p[1] == '_' && kit->fx) {
+            const char *f2 = p + 2;
+            float v = (float)atof(val);
+            dr32_fxbus *fx = kit->fx;
+            // Params are stored per slot so any one of them can be set alone.
+            float *cache = is_send ? kit->send_p[slot] : kit->insert_p[slot];
+            if (!strcmp(f2, "type")) {
+                dr32_efx_type t = dr32_efx_from_name(val);
+                if (is_send) dr32_fxbus_set_send_type(fx, slot, t);
+                else         dr32_fxbus_set_insert_type(fx, slot, t);
+                return 1;
+            }
+            if (!strcmp(f2, "return") && is_send) {
+                dr32_fxbus_set_send_return(fx, slot, v);
+                return 1;
+            }
+            int idx = -1;
+            if      (!strcmp(f2, "p1"))  idx = 0;
+            else if (!strcmp(f2, "p2"))  idx = 1;
+            else if (!strcmp(f2, "p3"))  idx = 2;
+            else if (!strcmp(f2, "mix")) idx = 3;
+            if (idx >= 0) {
+                cache[idx] = v;
+                if (is_send) dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+                else         dr32_fxbus_set_insert_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+                return 1;
+            }
+        }
     }
 
     if (!strcmp(key, "master")) { kit->master_gain = (float)atof(val); return 1; }

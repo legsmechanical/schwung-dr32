@@ -3,9 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 void dr32_kit_init(dr32_kit *k) {
     memset(k, 0, sizeof(*k));
+    k->fx = dr32_fxbus_create(DR32_SR);
     for (int i = 0; i < 128; i++) k->note_to_pad[i] = -1;
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_pad_defaults(&k->pads[i].params);
@@ -13,9 +15,17 @@ void dr32_kit_init(dr32_kit *k) {
         k->note_to_pad[DR32_FIRST_NOTE + i] = (signed char)i;
     }
     k->master_gain = 1.0f;
+    for (int i = 0; i < 2; i++) {
+        k->send_p[i][0] = k->send_p[i][1] = k->send_p[i][2] = 0.5f;
+        k->send_p[i][3] = 1.0f;                 // a send bus runs fully wet
+        k->insert_p[i][0] = k->insert_p[i][1] = k->insert_p[i][2] = 0.5f;
+        k->insert_p[i][3] = 1.0f;
+    }
 }
 
 void dr32_kit_free(dr32_kit *k) {
+    dr32_fxbus_destroy(k->fx);
+    k->fx = NULL;
     for (int i = 0; i < DR32_PADS; i++) {
         free(k->pads[i].sample);
         free(k->pads[i].retired);
@@ -108,13 +118,45 @@ void dr32_kit_all_off(dr32_kit *k) {
     for (int i = 0; i < DR32_PADS; i++) k->pads[i].voice.active = 0;
 }
 
+static inline float db_to_gain(float db) {
+    // -70 dB is the format's "off", and native floors the send there.
+    if (db <= -70.0f) return 0.0f;
+    return powf(10.0f, db / 20.0f);
+}
+
 void dr32_kit_render(dr32_kit *k, float *out, int frames) {
     k->block++;
+    if (frames > DR32_KIT_MAX_BLOCK) frames = DR32_KIT_MAX_BLOCK;
     memset(out, 0, sizeof(float) * 2 * (size_t)frames);
+
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_voice *v = &k->pads[i].voice;
-        if (v->active) dr32_voice_render(v, out, frames);
+        if (!v->active) continue;
+
+        const float s0 = db_to_gain(k->pads[i].params.send_db[0]);
+        const float s1 = db_to_gain(k->pads[i].params.send_db[1]);
+
+        if (!k->fx || (s0 <= 0.0f && s1 <= 0.0f)) {
+            dr32_voice_render(v, out, frames);       // dry only: no detour
+            continue;
+        }
+
+        // This pad feeds the send buses, so render it on its own first. Sends
+        // are POST-fader (native behaviour), which is exactly what the voice
+        // already produces.
+        memset(k->scratch, 0, sizeof(float) * 2 * (size_t)frames);
+        dr32_voice_render(v, k->scratch, frames);
+        for (int f = 0; f < frames; f++) {
+            float l = k->scratch[2 * f], r = k->scratch[2 * f + 1];
+            out[2 * f]     += l;
+            out[2 * f + 1] += r;
+            if (s0 > 0.0f) dr32_fxbus_send(k->fx, 0, l * s0, r * s0);
+            if (s1 > 0.0f) dr32_fxbus_send(k->fx, 1, l * s1, r * s1);
+        }
     }
+
+    if (k->fx) dr32_fxbus_process(k->fx, out, frames);
+
     if (k->master_gain != 1.0f) {
         for (int i = 0; i < 2 * frames; i++) out[i] *= k->master_gain;
     }

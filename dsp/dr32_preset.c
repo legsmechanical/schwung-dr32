@@ -142,6 +142,13 @@ int dr32_preset_load(dr32_kit *kit, const char *path, dr32_preset_report *rep) {
         pad->volume_db  = (float)dr32_json_num(mixer, "volume", 0.0);
         pad->pan        = (float)dr32_json_num(mixer, "pan", 0.0);   // -50..+50
         pad->speaker_on = dr32_json_bool(mixer, "speakerOn", 1);
+        // Native kits have exactly one send (the single return chain), so it
+        // maps to send 1; send 2 is DR32's extension and starts off.
+        pad->send_db[0] = -70.0f;
+        pad->send_db[1] = -70.0f;
+        const dr32_json *sends = dr32_json_get(mixer, "sends");
+        const dr32_json *s0 = dr32_json_at(sends, 0);
+        if (s0) pad->send_db[0] = (float)dr32_json_num(s0, "amount", -70.0);
 
         const dr32_json *cell = dr32_json_find_kind(chain, "drumCell");
         if (!cell) continue;

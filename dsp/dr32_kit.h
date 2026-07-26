@@ -9,11 +9,13 @@
 #define DR32_KIT_H
 
 #include "dr32_voice.h"
+#include "dr32_fxbus.h"
 #include "wav.h"
 
 #define DR32_PADS 32
 #define DR32_FIRST_NOTE 36          // pad 0; pads run 36..67
 #define DR32_MAX_PATH 512
+#define DR32_KIT_MAX_BLOCK 1024
 
 typedef struct {
     dr32_pad  params;
@@ -35,6 +37,13 @@ typedef struct {
     signed char   note_to_pad[128];   // -1 = unmapped
     float         master_gain;        // linear
     unsigned      block;              // render-block counter (choke simultaneity)
+    dr32_fxbus   *fx;                 // 2 sends + 2 kit inserts (may be NULL)
+    // Per-pad render buffer, used only when a pad actually feeds a send.
+    float         scratch[2 * DR32_KIT_MAX_BLOCK];
+    // Slot params are cached so the UI can set one at a time (the bus API takes
+    // them together). [p1,p2,p3,mix].
+    float         send_p[2][4];
+    float         insert_p[2][4];
 } dr32_kit;
 
 void dr32_kit_init(dr32_kit *k);

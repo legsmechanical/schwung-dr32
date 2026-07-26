@@ -28,6 +28,8 @@ void dr32_pad_defaults(dr32_pad *p) {
     p->mod_target = DR32_MOD_FILTER;
     p->sending_note = 60;
     p->speaker_on = 1;
+    p->send_db[0] = -70.0f;      // off
+    p->send_db[1] = -70.0f;
 }
 
 // ------------------------------------------------------------------ filter

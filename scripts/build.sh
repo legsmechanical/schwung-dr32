@@ -70,15 +70,25 @@ fi
 
 CROSS_PREFIX="${CROSS_PREFIX:-aarch64-linux-gnu-}"
 CC="${CROSS_PREFIX}gcc"
+CXX="${CROSS_PREFIX}g++"
+ARCH="-march=armv8-a -mtune=cortex-a72"
 
-echo "==> compiling with $CC"
-mkdir -p build
-$CC -O2 -shared -fPIC -march=armv8-a -mtune=cortex-a72 \
-    -DNDEBUG -std=c11 -Wall -Wextra \
-    dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
-    dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/wav.c \
-    -Idsp \
-    -o build/dsp.so -lm
+echo "==> compiling with $CC / $CXX"
+mkdir -p build/obj
+
+# The engine is C11; the FX bus is C++ because the vendored reverbs are C++
+# structs (dsp/vendor/SOURCES.md). Compile each with its own front end and link
+# with g++ so the C++ runtime bits resolve.
+for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
+           dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/wav.c; do
+    $CC -O2 -fPIC $ARCH -DNDEBUG -std=c11 -Wall -Wextra -Idsp \
+        -c "$src" -o "build/obj/$(basename "${src%.c}").o"
+done
+
+$CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
+    -c dsp/dr32_fxbus.cpp -o build/obj/dr32_fxbus.o
+
+$CXX -shared -o build/dsp.so build/obj/*.o -lm
 
 echo "==> packaging dist/"
 rm -rf "dist/${MODULE_ID}"

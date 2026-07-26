@@ -103,6 +103,10 @@
               "label": "Pads"
             },
             {
+              "level": "fx",
+              "label": "Effects"
+            },
+            {
               "key": "master",
               "name": "Master",
               "type": "float",
@@ -261,6 +265,24 @@
               "type": "int",
               "min": 0,
               "max": 127
+            },
+            {
+              "key": "send1",
+              "name": "Send 1",
+              "type": "float",
+              "min": -70.0,
+              "max": 6.0,
+              "step": 0.5,
+              "unit": "dB"
+            },
+            {
+              "key": "send2",
+              "name": "Send 2",
+              "type": "float",
+              "min": -70.0,
+              "max": 6.0,
+              "step": 0.5,
+              "unit": "dB"
             }
           ],
           "knobs": [
@@ -273,6 +295,244 @@
             "pan",
             "volume"
           ]
+        },
+        "send1": {
+          "name": "Send 1",
+          "params": [
+            {
+              "key": "send1_type",
+              "name": "Type",
+              "type": "enum",
+              "options": [
+                "Off",
+                "Plate",
+                "Room",
+                "Hall"
+              ]
+            },
+            {
+              "key": "send1_p1",
+              "name": "Size",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "send1_p2",
+              "name": "Damping",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "send1_p3",
+              "name": "Bigness",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "send1_return",
+              "name": "Return",
+              "type": "float",
+              "min": 0.0,
+              "max": 2.0,
+              "step": 0.02
+            }
+          ],
+          "knobs": [
+            "send1_p1",
+            "send1_p2",
+            "send1_p3",
+            "send1_return"
+          ]
+        },
+        "send2": {
+          "name": "Send 2",
+          "params": [
+            {
+              "key": "send2_type",
+              "name": "Type",
+              "type": "enum",
+              "options": [
+                "Off",
+                "Plate",
+                "Room",
+                "Hall"
+              ]
+            },
+            {
+              "key": "send2_p1",
+              "name": "Size",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "send2_p2",
+              "name": "Damping",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "send2_p3",
+              "name": "Bigness",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "send2_return",
+              "name": "Return",
+              "type": "float",
+              "min": 0.0,
+              "max": 2.0,
+              "step": 0.02
+            }
+          ],
+          "knobs": [
+            "send2_p1",
+            "send2_p2",
+            "send2_p3",
+            "send2_return"
+          ]
+        },
+        "insert1": {
+          "name": "Insert 1",
+          "params": [
+            {
+              "key": "insert1_type",
+              "name": "Type",
+              "type": "enum",
+              "options": [
+                "Off",
+                "Plate",
+                "Room",
+                "Hall"
+              ]
+            },
+            {
+              "key": "insert1_p1",
+              "name": "Size",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "insert1_p2",
+              "name": "Damping",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "insert1_p3",
+              "name": "Bigness",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "insert1_mix",
+              "name": "Mix",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            }
+          ],
+          "knobs": [
+            "insert1_p1",
+            "insert1_p2",
+            "insert1_p3",
+            "insert1_mix"
+          ]
+        },
+        "insert2": {
+          "name": "Insert 2",
+          "params": [
+            {
+              "key": "insert2_type",
+              "name": "Type",
+              "type": "enum",
+              "options": [
+                "Off",
+                "Plate",
+                "Room",
+                "Hall"
+              ]
+            },
+            {
+              "key": "insert2_p1",
+              "name": "Size",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "insert2_p2",
+              "name": "Damping",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "insert2_p3",
+              "name": "Bigness",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            },
+            {
+              "key": "insert2_mix",
+              "name": "Mix",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01
+            }
+          ],
+          "knobs": [
+            "insert2_p1",
+            "insert2_p2",
+            "insert2_p3",
+            "insert2_mix"
+          ]
+        },
+        "fx": {
+          "name": "Effects",
+          "params": [
+            {
+              "level": "send1",
+              "label": "Send 1"
+            },
+            {
+              "level": "send2",
+              "label": "Send 2"
+            },
+            {
+              "level": "insert1",
+              "label": "Insert 1"
+            },
+            {
+              "level": "insert2",
+              "label": "Insert 2"
+            }
+          ],
+          "knobs": []
         }
       }
     }
