@@ -1,3 +1,6 @@
+/* clock_gettime/CLOCK_MONOTONIC are POSIX, not ISO C11, and we build -std=c11. */
+#define _POSIX_C_SOURCE 199309L
+
 // dr32.c — Schwung plugin entry (API v2) for DR32.
 //
 // The JS side parses .ablpreset files (lib/ablpreset.mjs) and pushes the kit
@@ -12,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static const host_api_v1_t *g_host = NULL;
 
@@ -136,12 +140,19 @@ static void set_param(void *instance, const char *key, const char *val) {
         // ui.js to notice, but that file never runs in a chain slot, so the
         // kit was never actually loaded and the module was silent.
         dr32_preset_report rep;
+        // Timed because the kit browser previews live: every cursor move parses
+        // a preset and loads up to 32 samples, so this cost is felt directly
+        // while scrolling.
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
         int ok = dr32_preset_load(&in->kit, val, &rep);
-        char msg[320];
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
+        char msg[360];
         if (ok) {
             snprintf(msg, sizeof(msg),
-                     "dr32: kit '%s' loaded — %d pads, %d samples, %d empty, %d unresolved, %d failed",
-                     val, rep.pads, rep.loaded, rep.empty, rep.unresolved, rep.failed);
+                     "dr32: kit '%s' loaded in %.1f ms — %d pads, %d samples, %d empty, %d unresolved, %d failed",
+                     val, ms, rep.pads, rep.loaded, rep.empty, rep.unresolved, rep.failed);
         } else {
             snprintf(msg, sizeof(msg), "dr32: kit '%s' FAILED to load", val);
             snprintf(in->err, sizeof(in->err), "could not load kit: %s", val);

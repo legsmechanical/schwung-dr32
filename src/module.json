@@ -28,7 +28,8 @@
           ".ablpreset",
           ".json"
         ],
-        "default": ""
+        "default": "",
+        "live_preview": true
       },
       {
         "key": "master",
@@ -54,7 +55,8 @@
               "filter": [
                 ".ablpreset",
                 ".json"
-              ]
+              ],
+              "live_preview": true
             },
             {
               "level": "pads",

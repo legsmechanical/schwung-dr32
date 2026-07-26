@@ -57,10 +57,15 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
         BUILDER=move-anything-builder
     fi
     echo "==> using $BUILDER" 
+    # Propagate the container's exit status. This used to `exit 0`
+    # unconditionally, so a failed compile inside docker reported success, left
+    # dist/ holding the PREVIOUS build, and install.sh shipped a stale binary.
     docker run --rm -v "$HERE":/work -w /work \
         -e CROSS_PREFIX=aarch64-linux-gnu- \
         "$BUILDER" bash scripts/build.sh
-    exit 0
+    status=$?
+    [ $status -eq 0 ] || echo "ERROR: build failed inside docker (status $status); dist/ NOT updated" >&2
+    exit $status
 fi
 
 CROSS_PREFIX="${CROSS_PREFIX:-aarch64-linux-gnu-}"
