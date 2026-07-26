@@ -35,6 +35,12 @@ typedef struct {
     signed char   note_to_pad[128];   // -1 = unmapped
     float         master_gain;        // linear
     unsigned      block;              // render-block counter (choke simultaneity)
+    // Set while the Shadow UI's sample browser is open (browser_hooks on_open /
+    // on_cancel / on_commit). While it is on, assigning a pad's sample also
+    // auditions that pad, which is what makes live_preview audible: the browser
+    // sets pad<N>_sample as the cursor moves, and the host restores the old
+    // value if the user backs out.
+    int           preview_mode;
 } dr32_kit;
 
 void dr32_kit_init(dr32_kit *k);

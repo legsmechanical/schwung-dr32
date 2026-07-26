@@ -107,7 +107,8 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         return 0;
     }
 
-    if (!strcmp(key, "master")) return snprintf(buf, buf_len, "%g", (double)kit->master_gain);
+    if (!strcmp(key, "master"))       return snprintf(buf, buf_len, "%g", (double)kit->master_gain);
+    if (!strcmp(key, "preview_mode")) return snprintf(buf, buf_len, "%d", kit->preview_mode);
     if (!strcmp(key, "voices")) return snprintf(buf, buf_len, "%d", dr32_kit_active_voices(kit));
     return 0;
 }
@@ -122,7 +123,15 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         dr32_pad *p = &s->params;
         float f = (float)atof(val);
 
-        if      (!strcmp(sub, "sample"))        dr32_kit_load_sample(kit, pad, val);
+        if (!strcmp(sub, "sample")) {
+            int err = dr32_kit_load_sample(kit, pad, val);
+            // Audition on assignment, but ONLY while the browser is open —
+            // otherwise loading a kit or restoring a saved patch would fire a
+            // burst of notes.
+            if (err == DR32_WAV_OK && kit->preview_mode && s->sample) {
+                dr32_kit_note_on(kit, s->note, 100);
+            }
+        }
         else if (!strcmp(sub, "note"))          dr32_kit_set_note(kit, pad, atoi(val));
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
         else if (!strcmp(sub, "start"))         p->play_start = f;
@@ -157,6 +166,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
     }
 
     if (!strcmp(key, "master")) { kit->master_gain = (float)atof(val); return 1; }
+    if (!strcmp(key, "preview_mode")) { kit->preview_mode = atoi(val) ? 1 : 0; return 1; }
     if (!strcmp(key, "panic"))  { dr32_kit_all_off(kit); return 1; }
     if (!strcmp(key, "clear")) {
         dr32_kit_all_off(kit);

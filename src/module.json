@@ -89,7 +89,29 @@
                 ".wav",
                 ".aif",
                 ".aiff"
-              ]
+              ],
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "preview_mode",
+                    "value": "1"
+                  }
+                ],
+                "on_preview": [],
+                "on_cancel": [
+                  {
+                    "key": "preview_mode",
+                    "value": "0"
+                  }
+                ],
+                "on_commit": [
+                  {
+                    "key": "preview_mode",
+                    "value": "0"
+                  }
+                ]
+              }
             },
             {
               "key": "transpose",
