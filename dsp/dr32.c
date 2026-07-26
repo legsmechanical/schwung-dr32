@@ -25,7 +25,56 @@ typedef struct {
     // flat params. One place knows the format, and it isn't the audio side.
     char     kit_path[DR32_MAX_PATH];
     int      kit_dirty;
+    // The Shadow UI asks the DSP for "ui_hierarchy" FIRST and only parses
+    // module.json if we return <= 2 bytes (shadow_chain_mgmt.c). Serving it
+    // ourselves takes that fallback — and any doubt about its brace-matching
+    // extraction — out of the picture.
+    char    *ui_hierarchy;
+    int      ui_hierarchy_len;
 } dr32_instance;
+
+/** Pull the ui_hierarchy object out of our own module.json, so the UI contract
+ *  has exactly one source. Returns a malloc'd string or NULL. */
+static char *load_ui_hierarchy(const char *module_dir, int *out_len) {
+    if (!module_dir) return NULL;
+    char path[DR32_MAX_PATH];
+    snprintf(path, sizeof(path), "%s/module.json", module_dir);
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (size <= 0 || size > (1 << 20)) { fclose(f); return NULL; }
+
+    char *json = (char *)malloc((size_t)size + 1);
+    if (!json) { fclose(f); return NULL; }
+    size_t n = fread(json, 1, (size_t)size, f);
+    json[n] = '\0';
+    fclose(f);
+
+    const char *tag = strstr(json, "\"ui_hierarchy\"");
+    if (!tag) { free(json); return NULL; }
+    const char *start = strchr(tag + 14, '{');
+    if (!start) { free(json); return NULL; }
+    int depth = 1;
+    const char *end = start + 1;
+    while (*end && depth > 0) {
+        if (*end == '{') depth++;
+        else if (*end == '}') depth--;
+        end++;
+    }
+    if (depth != 0) { free(json); return NULL; }
+
+    int len = (int)(end - start);
+    char *out = (char *)malloc((size_t)len + 1);
+    if (!out) { free(json); return NULL; }
+    memcpy(out, start, (size_t)len);
+    out[len] = '\0';
+    free(json);
+    if (out_len) *out_len = len;
+    return out;
+}
 
 static void logmsg(const char *s) {
     if (g_host && g_host->log) g_host->log(s);
@@ -36,11 +85,19 @@ static void logmsg(const char *s) {
 // ------------------------------------------------------------------ v2 API
 
 static void *create_instance(const char *module_dir, const char *json_defaults) {
-    (void)module_dir; (void)json_defaults;
+    (void)json_defaults;
     dr32_instance *in = (dr32_instance *)calloc(1, sizeof(dr32_instance));
     if (!in) return NULL;
     dr32_kit_init(&in->kit);
-    logmsg("dr32: instance created");
+    in->ui_hierarchy = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
+    if (in->ui_hierarchy) {
+        char msg[128];
+        snprintf(msg, sizeof(msg), "dr32: instance created (ui_hierarchy %d bytes)",
+                 in->ui_hierarchy_len);
+        logmsg(msg);
+    } else {
+        logmsg("dr32: instance created (NO ui_hierarchy — UI will be empty)");
+    }
     return in;
 }
 
@@ -48,6 +105,7 @@ static void destroy_instance(void *instance) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
     dr32_kit_free(&in->kit);
+    free(in->ui_hierarchy);
     free(in);
 }
 
@@ -86,6 +144,11 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || !key || !buf || buf_len <= 0) return 0;
 
+    if (!strcmp(key, "ui_hierarchy")) {
+        if (!in->ui_hierarchy || in->ui_hierarchy_len >= buf_len) return 0;
+        memcpy(buf, in->ui_hierarchy, (size_t)in->ui_hierarchy_len + 1);
+        return in->ui_hierarchy_len;
+    }
     if (!strcmp(key, "kit"))       return snprintf(buf, buf_len, "%s", in->kit_path);
     if (!strcmp(key, "kit_dirty")) return snprintf(buf, buf_len, "%d", in->kit_dirty);
 
