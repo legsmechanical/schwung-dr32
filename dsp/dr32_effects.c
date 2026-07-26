@@ -11,21 +11,29 @@ static inline float clampf(float v, float lo, float hi) {
 
 static inline float db_to_lin(float db) { return powf(10.0f, db / 20.0f); }
 
+/* PRODUCT DECISION (Josh, 2026-07-26): the per-pad playback effects are DROPPED.
+ * Every pad plays the plain sampler path.
+ *
+ * Rationale: only two of the ten were ever pinned (Pitch Env -39.3 dB, Loop
+ * -35.8 dB); three measured WORSE than playing dry and were already disabled;
+ * Noise can never null because its PRNG seeding is unattributed. Shipping a
+ * half-matched effect is worse than not having it — it sounds wrong in a way
+ * that is hard to attribute.
+ *
+ * Effect_Type and all nine effects' parameters are still PARSED and preserved
+ * in the preset writer's raw document, so saving a kit stays lossless and a
+ * kit edited here still opens correctly on native Move. Nothing is lost from
+ * the file — only from playback.
+ *
+ * To bring one back: return 1 here once it beats the dry fallback in
+ * tools/fx_suite.sh, and say so with the number. The implementations and the
+ * measurement rig are intact in git history. */
 int dr32_fx_modelled(dr32_fx_type type) {
     switch (type) {
-        case DR32_FX_STANDARD:   return 1;   // the shared reader
-        case DR32_FX_PITCHENV:   return 1;   // -39.3 dB, constants proven
-        case DR32_FX_LOOP:       return 1;   // -35.8 dB (vs -24.0 fallback)
-        case DR32_FX_RINGMOD:    return 1;   // -24.9 dB, same as fallback; amount law is exact
-        case DR32_FX_SUBOSC:     return 1;   // -21.6 dB, gain law exact
-        case DR32_FX_STRETCH:    return 1;   // factor 1 == the plain reader, which stock kits use
-        // Not yet good enough to enable — each is WORSE than the dry fallback:
-        case DR32_FX_EIGHTBIT:   return 0;   // -0.0 dB vs -29.7 dry
-        case DR32_FX_PUNCH:      return 0;   // +1.1 dB vs -2.4 dry
-        case DR32_FX_FM:         return 0;   // -2.1 dB vs -6.0 dry
-        case DR32_FX_NOISE:      return 1;   // additive; cannot null (PRNG), judged statistically
+        case DR32_FX_STANDARD: return 1;   // the shared sample reader
+        case DR32_FX_STRETCH:  return 1;   // factor 1 IS the plain reader (what stock kits use)
+        default:               return 0;   // dropped — see the note above
     }
-    return 0;
 }
 
 dr32_fx_type dr32_fx_from_name(const char *name) {

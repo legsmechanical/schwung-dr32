@@ -76,7 +76,26 @@ Errors found by measurement that listening would not reliably have surfaced:
 5. **`ableton:/packs/abl-core-library` unresolved** and **AIFF unsupported** —
    between them, most factory content silently failed to load.
 
-## Per-effect scoreboard (2026-07-26)
+## ⛳ Playback effects are DROPPED (2026-07-26, Josh's call)
+
+Pads play the plain sampler path. `Effect_Type` and all nine effects' parameters
+are still parsed and preserved in the writer's raw document, so saves stay
+lossless and kits still open correctly on native Move — only playback drops them.
+
+The scoreboard below is kept as the RECORD OF WHY, not as a live target. With
+effects off, an effect fixture measures "how far dry playback is from a native
+render that has the effect on" — which is a big number by construction and says
+nothing about an implementation.
+
+**The live fidelity number is `standard` (-41.9 dB)**, plus the dry-path results
+above (-78.6 dB long attack, -65.7 dB steady state).
+
+Two were genuinely working when they were switched off and would be cheap to
+bring back: **Pitch Env (-39.3 dB, constants proven by sweep)** and
+**Loop (-35.8 dB)**. Re-enable in `dr32_fx_modelled()` with the number that
+justifies it.
+
+## Per-effect scoreboard as of the drop (2026-07-26)
 
 `tools/fx_suite.sh capture` then `tools/fx_suite.sh`. One note (36), hold 0.001,
 decay 2.0, one pad param set per effect.

@@ -36,9 +36,14 @@ tests/run.sh                     # off-device: WAV loader, voice, kit, JSON roun
 batch, via the canonical `scripts/restart_move.sh MOVE_ACTION=stop`); `tools/fx_suite.sh`
 reports null depth per effect.
 
-An effect is only enabled in `dr32_fx_modelled()` once it **measurably beats the dry fallback**.
-Implementing from prose without a numeric target made 8-bit, Punch and FM worse than not
-implementing them at all.
+**Playback effects are DROPPED** (Josh, 2026-07-26) — every pad plays the plain sampler.
+`Effect_Type` and all nine effects' params are still parsed and preserved on save, so kits stay
+lossless and still open on native Move; only playback ignores them.
+
+If one is ever brought back, the bar in `dr32_fx_modelled()` stands: enable it only once it
+**measurably beats the dry fallback** in `tools/fx_suite.sh`, and record the number. Implementing
+from prose without a numeric target made 8-bit, Punch and FM *worse* than not implementing them.
+Pitch Env (-39.3 dB) and Loop (-35.8 dB) were working when switched off.
 
 ## Device
 
