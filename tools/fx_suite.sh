@@ -2,6 +2,9 @@
 # fx_suite.sh — per-effect null test against the stock engine.
 #
 #   tools/fx_suite.sh capture   # render the native references on the device
+#                               # (stops the Move stack for the batch, restarts after —
+#                               #  a 10-capture batch this way left the device healthy,
+#                               #  where captures against a live stack twice wedged it)
 #   tools/fx_suite.sh           # render DR32 + report null depth for each
 #
 # Capture talks to the Move once per effect, SEQUENTIALLY. Do not parallelise:
@@ -37,6 +40,14 @@ build_fixture() {
 }
 
 if [ "${1:-run}" = "capture" ]; then
+    # Stop the Move stack ONCE for the whole batch and restart ONCE at the end.
+    # Cycling per capture is slow, and leaving the stack running during captures
+    # is the suspected cause of two full device lockups (see tools/oracle.sh).
+    HOST="${MOVE_HOST:-move.local}"
+    echo "==> stopping the Move stack for the batch"
+    ssh "root@${HOST}" "systemctl stop move-launcher.service 2>/dev/null || /etc/init.d/move stop 2>/dev/null; true" || true
+    trap 'echo "==> restarting the Move stack"; ( cd .. && MOVE_HOST="'"${HOST}"'" ./scripts/restart_move.sh >/dev/null 2>&1 ) || true' EXIT
+
     for c in "${CASES[@]}"; do
         IFS='|' read -r name fx overrides <<< "$c"
         build_fixture "$name" "$fx" "$overrides"

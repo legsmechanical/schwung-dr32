@@ -45,7 +45,7 @@ uses, so what is validated is what ships.
   integer and sub-sample alignment are searched so the residual measures the
   engine, not the offset.
 
-## Current results (2026-07-25)
+## Dry-path results (2026-07-25)
 
 | Fixture | Null depth | Note |
 |---|---:|---|
@@ -75,6 +75,33 @@ Errors found by measurement that listening would not reliably have surfaced:
    Onset ratios 0.495 / 0.666 / 0.747 / 0.907 = i/(i+1) pinned this exactly.
 5. **`ableton:/packs/abl-core-library` unresolved** and **AIFF unsupported** —
    between them, most factory content silently failed to load.
+
+## Per-effect scoreboard (2026-07-26)
+
+`tools/fx_suite.sh capture` then `tools/fx_suite.sh`. One note (36), hold 0.001,
+decay 2.0, one pad param set per effect.
+
+| Effect | Null | State |
+|---|---:|---|
+| standard | **−41.9 dB** | shared reader; onset-limited |
+| pitchenv | **−39.3 dB** | constants proven by sweep |
+| eightbit | −29.7 dB | **not implemented** — this is the Standard path scoring |
+| ringmod | −24.9 dB | amount law exact; oscillator STATE term not modelled |
+| loop | −24.0 dB | hard wrap; transition crossfade not modelled |
+| subosc | −21.6 dB | gain law exact; generator is a plain sine, native uses a resonator |
+| noise | −13.1 dB | stochastic — **cannot** null sample-exactly, see below |
+| fm | −6.0 dB | **not implemented** — no step modulation yet |
+| punch | −2.4 dB | curve structure only; tail exponent unknown |
+| stretch | +3.1 dB | **wrong** — granular path not modelled; factor≠1 currently just slows the reader |
+
+Read these honestly: three of them (`eightbit`, `fm`, `stretch` at factor≠1) are
+**not implemented**, and their numbers are what the fallback path happens to
+score, not a measure of an implementation.
+
+**Noise will never null sample-exactly.** Its generator is a PRNG whose seeding
+is not attributed, so two correct implementations still diverge sample by
+sample. It needs a statistical acceptance instead: matching level, spectrum and
+the amount curve. Do not chase its null depth.
 
 ## Open
 
