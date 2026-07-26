@@ -52,6 +52,18 @@ typedef enum {
 #define DR32_CUTOFF_MAX 22000.0f
 #define DR32_RESO_MAX   0.9f
 
+/** The amplitude envelope's decay is EXPONENTIAL, not linear, and it falls a
+ *  fixed number of dB over the decay time regardless of how long that time is.
+ *
+ *  MEASURED against the stock engine via the null-test oracle (2026-07-25):
+ *    decay = 1 s   ->  -83.81 dB/s
+ *    decay = 10 s  ->  -8.394 dB/s  (= -83.94 dB over its decay time)
+ *  Two decades apart, agreeing within 0.13 dB, so the law is scale-invariant.
+ *  The constant is empirical: the decompiled exports inline the envelope into
+ *  the 320 render kernels, so no symbolic coefficient was recoverable. Refine
+ *  it if that math is ever attributed. */
+#define DR32_DECAY_DB_PER_TIME 83.87f
+
 /** Pad parameters, one-to-one with the drumCell JSON. */
 typedef struct {
     float play_start;      // Voice_PlaybackStart, normalized fraction
@@ -60,7 +72,10 @@ typedef struct {
     float detune;          // CENTS as stored; converted internally
     int   pitch_to_env;
     float gain;            // Voice_Gain, linear
-    float volume_db;       // chain mixer volume, dB
+    float volume_db;       // CHAIN MIXER volume, dB (the pad fader)
+    float cell_volume_db;  // the drumCell's OWN `Volume` param, dB — a SEPARATE
+                           // gain that multiplies with the chain mixer's. Missing
+                           // this is a silent -15 dB error on stock kits.
     float pan;             // chain mixer pan, SERIALIZED DOMAIN -50..+50
     float vel_to_volume;   // Voice_VelocityToVolume amount
     dr32_env_mode env_mode;
@@ -84,6 +99,7 @@ typedef struct {
     const float *sample;   // borrowed, interleaved; may be NULL
     size_t sample_frames;
     int    channels;       // 1 or 2 — native keeps stereo samples stereo
+    int    sample_rate;    // source rate; the playback ratio is rate-derived
 
     int    active;
     double pos;
@@ -111,9 +127,13 @@ typedef struct {
     unsigned block;        // render block it started in (simultaneity test)
 } dr32_voice;
 
+/** `sample_rate` is the SOURCE rate. The Move library is not uniformly 44.1k
+ *  (factory Core Library kicks are 96k), and the native note-start path derives
+ *  its playback ratio from the sample rate — ignoring it detunes those pads by
+ *  more than an octave. */
 void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
                       const float *sample, size_t frames, int channels,
-                      int velocity);
+                      int sample_rate, int velocity);
 void dr32_voice_release(dr32_voice *v, const dr32_pad *p);
 void dr32_voice_choke(dr32_voice *v);
 int  dr32_voice_render(dr32_voice *v, float *out, int n);

@@ -22,6 +22,7 @@ typedef struct {
     float  *sample;          // owned, interleaved, may be NULL (empty pad)
     size_t  frames;
     int     channels;        // 1 or 2
+    int     sample_rate;     // source rate of the loaded sample
     float  *retired;         // previous buffer, freed on the NEXT load
     char    path[DR32_MAX_PATH];
 

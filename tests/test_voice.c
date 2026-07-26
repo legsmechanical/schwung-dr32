@@ -47,7 +47,7 @@ int main(void) {
         p.attack = 0.1f; p.hold = DR32_HOLD_INFINITE; p.filter_on = 0;
         p.vel_to_volume = 0.0f;             // isolate the envelope
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         float half = render_last(&v, SR / 20);          // 50 ms = half the attack
         CHECK(fabsf(half - 0.5f) < 0.02f, "attack midpoint %.3f, want ~0.5", half);
         float full = render_last(&v, SR / 20);          // another 50 ms
@@ -61,7 +61,7 @@ int main(void) {
         p.attack = 0.001f; p.hold = 0.5f; p.decay = 0.5f;
         p.filter_on = 0; p.vel_to_volume = 0.0f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         render(&v, 1000);
         dr32_voice_release(&v, &p);                     // note-off immediately
         float after = render_last(&v, SR / 10);         // 100 ms later
@@ -75,7 +75,7 @@ int main(void) {
         p.attack = 0.001f; p.decay = 0.05f;
         p.filter_on = 0; p.vel_to_volume = 0.0f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         render(&v, 1000);
         float held = render_last(&v, SR / 10);
         CHECK(held > 0.95f, "ASR should sustain while held, got %.3f", held);
@@ -90,7 +90,7 @@ int main(void) {
         p.hold = DR32_HOLD_INFINITE; p.attack = 0.001f;
         p.filter_on = 0; p.vel_to_volume = 0.0f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         float late = render_last(&v, SR - 100);         // nearly the whole second
         CHECK(late > 0.95f, "inf hold decayed early (%.3f)", late);
     }
@@ -101,7 +101,7 @@ int main(void) {
         p.hold = 0.05f; p.decay = 0.01f; p.attack = 0.001f;
         p.filter_on = 0; p.vel_to_volume = 0.0f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         float after = render_last(&v, SR / 5);          // 200 ms >> hold + decay
         CHECK(after < 0.01f, "short hold should have decayed, got %.3f", after);
     }
@@ -124,7 +124,7 @@ int main(void) {
         p.attack = 0.001f; p.hold = DR32_HOLD_INFINITE; p.filter_on = 0;
         p.vel_to_volume = 0.35f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 70);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 70);
         CHECK(fabsf(render_last(&v, SR / 10) - 1.0f) < 0.02f, "vel 70 through the voice != unity");
     }
 
@@ -178,7 +178,7 @@ int main(void) {
         p.transpose = 12.0f; p.hold = DR32_HOLD_INFINITE; p.attack = 0.001f;
         p.filter_on = 0; p.vel_to_volume = 0.0f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         CHECK(fabs(v.step - 2.0) < 1e-6, "+12 st step = %.6f, want 2.0", v.step);
         render(&v, SR / 2 - 200);
         CHECK(v.active, "voice ended too early at 2x");
@@ -186,7 +186,7 @@ int main(void) {
         CHECK(!v.active, "voice should have consumed the sample by 0.5 s at 2x");
 
         p.transpose = -12.0f;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         CHECK(fabs(v.step - 0.5) < 1e-6, "-12 st step = %.6f, want 0.5", v.step);
     }
 
@@ -195,7 +195,7 @@ int main(void) {
         dr32_pad p; dr32_pad_defaults(&p);
         p.detune = 100.0f;                    // 100 cents == 1 semitone
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         CHECK(fabs(v.step - pow(2.0, 1.0 / 12.0)) < 1e-6, "100 cents != 1 semitone");
     }
 
@@ -204,7 +204,7 @@ int main(void) {
         dr32_pad p; dr32_pad_defaults(&p);
         p.play_start = 0.25f; p.play_length = 0.5f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         // The engine maps normalized start over N-1, not N (note start path,
         // "convert normalized playback start to a frame offset within N - 1").
         size_t want_start = (size_t)(0.25 * (double)(SR - 1));
@@ -216,7 +216,7 @@ int main(void) {
     {
         dr32_pad p; dr32_pad_defaults(&p);
         dr32_voice v;
-        dr32_voice_start(&v, &p, NULL, 0, 1, 127);
+        dr32_voice_start(&v, &p, NULL, 0, 1, SR, 127);
         CHECK(!v.active, "empty pad should not be active");
         CHECK(render(&v, 256) == 0.0f, "empty pad produced signal");
     }
@@ -227,12 +227,15 @@ int main(void) {
         p.hold = DR32_HOLD_INFINITE; p.attack = 0.001f; p.decay = 10.0f;
         p.filter_on = 0; p.vel_to_volume = 0.0f;
         dr32_voice v;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         render(&v, 1000);
         dr32_voice_choke(&v);
+        // The choke uses the same EXPONENTIAL law as the decay, forced to a
+        // ~3 ms time constant, so 1 ms in it is well down but not zero. The
+        // point is that it ramps at all — a hard stop would click.
         float after_1ms = render_last(&v, SR / 1000);
-        CHECK(after_1ms > 0.1f && after_1ms < 1.0f,
-              "choke should fade, not jump: %.3f after 1 ms", after_1ms);
+        CHECK(after_1ms > 0.002f && after_1ms < 1.0f,
+              "choke should fade, not jump: %.4f after 1 ms", after_1ms);
         render(&v, SR / 100);
         CHECK(!v.active, "choke should finish the voice within ~10 ms");
     }
@@ -250,17 +253,17 @@ int main(void) {
 
         dr32_voice v;
         p.filter_type = DR32_FILT_LP12;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         render(&v, 2000);
         float lp12 = render(&v, 2000);
 
         p.filter_type = DR32_FILT_LP24;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         render(&v, 2000);
         float lp24 = render(&v, 2000);
 
         p.filter_type = DR32_FILT_HP24;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         render(&v, 2000);
         float hp24 = render(&v, 2000);
 
@@ -275,12 +278,12 @@ int main(void) {
             q.hold = DR32_HOLD_INFINITE; q.attack = 0.0001f; q.vel_to_volume = 0.0f;
             q.filter_type = DR32_FILT_PEAK; q.peak_gain = 1.0f; q.cutoff = 1000.0f;
             dr32_voice pv;
-            dr32_voice_start(&pv, &q, samp, SR, 1, 70);
+            dr32_voice_start(&pv, &q, samp, SR, 1, SR, 70);
             render(&pv, 2000);
             float flat = render(&pv, 2000);
             q.filter_on = 0;
             dr32_voice bv;
-            dr32_voice_start(&bv, &q, samp, SR, 1, 70);
+            dr32_voice_start(&bv, &q, samp, SR, 1, SR, 70);
             render(&bv, 2000);
             float bypass = render(&bv, 2000);
             CHECK(fabsf(flat - bypass) < 1e-3f,
@@ -291,7 +294,7 @@ int main(void) {
 
         // stability: no NaN/inf at high resonance
         p.filter_type = DR32_FILT_LP24; p.resonance = 0.99f; p.cutoff = 8000.0f;
-        dr32_voice_start(&v, &p, samp, SR, 1, 127);
+        dr32_voice_start(&v, &p, samp, SR, 1, SR, 127);
         float peak = 0;
         for (int b = 0; b < 20; b++) { float q = render(&v, 1024); if (q > peak) peak = q; }
         CHECK(isfinite(peak) && peak < 100.0f, "high-resonance filter blew up: %.3f", peak);

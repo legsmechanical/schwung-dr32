@@ -6,6 +6,7 @@
 
 #include "host/plugin_api_v1.h"
 #include "dr32_kit.h"
+#include "dr32_params.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,28 +42,6 @@ static int split_pad_key(const char *key, const char **rest) {
     if (!digits || *p != '_') return -1;
     *rest = p + 1;
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
-}
-
-static int parse_filter_type(const char *v) {
-    // The JSON's own spellings, measured on device. Accept the numeric form too
-    // so the UI can send either.
-    // Numeric values follow the NATIVE engine indices (0 LP12, 1 LP24, 2 HP24,
-    // 3 Peak); the JSON default "Lowpass" is the 24 dB slope.
-    if (!strcmp(v, "Lowpass") || !strcmp(v, "1")) return DR32_FILT_LP24;
-    if (!strcmp(v, "Lowpass 12dB") || !strcmp(v, "0")) return DR32_FILT_LP12;
-    if (!strcmp(v, "Highpass") || !strcmp(v, "2")) return DR32_FILT_HP24;
-    if (!strcmp(v, "Peak") || !strcmp(v, "3")) return DR32_FILT_PEAK;
-    return DR32_FILT_LP24;
-}
-
-static int parse_mod_target(const char *v) {
-    if (!strcmp(v, "Filter")) return DR32_MOD_FILTER;
-    if (!strcmp(v, "Attack")) return DR32_MOD_ATTACK;
-    if (!strcmp(v, "Hold"))   return DR32_MOD_HOLD;
-    if (!strcmp(v, "Decay"))  return DR32_MOD_DECAY;
-    if (!strcmp(v, "FX1"))    return DR32_MOD_FX1;
-    if (!strcmp(v, "FX2"))    return DR32_MOD_FX2;
-    return atoi(v);
 }
 
 // ------------------------------------------------------------------ v2 API
@@ -101,59 +80,17 @@ static void set_param(void *instance, const char *key, const char *val) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || !key || !val) return;
 
-    const char *sub;
-    int pad = split_pad_key(key, &sub);
-    if (pad >= 0) {
-        dr32_pad_slot *s = &in->kit.pads[pad];
-        dr32_pad *p = &s->params;
-        float f = (float)atof(val);
-
-        if      (!strcmp(sub, "sample"))        dr32_kit_load_sample(&in->kit, pad, val);
-        else if (!strcmp(sub, "note"))          dr32_kit_set_note(&in->kit, pad, atoi(val));
-        else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
-        else if (!strcmp(sub, "start"))         p->play_start = f;
-        else if (!strcmp(sub, "length"))        p->play_length = f;
-        else if (!strcmp(sub, "transpose"))     p->transpose = f;
-        else if (!strcmp(sub, "detune"))        p->detune = f;
-        else if (!strcmp(sub, "gain"))          p->gain = f;
-        else if (!strcmp(sub, "volume"))        p->volume_db = f;
-        else if (!strcmp(sub, "pan"))           p->pan = f;
-        else if (!strcmp(sub, "vel_vol"))       p->vel_to_volume = f;
-        else if (!strcmp(sub, "attack"))        p->attack = f;
-        else if (!strcmp(sub, "hold"))          p->hold = f;
-        else if (!strcmp(sub, "decay"))         p->decay = f;
-        else if (!strcmp(sub, "env_mode"))      p->env_mode = (!strcmp(val, "A-S-R") || atoi(val) == 1)
-                                                              ? DR32_ENV_ASR : DR32_ENV_AHD;
-        else if (!strcmp(sub, "filter_on"))     p->filter_on = atoi(val) ? 1 : 0;
-        else if (!strcmp(sub, "filter_type"))   p->filter_type = (dr32_filter_type)parse_filter_type(val);
-        else if (!strcmp(sub, "cutoff"))        p->cutoff = f;
-        else if (!strcmp(sub, "resonance"))     p->resonance = f;
-        else if (!strcmp(sub, "peak_gain"))     p->peak_gain = f;
-        else if (!strcmp(sub, "mod_target"))    p->mod_target = (dr32_mod_target)parse_mod_target(val);
-        else if (!strcmp(sub, "mod_amount"))    p->mod_amount = f;
-        else if (!strcmp(sub, "pitch_env"))     p->pitch_to_env = atoi(val) ? 1 : 0;
-        else if (!strcmp(sub, "speaker_on"))    p->speaker_on = atoi(val) ? 1 : 0;
-        else if (!strcmp(sub, "sending_note"))  p->sending_note = atoi(val);
-        else if (!strcmp(sub, "play"))          dr32_kit_note_on(&in->kit, s->note, atoi(val));
-        return;
-    }
-
+    // The kit path is host-side state, not engine state, so it is handled here;
+    // everything else goes through the shared dispatch.
     if (!strcmp(key, "kit")) {
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
         in->kit_dirty = 1;
         dr32_kit_all_off(&in->kit);
+        return;
     }
-    else if (!strcmp(key, "kit_dirty")) in->kit_dirty = atoi(val);
-    else if (!strcmp(key, "master"))      in->kit.master_gain = (float)atof(val);
-    else if (!strcmp(key, "panic"))  dr32_kit_all_off(&in->kit);
-    else if (!strcmp(key, "clear")) {                       // reset the whole kit
-        dr32_kit_all_off(&in->kit);
-        for (int i = 0; i < DR32_PADS; i++) {
-            dr32_kit_load_sample(&in->kit, i, NULL);
-            dr32_pad_defaults(&in->kit.pads[i].params);
-            dr32_kit_set_note(&in->kit, i, DR32_FIRST_NOTE + i);
-        }
-    }
+    if (!strcmp(key, "kit_dirty")) { in->kit_dirty = atoi(val); return; }
+
+    dr32_apply_param(&in->kit, key, val);
 }
 
 static int get_param(void *instance, const char *key, char *buf, int buf_len) {

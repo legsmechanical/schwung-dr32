@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 
 // WAVE format tags
 #define WAVE_FMT_PCM        0x0001
@@ -60,6 +61,114 @@ static inline float decode(const unsigned char *p, int bits, int is_float) {
     }
 }
 
+/* ---------------------------------------------------------------- AIFF
+ * Move's factory Core Library ships .aif alongside .wav, so a WAV-only loader
+ * silently loses a large part of the stock content. AIFF is big-endian, its
+ * sample rate is an 80-bit IEEE extended float, and SSND carries an offset. */
+
+static uint16_t rd16be(const unsigned char *p) { return (uint16_t)((p[0] << 8) | p[1]); }
+static uint32_t rd32be(const unsigned char *p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+/** 80-bit IEEE 754 extended -> double (only the range we care about). */
+static double rd_extended(const unsigned char *p) {
+    int sign = (p[0] & 0x80) ? -1 : 1;
+    int exp = ((p[0] & 0x7f) << 8) | p[1];
+    uint64_t mant = 0;
+    for (int i = 0; i < 8; i++) mant = (mant << 8) | p[2 + i];
+    if (exp == 0 && mant == 0) return 0.0;
+    return sign * (double)mant * pow(2.0, (double)(exp - 16383 - 63));
+}
+
+/** Decode one big-endian PCM sample. */
+static inline float decode_be(const unsigned char *p, int bits) {
+    switch (bits) {
+        case 8:  return (float)(int8_t)p[0] / 128.0f;      /* AIFF 8-bit is SIGNED */
+        case 16: return (float)(int16_t)rd16be(p) / 32768.0f;
+        case 24: {
+            int32_t v = (int32_t)(((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8));
+            return (float)(v >> 8) / 8388608.0f;
+        }
+        case 32: return (float)(int32_t)rd32be(p) / 2147483648.0f;
+        default: return 0.0f;
+    }
+}
+
+static dr32_wav_err load_aiff(FILE *f, dr32_wav *out) {
+    dr32_wav_err err = DR32_WAV_ERR_FORMAT;
+    uint16_t channels = 0, bits = 0;
+    uint32_t nframes = 0;
+    double rate = 44100.0;
+    int have_comm = 0;
+    int is_sowt = 0;          /* AIFC "sowt" = little-endian samples */
+
+    for (;;) {
+        unsigned char ch[8];
+        if (fread(ch, 1, 8, f) != 8) break;
+        uint32_t size = rd32be(ch + 4);
+
+        if (!memcmp(ch, "COMM", 4)) {
+            unsigned char c[40];
+            uint32_t want = size < sizeof(c) ? size : (uint32_t)sizeof(c);
+            if (fread(c, 1, want, f) != want) goto fail;
+            channels = rd16be(c);
+            nframes  = rd32be(c + 2);
+            bits     = rd16be(c + 6);
+            rate     = rd_extended(c + 8);
+            if (want >= 22 && !memcmp(c + 18, "sowt", 4)) is_sowt = 1;
+            have_comm = 1;
+            if (want < size) fseek(f, (long)(size - want), SEEK_CUR);
+        } else if (!memcmp(ch, "SSND", 4)) {
+            if (!have_comm) goto fail;
+            unsigned char s8[8];
+            if (fread(s8, 1, 8, f) != 8) goto fail;
+            uint32_t offset = rd32be(s8);
+            if (offset) fseek(f, (long)offset, SEEK_CUR);
+
+            if (channels < 1 || channels > 8) { err = DR32_WAV_ERR_UNSUPPORTED; goto fail; }
+            if (bits != 8 && bits != 16 && bits != 24 && bits != 32) {
+                err = DR32_WAV_ERR_UNSUPPORTED; goto fail;
+            }
+            uint32_t bps = bits / 8u;
+            uint32_t frame_bytes = bps * channels;
+            size_t frames = nframes;
+            if (!frames || !frame_bytes) { err = DR32_WAV_ERR_FORMAT; goto fail; }
+            if (frames > DR32_WAV_MAX_FRAMES) frames = DR32_WAV_MAX_FRAMES;
+
+            int out_ch = (channels >= 2) ? 2 : 1;
+            unsigned char *raw = (unsigned char *)malloc(frames * frame_bytes);
+            float *pcm = (float *)malloc(frames * (size_t)out_ch * sizeof(float));
+            if (!raw || !pcm) { free(raw); free(pcm); err = DR32_WAV_ERR_MEMORY; goto fail; }
+            if (fread(raw, 1, frames * frame_bytes, f) != frames * frame_bytes) {
+                free(raw); free(pcm); err = DR32_WAV_ERR_FORMAT; goto fail;
+            }
+            for (size_t i = 0; i < frames; i++) {
+                const unsigned char *p = raw + i * frame_bytes;
+                for (int c = 0; c < out_ch; c++) {
+                    const unsigned char *sp = p + (size_t)c * bps;
+                    pcm[i * out_ch + c] = is_sowt ? decode(sp, bits, 0) : decode_be(sp, bits);
+                }
+            }
+            free(raw);
+            out->data = pcm;
+            out->frames = frames;
+            out->sample_rate = (int)(rate + 0.5);
+            out->channels = out_ch;
+            out->bits = (int)bits;
+            fclose(f);
+            return DR32_WAV_OK;
+        } else {
+            fseek(f, (long)size, SEEK_CUR);
+        }
+        if (size & 1u) fseek(f, 1, SEEK_CUR);
+    }
+fail:
+    fclose(f);
+    memset(out, 0, sizeof(*out));
+    return err;
+}
+
 dr32_wav_err dr32_wav_load(const char *path, dr32_wav *out) {
     if (!out) return DR32_WAV_ERR_FORMAT;
     memset(out, 0, sizeof(*out));
@@ -71,6 +180,10 @@ dr32_wav_err dr32_wav_load(const char *path, dr32_wav *out) {
     dr32_wav_err err = DR32_WAV_ERR_FORMAT;
     unsigned char hdr[12];
     if (fread(hdr, 1, 12, f) != 12) goto fail;
+    if (!memcmp(hdr, "FORM", 4) &&
+        (!memcmp(hdr + 8, "AIFF", 4) || !memcmp(hdr + 8, "AIFC", 4))) {
+        return load_aiff(f, out);
+    }
     if (memcmp(hdr, "RIFF", 4) || memcmp(hdr + 8, "WAVE", 4)) goto fail;
 
     int have_fmt = 0;

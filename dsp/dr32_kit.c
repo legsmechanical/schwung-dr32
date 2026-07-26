@@ -59,6 +59,7 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     s->sample = w.data;
     s->frames = w.frames;
     s->channels = w.channels;
+    s->sample_rate = w.sample_rate;
     snprintf(s->path, sizeof(s->path), "%s", path);
     return DR32_WAV_OK;
 }
@@ -90,7 +91,8 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
         }
     }
 
-    dr32_voice_start(&s->voice, &s->params, s->sample, s->frames, s->channels, velocity);
+    dr32_voice_start(&s->voice, &s->params, s->sample, s->frames, s->channels,
+                     s->sample_rate, velocity);
     s->voice.note = note;              // arbitration uses the INCOMING note
     s->voice.block = k->block;
 }

@@ -3,7 +3,11 @@ import { createSoundGeneratorUI } from "/data/UserData/schwung/shared/sound_gene
 
 // src/ablpreset.mjs
 var USER_LIBRARY = "/data/UserData/UserLibrary";
-var URI_PREFIX = "ableton:/user-library";
+var CORE_LIBRARY = "/data/CoreLibrary";
+var URI_ROOTS = [
+  ["ableton:/user-library", USER_LIBRARY],
+  ["ableton:/packs/abl-core-library", CORE_LIBRARY]
+];
 var FILTER_TYPES = {
   // `engine` is the native filter_type index used in the 320-kernel
   // specialization (DRUM_FILTER_RECON.md): 0 LP12, 1 LP24, 2 HP24, 3 Peak.
@@ -116,10 +120,12 @@ function parseJsonFaithful(text) {
   const v = value("");
   return [v, lits];
 }
-function resolveUri(uri) {
+function resolveUri(uri, roots = URI_ROOTS) {
   if (!uri) return null;
-  if (!uri.startsWith(URI_PREFIX)) return null;
-  return USER_LIBRARY + decodeURIComponent(uri.slice(URI_PREFIX.length));
+  for (const [prefix, dir] of roots) {
+    if (uri.startsWith(prefix)) return dir + decodeURIComponent(uri.slice(prefix.length));
+  }
+  return null;
 }
 function isDrumKit(jsonText) {
   return typeof jsonText === "string" && jsonText.includes('"drumRack"');
@@ -210,6 +216,7 @@ function padWrites(i, pad) {
   put("mod_amount", p.Voice_ModulationAmount ?? 0);
   put("pitch_env", p.Voice_PitchToEnvelopeModulation ? 1 : 0);
   put("volume", pad.mixer.volume ?? 0);
+  put("cell_volume", p.Volume ?? 0);
   put("pan", pad.mixer.pan ?? 0);
   put("speaker_on", pad.mixer.speakerOn === false ? 0 : 1);
   put("sending_note", pad.sendingNote ?? 60);

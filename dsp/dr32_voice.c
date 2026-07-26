@@ -5,7 +5,9 @@
 
 #define DR32_PI 3.14159265358979323846f
 #define CHOKE_SECONDS 0.003f
-#define ENV_FLOOR 1e-4f
+// Native decays ~84 dB over the decay time, so a -80 dB floor would cut the
+// tail early. Sit below the law's own endpoint.
+#define ENV_FLOOR 1e-5f
 
 void dr32_pad_defaults(dr32_pad *p) {
     memset(p, 0, sizeof(*p));
@@ -130,11 +132,12 @@ static inline float clampf(float v, float lo, float hi) {
 
 void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
                       const float *sample, size_t frames, int channels,
-                      int velocity) {
+                      int sample_rate, int velocity) {
     memset(v, 0, sizeof(*v));
     v->sample = sample;
     v->sample_frames = frames;
     v->channels = (channels == 2) ? 2 : 1;
+    v->sample_rate = sample_rate > 0 ? sample_rate : (int)DR32_SR;
     v->note = p->sending_note;
 
     // Sample window: start is a fraction of N-1, length is clamped to what
@@ -153,9 +156,12 @@ void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
     // pad's incoming note to its sending note, so the cell's "played note" is
     // the sending note (60 in factory kits).
     float semis = (float)p->sending_note - 60.0f + p->transpose + p->detune / 100.0f;
-    v->step = pow(2.0, (double)semis / 12.0);
+    // Ratio is pitch AND sample-rate derived: a 96 kHz source must advance
+    // 96000/44100 frames per output frame just to play back at its own pitch.
+    v->step = pow(2.0, (double)semis / 12.0) * ((double)v->sample_rate / (double)DR32_SR);
 
-    v->amp = p->gain * db_to_lin(p->volume_db) * dr32_velocity_gain(velocity, p->vel_to_volume);
+    v->amp = p->gain * db_to_lin(p->cell_volume_db) * db_to_lin(p->volume_db)
+           * dr32_velocity_gain(velocity, p->vel_to_volume);
     if (!p->speaker_on) v->amp = 0.0f;
 
     dr32_pan_gains(p->pan, &v->panl, &v->panr);
@@ -185,7 +191,9 @@ void dr32_voice_start(dr32_voice *v, const dr32_pad *p,
     hold = clampf(hold, DR32_HOLD_MIN, DR32_HOLD_MAX);
 
     v->atk_rate = 1.0f / (atk * DR32_SR);
-    v->dec_rate = 1.0f / (dec * DR32_SR);
+    // Exponential decay: a per-sample multiplier that loses
+    // DR32_DECAY_DB_PER_TIME dB over `dec` seconds.
+    v->dec_rate = powf(10.0f, -DR32_DECAY_DB_PER_TIME / (20.0f * dec * DR32_SR));
     v->hold_left = hold;
     v->stage = 0;
     v->env = 0.0f;
@@ -219,8 +227,9 @@ void dr32_voice_release(dr32_voice *v, const dr32_pad *p) {
 void dr32_voice_choke(dr32_voice *v) {
     if (!v->active) return;
     v->stage = 2;
-    float fast = 1.0f / (CHOKE_SECONDS * DR32_SR);
-    if (fast > v->dec_rate) v->dec_rate = fast;
+    // Same exponential form, forced to a fast time constant.
+    float fast = powf(10.0f, -DR32_DECAY_DB_PER_TIME / (20.0f * CHOKE_SECONDS * DR32_SR));
+    if (fast < v->dec_rate) v->dec_rate = fast;   // smaller multiplier = faster
 }
 
 /** LINEAR interpolation — the native kernel (FUN_01a3cfbc) interpolates
@@ -250,6 +259,13 @@ int dr32_voice_render(dr32_voice *v, float *out, int n) {
     const float hold_step = 1.0f / DR32_SR;
 
     for (int i = 0; i < n; i++) {
+        // The envelope is USED then ADVANCED: the native engine emits env[i] =
+        // i * rate, so a note's very first sample is exactly zero. Advancing
+        // first (env[i] = (i+1)*rate) shifts the whole attack a sample early —
+        // measured against the stock render, whose onset ratios are 0.495,
+        // 0.666, 0.747, 0.907 = i/(i+1) for the first four frames.
+        float env_now = v->env;
+
         if (v->stage == 0) {
             v->env += v->atk_rate;
             if (v->env >= 1.0f) { v->env = 1.0f; v->stage = 1; }
@@ -265,8 +281,8 @@ int dr32_voice_render(dr32_voice *v, float *out, int n) {
             }
         }
         if (v->stage == 2) {
-            v->env -= v->dec_rate;
-            if (v->env <= ENV_FLOOR) { v->env = 0.0f; v->stage = 3; v->active = 0; break; }
+            v->env *= v->dec_rate;              // exponential, not linear
+            if (v->env <= ENV_FLOOR) { v->env = 0.0f; v->stage = 3; v->active = 0; }
         }
 
         if (v->pos >= (double)v->region_end) { v->active = 0; break; }
@@ -280,7 +296,7 @@ int dr32_voice_render(dr32_voice *v, float *out, int n) {
             r = run_filter(v, &v->fR1, &v->fR2, r);
         }
 
-        float e = v->env * v->amp;
+        float e = env_now * v->amp;
         out[2 * i]     += l * e * v->panl;
         out[2 * i + 1] += r * e * v->panr;
     }

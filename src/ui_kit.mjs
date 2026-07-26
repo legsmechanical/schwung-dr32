@@ -39,6 +39,7 @@ function padWrites(i, pad) {
     // -50..+50 serialized domain — NOT -1..+1 — and feeds the engine's
     // equal-power law.
     put('volume', pad.mixer.volume ?? 0);
+    put('cell_volume', p.Volume ?? 0);
     put('pan', pad.mixer.pan ?? 0);
     put('speaker_on', pad.mixer.speakerOn === false ? 0 : 1);
     put('sending_note', pad.sendingNote ?? 60);
