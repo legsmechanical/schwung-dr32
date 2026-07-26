@@ -14,23 +14,18 @@
 # EnginePerfTool while the normal Move stack is live has both fighting over the
 # audio device.
 #
-# ⚠ KNOWN DEFECT IN THIS SCRIPT (2026-07-26, raised by Josh): the STOP_STACK
-# teardown below is NOT canonical. It stops the launcher only, which is exactly
-# the partial-stop anti-pattern `scripts/restart_move.sh` exists to prevent —
-# it leaves shadow_ui / schwung / display-server / schwung-manager running, the
-# /dev/shm rings stale, and /dev/ablspi0.0 held, and THEN starts a second
-# engine on top of all that.
+# STOP_STACK=1 tears the Move stack down for the capture and brings it back
+# afterwards, both via the CANONICAL scripts/restart_move.sh (MOVE_ACTION=stop
+# / default restart). Do not hand-roll a launcher stop here: stopping the
+# launcher alone leaves shadow_ui / schwung / display-server / schwung-manager
+# running, the /dev/shm rings stale and /dev/ablspi0.0 held — the partial-stop
+# trap that script exists to avoid. This script did exactly that until
+# 2026-07-26; Josh caught it.
 #
-# The restarts here ARE canonical (they call scripts/restart_move.sh).
-#
-# What the evidence actually says: both lockups happened BEFORE any stop
-# existed — captures against a fully live stack. The batch that used the
-# partial stop survived. So "capture while the stack is live" is still the
-# better-supported theory, but the partial stop should be replaced regardless.
-#
-# PROPOSED FIX (needs Josh's OK — shared tooling): add `MOVE_ACTION=stop` to
-# scripts/restart_move.sh so the same clean teardown can run without starting
-# again, and call that here instead of the launcher stop.
+# What the evidence says about the two full device lockups: both happened
+# BEFORE any stop existed, i.e. captures against a fully live stack. So
+# "capture while the stack is live" is the better-supported theory, and the
+# partial stop was a separate (real) defect rather than the proven cause.
 #
 # Usage: STOP_STACK=1 tools/oracle.sh <song.abl> <out.wav> [frames]
 set -euo pipefail
@@ -41,9 +36,10 @@ FRAMES="${3:-88200}"
 HOST="${MOVE_HOST:-move.local}"
 REMOTE=/tmp/dr32-oracle
 
+SCRIPTS="$(cd "$(dirname "$0")/../.." && pwd)/scripts"
+
 if [ "${STOP_STACK:-0}" = "1" ]; then
-    echo "==> stopping the Move stack for the capture" >&2
-    ssh "root@${HOST}" "systemctl stop move-launcher.service 2>/dev/null || /etc/init.d/move stop 2>/dev/null; true" || true
+    MOVE_ACTION=stop MOVE_HOST="root@${HOST}" "$SCRIPTS/restart_move.sh" >&2
 fi
 
 ssh "ableton@${HOST}" "mkdir -p ${REMOTE}"
@@ -59,8 +55,7 @@ ssh "ableton@${HOST}" "/opt/move/EnginePerfTool \
 scp -q "ableton@${HOST}:${REMOTE}/out.wav" "$OUT"
 
 if [ "${STOP_STACK:-0}" = "1" ]; then
-    echo "==> restarting the Move stack" >&2
-    ( cd "$(dirname "$0")/../.." && MOVE_HOST="${HOST}" ./scripts/restart_move.sh >/dev/null 2>&1 ) || true
+    MOVE_HOST="root@${HOST}" "$SCRIPTS/restart_move.sh" >&2
 fi
 
 echo "$OUT: $(ls -l "$OUT" | awk '{print $5}') bytes"

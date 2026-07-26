@@ -44,9 +44,11 @@ if [ "${1:-run}" = "capture" ]; then
     # Cycling per capture is slow, and leaving the stack running during captures
     # is the suspected cause of two full device lockups (see tools/oracle.sh).
     HOST="${MOVE_HOST:-move.local}"
-    echo "==> stopping the Move stack for the batch"
-    ssh "root@${HOST}" "systemctl stop move-launcher.service 2>/dev/null || /etc/init.d/move stop 2>/dev/null; true" || true
-    trap 'echo "==> restarting the Move stack"; ( cd .. && MOVE_HOST="'"${HOST}"'" ./scripts/restart_move.sh >/dev/null 2>&1 ) || true' EXIT
+    SCRIPTS="$(cd ../scripts && pwd)"
+    # Canonical teardown (kills the whole stack, clears SHM rings, frees SPI),
+    # once for the batch — NOT a hand-rolled launcher stop.
+    MOVE_ACTION=stop MOVE_HOST="root@${HOST}" "$SCRIPTS/restart_move.sh"
+    trap 'MOVE_HOST="root@'"${HOST}"'" "'"$SCRIPTS"'/restart_move.sh" || true' EXIT
 
     for c in "${CASES[@]}"; do
         IFS='|' read -r name fx overrides <<< "$c"
