@@ -24,6 +24,9 @@ void dr32_kit_init(dr32_kit *k) {
         k->insert_p[i][1] = 0.0f;
         k->insert_p[i][2] = 0.5f;
         k->insert_p[i][3] = 1.0f;
+        k->send_type[i] = DR32_EFX_NONE;
+        k->insert_type[i] = DR32_EFX_NONE;
+        k->send_return_ui[i] = 1.0f;
     }
 }
 

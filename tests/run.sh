@@ -16,6 +16,10 @@ for src in tests/test_*.c; do
   c++ -o "dist/tests/$name" "dist/tests/$name.o" dist/tests/dr32_*.o dist/tests/wav.o -lm
   "./dist/tests/$name" "$@" || fail=1
 done
+# module.json must satisfy the host's constraints (duplicate keys reject the
+# whole hierarchy, so this is not cosmetic)
+node tools/check_module_json.mjs src/module.json || fail=1
+
 # JSON layer
 node tests/roundtrip.mjs tests/fixtures || fail=1
 

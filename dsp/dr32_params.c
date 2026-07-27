@@ -109,6 +109,27 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         return 0;
     }
 
+    if (!strncmp(key, "send", 4) || !strncmp(key, "insert", 6)) {
+        int is_send = (key[0] == 's');
+        const char *q = key + (is_send ? 4 : 6);
+        int slot = (*q >= '1' && *q <= '2') ? (*q - '1') : -1;
+        if (slot >= 0 && q[1] == '_') {
+            const char *f2 = q + 2;
+            const float *cache = is_send ? kit->send_p[slot] : kit->insert_p[slot];
+            int idx = -1;
+            if      (!strcmp(f2, "size") || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
+            else if (!strcmp(f2, "damp") || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
+            else if (!strcmp(f2, "big")  || !strcmp(f2, "trans")  || !strcmp(f2, "p3")) idx = 2;
+            else if (!strcmp(f2, "mix")) idx = 3;
+            if (idx >= 0) return snprintf(buf, buf_len, "%g", (double)cache[idx]);
+            if (!strcmp(f2, "return") && is_send)
+                return snprintf(buf, buf_len, "%g", (double)kit->send_return_ui[slot]);
+            if (!strcmp(f2, "type"))
+                return snprintf(buf, buf_len, "%s",
+                                dr32_efx_name(is_send ? kit->send_type[slot] : kit->insert_type[slot]));
+        }
+    }
+
     if (!strcmp(key, "master")) return snprintf(buf, buf_len, "%g", (double)kit->master_gain);
     if (!strcmp(key, "voices")) return snprintf(buf, buf_len, "%d", dr32_kit_active_voices(kit));
     return 0;
@@ -177,19 +198,23 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
             float *cache = is_send ? kit->send_p[slot] : kit->insert_p[slot];
             if (!strcmp(f2, "type")) {
                 dr32_efx_type t = dr32_efx_from_name(val);
-                if (is_send) dr32_fxbus_set_send_type(fx, slot, t);
-                else         dr32_fxbus_set_insert_type(fx, slot, t);
+                if (is_send) { dr32_fxbus_set_send_type(fx, slot, t); kit->send_type[slot] = t; }
+                else         { dr32_fxbus_set_insert_type(fx, slot, t); kit->insert_type[slot] = t; }
                 return 1;
             }
             if (!strcmp(f2, "return") && is_send) {
                 dr32_fxbus_set_send_return(fx, slot, v);
+                kit->send_return_ui[slot] = v;
                 return 1;
             }
+            // Per-type control names map onto the same three generic slots.
+            // They must be DISTINCT keys (the host rejects a hierarchy with any
+            // duplicate key), but they address the same underlying parameter.
             int idx = -1;
-            if      (!strcmp(f2, "p1"))  idx = 0;
-            else if (!strcmp(f2, "p2"))  idx = 1;
-            else if (!strcmp(f2, "p3"))  idx = 2;
-            else if (!strcmp(f2, "mix")) idx = 3;
+            if      (!strcmp(f2, "size")   || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
+            else if (!strcmp(f2, "damp")   || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
+            else if (!strcmp(f2, "big")    || !strcmp(f2, "trans")  || !strcmp(f2, "p3")) idx = 2;
+            else if (!strcmp(f2, "mix"))  idx = 3;
             if (idx >= 0) {
                 cache[idx] = v;
                 if (is_send) dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2]);

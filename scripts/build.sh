@@ -12,6 +12,9 @@ MODULE_ID=dr32
 
 # --- UI bundle (host side: needs node/esbuild, so do it before Docker)
 if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
+    echo "==> validating module.json"
+    node tools/check_module_json.mjs src/module.json || exit 1
+
     echo "==> bundling ui.js"
     # lib/ablpreset.mjs is the CANONICAL parser; src/ gets a build-time copy so
     # the bundle has a single source of truth to import.

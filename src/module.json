@@ -311,7 +311,7 @@
               ]
             },
             {
-              "key": "send1_p1",
+              "key": "send1_size",
               "name": "Size",
               "type": "float",
               "min": 0.0,
@@ -319,7 +319,7 @@
               "step": 0.01
             },
             {
-              "key": "send1_p2",
+              "key": "send1_damp",
               "name": "Damping",
               "type": "float",
               "min": 0.0,
@@ -327,7 +327,7 @@
               "step": 0.01
             },
             {
-              "key": "send1_p3",
+              "key": "send1_big",
               "name": "Bigness",
               "type": "float",
               "min": 0.0,
@@ -344,9 +344,9 @@
             }
           ],
           "knobs": [
-            "send1_p1",
-            "send1_p2",
-            "send1_p3",
+            "send1_size",
+            "send1_damp",
+            "send1_big",
             "send1_return"
           ]
         },
@@ -365,7 +365,7 @@
               ]
             },
             {
-              "key": "send2_p1",
+              "key": "send2_size",
               "name": "Size",
               "type": "float",
               "min": 0.0,
@@ -373,7 +373,7 @@
               "step": 0.01
             },
             {
-              "key": "send2_p2",
+              "key": "send2_damp",
               "name": "Damping",
               "type": "float",
               "min": 0.0,
@@ -381,7 +381,7 @@
               "step": 0.01
             },
             {
-              "key": "send2_p3",
+              "key": "send2_big",
               "name": "Bigness",
               "type": "float",
               "min": 0.0,
@@ -398,9 +398,9 @@
             }
           ],
           "knobs": [
-            "send2_p1",
-            "send2_p2",
-            "send2_p3",
+            "send2_size",
+            "send2_damp",
+            "send2_big",
             "send2_return"
           ]
         },
@@ -420,7 +420,7 @@
               ]
             },
             {
-              "key": "insert1_p1",
+              "key": "insert1_size",
               "name": "Size",
               "type": "float",
               "min": 0.0,
@@ -432,7 +432,7 @@
               }
             },
             {
-              "key": "insert1_p2",
+              "key": "insert1_damp",
               "name": "Damping",
               "type": "float",
               "min": 0.0,
@@ -444,7 +444,7 @@
               }
             },
             {
-              "key": "insert1_p3",
+              "key": "insert1_big",
               "name": "Bigness",
               "type": "float",
               "min": 0.0,
@@ -456,7 +456,7 @@
               }
             },
             {
-              "key": "insert1_p1",
+              "key": "insert1_comp",
               "name": "Compress",
               "type": "float",
               "min": 0.0,
@@ -468,7 +468,7 @@
               }
             },
             {
-              "key": "insert1_p2",
+              "key": "insert1_crunch",
               "name": "Crunch",
               "type": "float",
               "min": 0.0,
@@ -480,17 +480,17 @@
               }
             },
             {
-              "key": "insert1_p3",
+              "key": "insert1_trans",
               "name": "Transients",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
+              "default": 0.5,
               "visible_if": {
                 "param": "insert1_type",
                 "equals": "Drum Buss"
-              },
-              "default": 0.5
+              }
             },
             {
               "key": "insert1_mix",
@@ -502,9 +502,9 @@
             }
           ],
           "knobs": [
-            "insert1_p1",
-            "insert1_p2",
-            "insert1_p3",
+            "insert1_size",
+            "insert1_damp",
+            "insert1_big",
             "insert1_mix"
           ]
         },
@@ -524,7 +524,7 @@
               ]
             },
             {
-              "key": "insert2_p1",
+              "key": "insert2_size",
               "name": "Size",
               "type": "float",
               "min": 0.0,
@@ -536,7 +536,7 @@
               }
             },
             {
-              "key": "insert2_p2",
+              "key": "insert2_damp",
               "name": "Damping",
               "type": "float",
               "min": 0.0,
@@ -548,7 +548,7 @@
               }
             },
             {
-              "key": "insert2_p3",
+              "key": "insert2_big",
               "name": "Bigness",
               "type": "float",
               "min": 0.0,
@@ -560,7 +560,7 @@
               }
             },
             {
-              "key": "insert2_p1",
+              "key": "insert2_comp",
               "name": "Compress",
               "type": "float",
               "min": 0.0,
@@ -572,7 +572,7 @@
               }
             },
             {
-              "key": "insert2_p2",
+              "key": "insert2_crunch",
               "name": "Crunch",
               "type": "float",
               "min": 0.0,
@@ -584,17 +584,17 @@
               }
             },
             {
-              "key": "insert2_p3",
+              "key": "insert2_trans",
               "name": "Transients",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
+              "default": 0.5,
               "visible_if": {
                 "param": "insert2_type",
                 "equals": "Drum Buss"
-              },
-              "default": 0.5
+              }
             },
             {
               "key": "insert2_mix",
@@ -606,9 +606,9 @@
             }
           ],
           "knobs": [
-            "insert2_p1",
-            "insert2_p2",
-            "insert2_p3",
+            "insert2_size",
+            "insert2_damp",
+            "insert2_big",
             "insert2_mix"
           ]
         },

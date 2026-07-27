@@ -44,6 +44,10 @@ typedef struct {
     // them together). [p1,p2,p3,mix].
     float         send_p[2][4];
     float         insert_p[2][4];
+    // Mirrors of slot state the UI reads back (the bus itself is write-only).
+    dr32_efx_type send_type[2];
+    dr32_efx_type insert_type[2];
+    float         send_return_ui[2];
 } dr32_kit;
 
 void dr32_kit_init(dr32_kit *k);
