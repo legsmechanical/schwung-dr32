@@ -59,6 +59,14 @@
         "max": 2.0,
         "step": 0.02,
         "default": 1.0
+      },
+      {
+        "key": "editor",
+        "name": "Pad Editor",
+        "type": "canvas",
+        "canvas_script": "canvas.js#bank_editor",
+        "show_footer": false,
+        "show_value": false
       }
     ],
     "ui_hierarchy": {
@@ -67,36 +75,30 @@
           "name": "Drum Rack 32",
           "params": [
             {
-              "key": "kit",
-              "name": "Kit",
-              "type": "filepath",
-              "root": "/data",
-              "start_path": "/data/UserData/UserLibrary/Track Presets",
-              "filter": [
-                ".ablpreset",
-                ".json"
-              ],
-              "live_preview": true,
-              "browser_hooks": {
-                "on_open": [
-                  {
-                    "key": "kit_mark",
-                    "value": "1"
-                  }
-                ],
-                "on_cancel": [
-                  {
-                    "key": "kit_restore",
-                    "value": "1"
-                  }
-                ],
-                "on_commit": [
-                  {
-                    "key": "kit_mark",
-                    "value": "0"
-                  }
-                ]
-              }
+              "key": "editor",
+              "name": "Pad Editor",
+              "type": "canvas",
+              "canvas_script": "canvas.js#bank_editor",
+              "canvas_overlay": "bank_editor",
+              "show_footer": false,
+              "show_value": false
+            },
+            {
+              "level": "sample_focus",
+              "label": "Sample"
+            },
+            {
+              "level": "kit_src",
+              "label": "Kit"
+            },
+            {
+              "key": "ui_auto_select_pad",
+              "name": "Follow Pads",
+              "type": "enum",
+              "options": [
+                "on",
+                "off"
+              ]
             },
             {
               "level": "pads",
@@ -126,17 +128,8 @@
           "child_label": "Pad",
           "params": [
             {
-              "key": "sample",
-              "name": "Sample",
-              "type": "filepath",
-              "root": "/data",
-              "start_path": "/data/UserData/UserLibrary/Samples",
-              "filter": [
-                ".wav",
-                ".aif",
-                ".aiff"
-              ],
-              "live_preview": true
+              "level": "sample_src",
+              "label": "Sample"
             },
             {
               "key": "transpose",
@@ -258,13 +251,6 @@
               "min": 0.0,
               "max": 1.0,
               "step": 0.01
-            },
-            {
-              "key": "note",
-              "name": "Note",
-              "type": "int",
-              "min": 0,
-              "max": 127
             },
             {
               "key": "send1",
@@ -703,8 +689,176 @@
             }
           ],
           "knobs": []
+        },
+        "kit_src": {
+          "name": "Kit",
+          "params": [
+            {
+              "key": "kit_move",
+              "name": "Move",
+              "type": "filepath",
+              "root": "/data/CoreLibrary/Track Presets/Drums",
+              "start_path": "/data/CoreLibrary/Track Presets/Drums",
+              "filter": [
+                ".ablpreset",
+                ".json"
+              ],
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "kit_mark",
+                    "value": "1"
+                  }
+                ],
+                "on_cancel": [
+                  {
+                    "key": "kit_restore",
+                    "value": "1"
+                  }
+                ],
+                "on_commit": [
+                  {
+                    "key": "kit_mark",
+                    "value": "0"
+                  }
+                ]
+              }
+            },
+            {
+              "key": "kit_user",
+              "name": "User",
+              "type": "filepath",
+              "root": "/data/UserData/UserLibrary/Track Presets",
+              "start_path": "/data/UserData/UserLibrary/Track Presets",
+              "filter": [
+                ".ablpreset",
+                ".json"
+              ],
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "kit_mark",
+                    "value": "1"
+                  }
+                ],
+                "on_cancel": [
+                  {
+                    "key": "kit_restore",
+                    "value": "1"
+                  }
+                ],
+                "on_commit": [
+                  {
+                    "key": "kit_mark",
+                    "value": "0"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "sample_src": {
+          "name": "Sample",
+          "params": [
+            {
+              "key": "sample_move",
+              "name": "Move",
+              "type": "filepath",
+              "root": "/data/CoreLibrary/Samples",
+              "start_path": "/data/CoreLibrary/Samples",
+              "filter": [
+                ".wav",
+                ".aif",
+                ".aiff"
+              ],
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "ui_auto_select_pad",
+                    "value": "off",
+                    "restore": true
+                  }
+                ]
+              }
+            },
+            {
+              "key": "sample_user",
+              "name": "User",
+              "type": "filepath",
+              "root": "/data/UserData/UserLibrary/Samples",
+              "start_path": "/data/UserData/UserLibrary/Samples",
+              "filter": [
+                ".wav",
+                ".aif",
+                ".aiff"
+              ],
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "ui_auto_select_pad",
+                    "value": "off",
+                    "restore": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "sample_focus": {
+          "name": "Sample",
+          "params": [
+            {
+              "key": "pad_sample_move",
+              "name": "Move",
+              "type": "filepath",
+              "root": "/data/CoreLibrary/Samples",
+              "start_path": "/data/CoreLibrary/Samples",
+              "filter": [
+                ".wav",
+                ".aif",
+                ".aiff"
+              ],
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "ui_auto_select_pad",
+                    "value": "off",
+                    "restore": true
+                  }
+                ]
+              }
+            },
+            {
+              "key": "pad_sample_user",
+              "name": "User",
+              "type": "filepath",
+              "root": "/data/UserData/UserLibrary/Samples",
+              "start_path": "/data/UserData/UserLibrary/Samples",
+              "filter": [
+                ".wav",
+                ".aif",
+                ".aiff"
+              ],
+              "live_preview": true,
+              "browser_hooks": {
+                "on_open": [
+                  {
+                    "key": "ui_auto_select_pad",
+                    "value": "off",
+                    "restore": true
+                  }
+                ]
+              }
+            }
+          ]
         }
       }
-    }
+    },
+    "pad_events": true
   }
 }

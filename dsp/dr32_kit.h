@@ -49,6 +49,11 @@ typedef struct {
     dr32_efx_type send_type[2];
     dr32_efx_type insert_type[2];
     float         send_return_ui[2];
+    // Which pad the UI is editing, and whether playing a pad moves that focus.
+    // The DSP owns this because it is the only side that sees pad hits: the
+    // host consumes them before the canvas MIDI dispatch.
+    int           ui_current_pad;
+    int           ui_auto_select_pad;
 } dr32_kit;
 
 void dr32_kit_init(dr32_kit *k);

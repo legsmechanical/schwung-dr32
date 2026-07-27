@@ -106,6 +106,10 @@ mkdir -p "dist/${MODULE_ID}"
 cp build/dsp.so     "dist/${MODULE_ID}/"
 cp build/ui.js      "dist/${MODULE_ID}/"
 cp src/module.json  "dist/${MODULE_ID}/"
+# The canvas Pad Editor. Generated from src/canvas.config.js by the canvaskit
+# build and COMMITTED, so the repo stays self-contained; the host re-reads it
+# on every editor open, so a UI-only change needs no restart.
+cp src/canvas.js    "dist/${MODULE_ID}/"
 
 tar -czf "dist/${MODULE_ID}-module.tar.gz" -C dist "${MODULE_ID}"
 echo "==> done: dist/${MODULE_ID}-module.tar.gz"

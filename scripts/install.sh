@@ -23,7 +23,7 @@ ssh "ableton@${HOST}" "mkdir -p '${DEST}'"
 # temp-name + mv dodges ETXTBSY if the .so is currently loaded
 scp "$HERE/dist/${MODULE_ID}/dsp.so" "ableton@${HOST}:${DEST}/.dsp.so.new"
 ssh "ableton@${HOST}" "mv -f '${DEST}/.dsp.so.new' '${DEST}/dsp.so'"
-for f in module.json ui.js; do
+for f in module.json ui.js canvas.js; do
     scp "$HERE/dist/${MODULE_ID}/$f" "ableton@${HOST}:${DEST}/"
 done
 ssh "ableton@${HOST}" "chmod -R a+rw '${DEST}'"

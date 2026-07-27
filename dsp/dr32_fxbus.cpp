@@ -456,7 +456,8 @@ struct Slot {
 
     SpaceExtra tank;                       // Dattorro figure-eight plate tank
     Diffuser   diff;                       // input diffusion ahead of the tank
-    DampLP     plateLP;                    // fixed transducer rolloff, see apply()
+    DampLP     plateLP;                    // transducer rolloff, swept by Damp
+    DampLP     spacesLP;                   // extends Spaces' dark end only
     awk_verbity2::Verbity2 spaces;         // the flexible room-to-hall model
     DrumBuss   buss;
 
@@ -500,10 +501,15 @@ struct Slot {
         // octaves efficiently. That is a fixed filter, and it belongs here
         // rather than on the damping knob.
         //
-        // Deliberately gentler than an EMT model: this is the snare-and-clap
-        // reverb on a drum rack, and it should keep more presence than a
-        // 1957 plate. It lands near the brightest reference, not the darkest.
-        plateLP.set(5500.0f, fs_);
+        // ...and it SWEEPS with Damp. Pinning it meant the knob only shortened
+        // the HF decay (ratio 0.96 -> 0.52) while the tail's colour never
+        // changed: measured density moved 0.16 dB across the whole control
+        // (-5.66 to -5.82), which reads as "damping does nothing".
+        //
+        // Geometric sweep chosen so the plate's 0.35 default lands on the same
+        // 5.5 kHz it has been voiced at, with 0 meaning genuinely undamped
+        // (12.5 kHz) and 1.0 genuinely dark (1.2 kHz).
+        plateLP.set(12486.0f * powf(0.0961f, pd2), fs_);
         tank.setParams(p1, tankDamp, /*internal predelay*/ 0.0f, /*feed = decay*/ p3 * 0.75f, 1.0f);
 
         // --- Spaces (Verbity2) mapping ------------------------------------
@@ -521,6 +527,13 @@ struct Slot {
         spaces.A = 0.20f + p1 * 0.55f;
         spaces.B = p3 * 0.45f;
         spaces.C = p2;
+        // Verbity2's Mulch alone spans -0.4 to -12.5 dB/Hz, which is a usable
+        // range, so this only extends the DARK end: bypassed below 0.4 so the
+        // part of the knob that already worked is untouched.
+        {
+            const float t = (pd2 - 0.4f) / 0.6f;
+            spacesLP.set(t <= 0.0f ? 20000.0f : 20000.0f * powf(0.075f, t), fs_);
+        }
         spaces.D = 1.0f;
 
         // The Drum Bus has no use for pre-delay, so that knob is its Sustain.
@@ -540,6 +553,7 @@ struct Slot {
         tank.reset();
         diff.reset();
         plateLP.reset();
+        spacesLP.reset();
         spaces.reset();
         buss.reset();
     }
@@ -585,7 +599,11 @@ struct Slot {
                 }
                 float *in[2] = { sl, sr }, *out[2] = { sl, sr };
                 spaces.processReplacing(in, out, n);
-                for (int i = 0; i < n; i++) { io[2 * i] = sl[i]; io[2 * i + 1] = sr[i]; }
+                for (int i = 0; i < n; i++) {
+                    float l = sl[i], r = sr[i];
+                    spacesLP.run(l, r);
+                    io[2 * i] = l; io[2 * i + 1] = r;
+                }
                 break;
             }
             default: break;

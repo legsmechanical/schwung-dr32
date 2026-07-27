@@ -31,6 +31,9 @@ typedef struct {
     // flat params. One place knows the format, and it isn't the audio side.
     char     kit_path[DR32_MAX_PATH];
     int      kit_dirty;
+    // Persisted active bank of the canvas Pad Editor. The canvas owns the real
+    // bound; this only has to survive a close/reopen.
+    int      editor_bank;
     // The Shadow UI asks the DSP for "ui_hierarchy" FIRST and only parses
     // module.json if we return <= 2 bytes (shadow_chain_mgmt.c). Serving it
     // ourselves takes that fallback — and any doubt about its brace-matching
@@ -122,11 +125,18 @@ static void destroy_instance(void *instance) {
 }
 
 static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
-    (void)source;
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || len < 3) return;
     uint8_t status = msg[0] & 0xF0;
+
     if (status == 0x90 && msg[2] > 0) {
+        /* No focus-follow here. MEASURED on device: a live pad hit and a
+         * sequenced note reach on_midi with identical status, channel, note
+         * and source (both report EXTERNAL, not INTERNAL — an earlier version
+         * gated on INTERNAL and silently killed focus-follow entirely). The
+         * distinction survives only in the raw pad note, which the host
+         * forwards to the CANVAS while the Pad Editor is open; the canvas owns
+         * `ui_current_pad`, so the sequencer can never steal the edit focus. */
         dr32_kit_note_on(&in->kit, msg[1], msg[2]);
     } else if (status == 0x80 || (status == 0x90 && msg[2] == 0)) {
         dr32_kit_note_off(&in->kit, msg[1]);
@@ -141,7 +151,15 @@ static void set_param(void *instance, const char *key, const char *val) {
 
     // The kit path is host-side state, not engine state, so it is handled here;
     // everything else goes through the shared dispatch.
-    if (!strcmp(key, "kit")) {
+    // The Kit menu is a PICKER of two roots: "Move" browses the Core Library's
+    // drum kits, "User" the user library. The filepath type takes exactly one
+    // root, so they are two params that mean the same thing.
+    if (!strcmp(key, "editor")) {
+        int b = atoi(val);
+        in->editor_bank = (b < 0) ? 0 : (b > 63 ? 63 : b);
+        return;
+    }
+    if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user")) {
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
         // Load HERE, on the host thread. This used to raise a dirty flag for
         // ui.js to notice, but that file never runs in a chain slot, so the
@@ -213,7 +231,11 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
         memcpy(buf, in->ui_hierarchy, (size_t)in->ui_hierarchy_len + 1);
         return in->ui_hierarchy_len;
     }
-    if (!strcmp(key, "kit"))       return snprintf(buf, buf_len, "%s", in->kit_path);
+    if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user"))
+        return snprintf(buf, buf_len, "%s", in->kit_path);
+    // The canvas editor persists only its active bank; the canvas owns the
+    // real bound, so clamping is deliberately generous.
+    if (!strcmp(key, "editor"))    return snprintf(buf, buf_len, "%d", in->editor_bank);
     if (!strcmp(key, "kit_dirty")) return snprintf(buf, buf_len, "%d", in->kit_dirty);
 
     return dr32_read_param(&in->kit, key, buf, buf_len);

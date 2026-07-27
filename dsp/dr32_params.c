@@ -12,9 +12,23 @@
 #include <string.h>
 
 /** Parse "pad12_attack" -> pad index 12, key "attack". Returns -1 if not a pad key. */
-static int split_pad_key(const char *key, const char **rest) {
+/* "pad<N>_<sub>" addresses a pad explicitly. "pad_<sub>" — no digits — is the
+ * ALIAS: it addresses whichever pad currently has focus.
+ *
+ * This is the mrdrums pattern (its `pad_vol` alias in front of `p01_vol`), and
+ * it exists because the canvas cannot see pad presses: the host consumes them
+ * before the canvas MIDI dispatch, so the UI can never learn which pad was hit.
+ * With an alias the UI does not have to — it binds to fixed keys and the DSP
+ * redirects them to kit->ui_current_pad, which the DSP moves itself because it
+ * DOES see the notes (it plays them). */
+static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) {
     if (strncmp(key, "pad", 3) != 0) return -1;
     const char *p = key + 3;
+    if (*p == '_') {                       /* alias: the focused pad */
+        *rest = p + 1;
+        int cur = k ? k->ui_current_pad : 0;
+        return (cur >= 0 && cur < DR32_PADS) ? cur : 0;
+    }
     int idx = 0, digits = 0;
     while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; digits++; }
     if (!digits || *p != '_') return -1;
@@ -71,11 +85,52 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
     if (!kit || !key || !buf || buf_len <= 0) return 0;
 
     const char *sub;
-    int pad = split_pad_key(key, &sub);
+    int pad = split_pad_key(kit, key, &sub);
     if (pad >= 0) {
         const dr32_pad_slot *s = &kit->pads[pad];
         const dr32_pad *p = &s->params;
-        if (!strcmp(sub, "sample"))      return snprintf(buf, buf_len, "%s", s->path);
+        /* Peak table for the waveform view: `bins` min/max pairs across the
+         * whole file, as a flat CSV scaled to -100..100.
+         *
+         * Contract copied from the waveform-editor tool, which asks the DSP for
+         * "waveform:<start>,<end>" and gets min/max pairs back — the canvas has
+         * no way to read audio, so the DSP has to publish it. CSV rather than
+         * that tool's JSON: it is a third the size and split(",") is cheaper
+         * than JSON.parse in QuickJS. The value channel is 64 KB
+         * (SHADOW_PARAM_VALUE_LEN), so 128 pairs is nowhere near the limit.
+         *
+         * An empty pad returns nothing, which the canvas draws as a flat line. */
+        if (!strcmp(sub, "waveform")) {
+            if (!s->sample || !s->frames || buf_len < 8) return snprintf(buf, buf_len, "%s", "");
+            const int bins = 128;
+            const int ch = (s->channels > 0) ? s->channels : 1;
+            int off = 0;
+            for (int b = 0; b < bins; b++) {
+                size_t a0 = (size_t)((double)b       / bins * (double)s->frames);
+                size_t a1 = (size_t)((double)(b + 1) / bins * (double)s->frames);
+                if (a1 <= a0) a1 = a0 + 1;
+                if (a1 > s->frames) a1 = s->frames;
+                float lo = 0.0f, hi = 0.0f;
+                for (size_t f = a0; f < a1; f++) {
+                    /* Mono-sum: the view is about shape, not channel detail. */
+                    float v = 0.0f;
+                    for (int c = 0; c < ch; c++) v += s->sample[f * (size_t)ch + (size_t)c];
+                    v /= (float)ch;
+                    if (v < lo) lo = v;
+                    if (v > hi) hi = v;
+                }
+                int li = (int)(lo * 100.0f), hj = (int)(hi * 100.0f);
+                if (li < -100) li = -100;
+                if (hj > 100) hj = 100;
+                int n = snprintf(buf + off, (size_t)(buf_len - off), "%s%d,%d",
+                                 b ? "," : "", li, hj);
+                if (n <= 0 || off + n >= buf_len) break;
+                off += n;
+            }
+            return off;
+        }
+        if (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
+            || !strcmp(sub, "sample_user"))  return snprintf(buf, buf_len, "%s", s->path);
         if (!strcmp(sub, "loaded"))      return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);
         if (!strcmp(sub, "frames"))      return snprintf(buf, buf_len, "%zu", s->frames);
         if (!strcmp(sub, "note"))        return snprintf(buf, buf_len, "%d", s->note);
@@ -134,6 +189,10 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         }
     }
 
+    if (!strcmp(key, "ui_current_pad"))
+        return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
+    if (!strcmp(key, "ui_auto_select_pad"))
+        return snprintf(buf, buf_len, "%s", kit->ui_auto_select_pad ? "on" : "off");
     if (!strcmp(key, "master")) return snprintf(buf, buf_len, "%g", (double)kit->master_gain);
     if (!strcmp(key, "voices")) return snprintf(buf, buf_len, "%d", dr32_kit_active_voices(kit));
     return 0;
@@ -143,7 +202,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
     if (!kit || !key || !val) return 0;
 
     const char *sub;
-    int pad = split_pad_key(key, &sub);
+    int pad = split_pad_key(kit, key, &sub);
     if (pad >= 0) {
         dr32_pad_slot *s = &kit->pads[pad];
         dr32_pad *p = &s->params;
@@ -153,7 +212,10 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         // assigns each highlighted file (and restores the old one on Back), so
         // hitting the pad plays whatever is currently previewed — at the pad's
         // real velocity, which an auto-audition could not reproduce.
-        if      (!strcmp(sub, "sample"))        dr32_kit_load_sample(kit, pad, val);
+        // "Sample" is a PICKER of two roots (Move / User); the filepath type
+        // takes one root each, so they are two keys meaning the same thing.
+        if      (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
+                 || !strcmp(sub, "sample_user"))  dr32_kit_load_sample(kit, pad, val);
         else if (!strcmp(sub, "note"))          dr32_kit_set_note(kit, pad, atoi(val));
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
         else if (!strcmp(sub, "start"))         p->play_start = f;
@@ -243,6 +305,17 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         }
     }
 
+    if (!strcmp(key, "ui_current_pad")) {
+        int v = atoi(val);
+        kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);
+        return 1;
+    }
+    if (!strcmp(key, "ui_auto_select_pad")) {
+        // The host's filepath browser_hooks suspend this while a browser is
+        // open (MODULES.md documents the pattern), so accept both spellings.
+        kit->ui_auto_select_pad = (!strcmp(val, "on") || atoi(val) == 1);
+        return 1;
+    }
     if (!strcmp(key, "master")) { kit->master_gain = (float)atof(val); return 1; }
     if (!strcmp(key, "panic"))  { dr32_kit_all_off(kit); return 1; }
     if (!strcmp(key, "clear")) {

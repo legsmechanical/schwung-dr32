@@ -24,6 +24,17 @@
 #define MOVE_MIDI_SOURCE_EXTERNAL 2
 #define MOVE_MIDI_SOURCE_HOST 3  /* Host-generated (clock, etc) */
 #define MOVE_MIDI_SOURCE_FX_BROADCAST 4  /* Broadcast to audio FX only (skip synth) */
+/* A HARDWARE pad press, delivered as its raw pad note (68-99, pad = note - 68)
+ * IN ADDITION to the normal note routing, which is unchanged.
+ *
+ * Opt in with "capabilities": {"pad_events": true} — without it a module never
+ * sees these, so nothing changes for modules that do not ask.
+ *
+ * This is the only way to tell a physical press from a sequenced note. By the
+ * time a note reaches on_midi the two are identical — same status, channel,
+ * note and source — because Move turns the press into an ordinary note before
+ * playing it. A drum module that wants "select the pad I just hit, even during
+ * playback" needs this; nothing downstream can reconstruct it. */
 
 /* Clock status identifiers for host_api_v1.get_clock_status() */
 #define MOVE_CLOCK_STATUS_UNAVAILABLE 0  /* Clock output not available/configured */
@@ -109,6 +120,13 @@ typedef struct host_api_v1 {
      * forward_channel (which is purely an internal synth-side routing hint,
      * e.g. minijv part 6). NULL if the host doesn't expose slot context. */
     int (*slot_recv_channel)(void *instance);
+
+    /* Beats since transport start of the active clock source (Move's native
+     * sequencer, or an internal module's emitted clock), derived from
+     * 24-PPQN realtime ticks and interpolated per block. Returns < 0 when
+     * no transport is running — callers must fall back (e.g. LFO free-run).
+     * Appended in 2026-07; may be NULL on older hosts, always guard. */
+    double (*get_beat_position)(void);
 
 } host_api_v1_t;
 

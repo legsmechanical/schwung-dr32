@@ -15,6 +15,8 @@ void dr32_kit_init(dr32_kit *k) {
         k->note_to_pad[DR32_FIRST_NOTE + i] = (signed char)i;
     }
     k->master_gain = 1.0f;
+    k->ui_current_pad = 0;
+    k->ui_auto_select_pad = 1;      // playing a pad focuses it, as mrdrums does
     for (int i = 0; i < 2; i++) {
         k->send_p[i][0] = 0.5f;   // size
         k->send_p[i][1] = 0.3f;   // damping
@@ -102,6 +104,10 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
     if (note < 0 || note > 127) return;
     int pad = k->note_to_pad[note];
     if (pad < 0) return;
+    /* NOTE: focus does NOT follow from here. Ordinary notes cannot be told
+     * apart from sequenced ones, so following them let playback drag the
+     * editor around. dr32.c moves the focus from MOVE_MIDI_SOURCE_PAD events
+     * instead — real hardware presses only. */
     dr32_pad_slot *s = &k->pads[pad];
 
     // Choke arbitration, per the native DrumChainMidiNode: among note-ons that
