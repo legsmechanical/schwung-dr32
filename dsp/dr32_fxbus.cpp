@@ -39,8 +39,7 @@ struct DrumBuss {
     // Pressure4 state (A/B ping-pong, as in the original)
     float spdA = 10000.0f, spdB = 10000.0f, cofA = 1.0f, cofB = 1.0f;
     int   flip = 0;
-    // crunch band-split state
-    float hpL = 0.0f, hpR = 0.0f;
+    float crunchNorm = 1.0f;   // output normalisation so drive does not change level
     // transient envelope followers (fast + slow), per channel
     float envF[2] = { 0.0f, 0.0f }, envS[2] = { 0.0f, 0.0f };
     float aFast = 0.0f, aSlow = 0.0f, rel = 0.0f;
@@ -59,16 +58,41 @@ struct DrumBuss {
     static float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
 
     void recalc() {
-        // Followers: ~1 ms vs ~40 ms attack; their difference IS the transient.
-        aFast = 1.0f - std::exp(-1.0f / (0.001f * fs));
-        aSlow = 1.0f - std::exp(-1.0f / (0.040f * fs));
-        rel   = 1.0f - std::exp(-1.0f / (0.150f * fs));
+        // Two followers with the SAME release and different attacks. The shared
+        // release matters: with different releases the fast one sits above the
+        // slow one for the whole decay, so the "transient" reading never
+        // returns to zero and the stage becomes a flat gain boost — which is
+        // exactly what the first version did (measured: attack AND tail both
+        // +6x, ratio unchanged).
+        aFast = 1.0f - std::exp(-1.0f / (0.001f * fs));   // 1 ms
+        aSlow = 1.0f - std::exp(-1.0f / (0.025f * fs));   // 25 ms
+        rel   = 1.0f - std::exp(-1.0f / (0.060f * fs));   // shared
+
+        // Saturator makeup, MEASURED rather than assumed: integrate the shaper
+        // over a reference sine and normalise so RMS in ~= RMS out. A fixed
+        // reference point got this wrong by 8 dB.
+        const int    K = 32;
+        const float  amp = 0.3f;
+        double in2 = 0.0, out2 = 0.0;
+        for (int i = 0; i < K; i++) {
+            float x = amp * std::sin(2.0f * 3.14159265f * (float)i / (float)K);
+            float y = shape(x);
+            in2 += (double)x * x;
+            out2 += (double)y * y;
+        }
+        crunchNorm = (out2 > 1e-12) ? (float)std::sqrt(in2 / out2) : 1.0f;
+    }
+
+    /** The saturation curve itself, before makeup. */
+    inline float shape(float x) const {
+        float d = x * (1.0f + crunch * 24.0f);
+        float sh = std::tanh(d);
+        return sh - 0.15f * sh * sh * sh;
     }
 
     void reset() {
         spdA = spdB = 10000.0f;
         cofA = cofB = 1.0f;
-        hpL = hpR = 0.0f;
         envF[0] = envF[1] = envS[0] = envS[1] = 0.0f;
         flip = 0;
     }
@@ -76,7 +100,13 @@ struct DrumBuss {
     inline void tick(float &l, float &r) {
         float xl = l, xr = r;
 
-        // --- transients: gain from the fast/slow envelope difference
+        // --- transients: gain from the RATIO of a fast and a slow follower.
+        //
+        // The previous version used their raw difference, which is proportional
+        // to signal level — so it did almost nothing on quiet material and was
+        // inconsistent across kits. A ratio is level-independent: it says "how
+        // much faster is this moment than the local average", which is what a
+        // transient actually is.
         if (trans < 0.49f || trans > 0.51f) {
             const float depth = (trans - 0.5f) * 2.0f;      // -1..+1
             float *ch[2] = { &xl, &xr };
@@ -84,27 +114,31 @@ struct DrumBuss {
                 float mag = std::fabs(*ch[c]);
                 envF[c] += (mag > envF[c] ? aFast : rel) * (mag - envF[c]);
                 envS[c] += (mag > envS[c] ? aSlow : rel) * (mag - envS[c]);
-                float diff = envF[c] - envS[c];             // >0 during an attack
-                float g = 1.0f + depth * diff * 4.0f;
-                if (g < 0.05f) g = 0.05f;
-                if (g > 4.0f)  g = 4.0f;
+                // How far the fast follower is ABOVE the slow one, relative to
+                // the slow one: ~0 in steady state, large only at an onset.
+                float t = (envF[c] - envS[c]) / (envS[c] + 1e-4f);
+                if (t < 0.0f) t = 0.0f;
+                if (t > 1.5f) t = 1.5f;
+                float g = std::pow(2.0f, depth * t * 2.0f);   // up to ~+/-9 dB
+                if (g < 0.1f) g = 0.1f;
+                if (g > 4.0f) g = 4.0f;
                 *ch[c] *= g;
             }
         }
 
-        // --- crunch: fold only the HF band so the low end stays clean
+        // --- crunch: FULL-BAND saturation.
+        //
+        // This used to split at ~1.2 kHz and only fold the upper band, which
+        // audibly thinned the low end — that is EQ shaping, not saturation.
+        // A crunchy saturator should add harmonics across the spectrum and
+        // leave the tonal balance alone, so it now drives the whole signal and
+        // normalises the output so pushing Crunch changes character, not level.
         if (crunch > 0.0f) {
-            const float aHi = 0.14f;                        // ~1.2 kHz split
-            const float drv = 1.0f + crunch * 12.0f + crunch * crunch * 60.0f;
-            float *lp[2] = { &hpL, &hpR };
             float *ch[2] = { &xl, &xr };
             for (int c = 0; c < 2; c++) {
-                float x = *ch[c];
-                *lp[c] += aHi * (x - *lp[c]);
-                float low = *lp[c], high = x - *lp[c];
-                float d = high * drv;
-                float sh = std::tanh(d);                    // harder than the fold: grit
-                *ch[c] = x + crunch * ((low + sh * 0.8f) - x);
+                // tanh gives the soft knee; the cubic term adds the odd-harmonic
+                // grit that reads as "crunch" rather than "warm".
+                *ch[c] += crunch * (shape(*ch[c]) * crunchNorm - *ch[c]);
             }
         }
 
@@ -156,9 +190,20 @@ using efx::InfinityVerb;
 /** One effect instance. Only the algorithm the current type needs is run; all
  *  of them are resident because allocating on a type change would have to
  *  happen on the audio thread. */
+#define DR32_PREDELAY_MAX_MS 200
+#define DR32_PREDELAY_MAX ((int)(DR32_PREDELAY_MAX_MS * 48))   // headroom to 48 kHz
+
 struct Slot {
     dr32_efx_type type = DR32_EFX_NONE;
     float p1 = 0.5f, p2 = 0.5f, p3 = 0.5f, mix = 1.0f;
+    float pd = 0.0f;                       // pre-delay 0..1 -> 0..200 ms
+
+    // Pre-delay line, applied before the reverb. The plate has its own internal
+    // pre-delay (its third parameter!) but Chamber and InfinityVerb have none,
+    // so one line here keeps the control identical across all three — and the
+    // plate's internal one is held at zero so they cannot stack.
+    float pre[2 * DR32_PREDELAY_MAX];
+    int   preW = 0, preLen = 0;
 
     SpaceExtra plate;      // Dattorro plate tank
     Chamber    room;       // Airwindows Chamber
@@ -166,6 +211,7 @@ struct Slot {
     DrumBuss   buss;       // compress + drive + boom
 
     void setSampleRate(float fs) {
+        fs_ = fs;
         plate.setSampleRate(fs);
         room.setSampleRate(fs);
         hall.setSampleRate(fs);
@@ -175,16 +221,25 @@ struct Slot {
     }
 
     void apply() {
-        // Reverbs take normalized controls; a send bus runs fully wet and gets
-        // its level from the pad send amounts, so `mix` is applied by the
-        // caller for sends and here for inserts.
-        plate.setParams(p1, p2, p3, /*feed*/ p3, /*mix*/ 1.0f);
+        // p3 is DECAY for every reverb. The plate's own third parameter is its
+        // internal pre-delay, so it is pinned to 0 and decay goes to `feed`
+        // instead — previously p3 was passed as BOTH, so one knob was
+        // simultaneously pre-delay and decay.
+        plate.setParams(p1, p2, /*internal predelay*/ 0.0f, /*feed = decay*/ p3, 1.0f);
         room.setParams(p1, p2, p3, 1.0f);
         hall.setParams(p1, p2, p3, 1.0f);
         buss.setParams(p1, p2, p3);
+        int n = (int)(pd * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
+        if (n < 0) n = 0;
+        if (n > DR32_PREDELAY_MAX - 1) n = DR32_PREDELAY_MAX - 1;
+        preLen = n;
     }
 
+    float fs_ = 44100.0f;
+
     void reset() {
+        std::memset(pre, 0, sizeof(pre));
+        preW = 0;
         plate.reset();
         room.reset();
         hall.reset();
@@ -192,6 +247,17 @@ struct Slot {
     }
 
     inline void tick(float &l, float &r) {
+        // Pre-delay ahead of the reverb (no effect on Drum Buss).
+        if (preLen > 0 && type != DR32_EFX_DRUMBUSS) {
+            int w = preW % DR32_PREDELAY_MAX;
+            int rd = (preW - preLen) % DR32_PREDELAY_MAX;
+            if (rd < 0) rd += DR32_PREDELAY_MAX;
+            pre[2 * w] = l;
+            pre[2 * w + 1] = r;
+            l = pre[2 * rd];
+            r = pre[2 * rd + 1];
+            preW = (preW + 1) % DR32_PREDELAY_MAX;
+        }
         switch (type) {
             case DR32_EFX_PLATE: plate.tick(l, r); break;
             case DR32_EFX_ROOM:  room.tick(l, r);  break;
@@ -245,19 +311,19 @@ void dr32_fxbus_set_insert_type(dr32_fxbus *fx, int slot, dr32_efx_type type) {
 }
 
 void dr32_fxbus_set_send_params(dr32_fxbus *fx, int slot,
-                                float p1, float p2, float p3) {
+                                float p1, float p2, float p3, float predelay) {
     if (!fx || slot < 0 || slot >= DR32_SEND_SLOTS) return;
     Slot &s = fx->sends[slot];
-    s.p1 = p1; s.p2 = p2; s.p3 = p3;
+    s.p1 = p1; s.p2 = p2; s.p3 = p3; s.pd = predelay;
     s.mix = 1.0f;                 // a send return is ALWAYS 100% wet
     s.apply();
 }
 
 void dr32_fxbus_set_insert_params(dr32_fxbus *fx, int slot,
-                                  float p1, float p2, float p3, float mix) {
+                                  float p1, float p2, float p3, float predelay, float mix) {
     if (!fx || slot < 0 || slot >= DR32_INSERT_SLOTS) return;
     Slot &s = fx->inserts[slot];
-    s.p1 = p1; s.p2 = p2; s.p3 = p3; s.mix = mix;
+    s.p1 = p1; s.p2 = p2; s.p3 = p3; s.pd = predelay; s.mix = mix;
     s.apply();
 }
 

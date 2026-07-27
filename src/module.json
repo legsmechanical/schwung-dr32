@@ -324,15 +324,25 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "default": 0.3
             },
             {
-              "key": "send1_big",
-              "name": "Bigness",
+              "key": "send1_decay",
+              "name": "Decay",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01
+            },
+            {
+              "key": "send1_predelay",
+              "name": "Pre-delay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0
             },
             {
               "key": "send1_return",
@@ -340,14 +350,15 @@
               "type": "float",
               "min": 0.0,
               "max": 2.0,
-              "step": 0.02
+              "step": 0.02,
+              "default": 1.0
             }
           ],
           "knobs": [
             "send1_size",
             "send1_damp",
-            "send1_big",
-            "send1_return"
+            "send1_decay",
+            "send1_predelay"
           ]
         },
         "send2": {
@@ -378,15 +389,25 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "default": 0.3
             },
             {
-              "key": "send2_big",
-              "name": "Bigness",
+              "key": "send2_decay",
+              "name": "Decay",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01
+            },
+            {
+              "key": "send2_predelay",
+              "name": "Pre-delay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0
             },
             {
               "key": "send2_return",
@@ -394,14 +415,15 @@
               "type": "float",
               "min": 0.0,
               "max": 2.0,
-              "step": 0.02
+              "step": 0.02,
+              "default": 1.0
             }
           ],
           "knobs": [
             "send2_size",
             "send2_damp",
-            "send2_big",
-            "send2_return"
+            "send2_decay",
+            "send2_predelay"
           ]
         },
         "insert1": {
@@ -438,18 +460,32 @@
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
+              "default": 0.3,
               "visible_if": {
                 "param": "insert1_type",
                 "not_equals": "Drum Buss"
               }
             },
             {
-              "key": "insert1_big",
-              "name": "Bigness",
+              "key": "insert1_decay",
+              "name": "Decay",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
+              "visible_if": {
+                "param": "insert1_type",
+                "not_equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert1_predelay",
+              "name": "Pre-delay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0,
               "visible_if": {
                 "param": "insert1_type",
                 "not_equals": "Drum Buss"
@@ -498,13 +534,14 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "default": 1.0
             }
           ],
           "knobs": [
             "insert1_size",
             "insert1_damp",
-            "insert1_big",
+            "insert1_decay",
             "insert1_mix"
           ]
         },
@@ -542,18 +579,32 @@
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
+              "default": 0.3,
               "visible_if": {
                 "param": "insert2_type",
                 "not_equals": "Drum Buss"
               }
             },
             {
-              "key": "insert2_big",
-              "name": "Bigness",
+              "key": "insert2_decay",
+              "name": "Decay",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
+              "visible_if": {
+                "param": "insert2_type",
+                "not_equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert2_predelay",
+              "name": "Pre-delay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0,
               "visible_if": {
                 "param": "insert2_type",
                 "not_equals": "Drum Buss"
@@ -602,13 +653,14 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "default": 1.0
             }
           ],
           "knobs": [
             "insert2_size",
             "insert2_damp",
-            "insert2_big",
+            "insert2_decay",
             "insert2_mix"
           ]
         },

@@ -391,10 +391,19 @@ struct InfinityVerb {
     }
 
     // All inputs 0..1.
-    void setParams(float size, float damp, float feedback, float mix) {
-        B_ = clamp01(size);
-        C_ = clamp01(damp);
-        E_ = clamp01(feedback);
+    //
+    // ⚠ FIXED IN DR32 (2026-07-26). The port assigned B_/C_/E_ while recalc()
+    // reads A_/B_/C_/D_, so `size` never reached A_ and D_ stayed at its 1.0
+    // default — making lowpass_ = (1 - D_^2) = 0, which zeroes the wet input
+    // outright (`iirAL = iirAL*(1-0) + in*0; in = iirAL`). The result was a
+    // completely silent reverb. Upstream echidna-fx routes its Hall to Chamber,
+    // so this path was never exercised there.
+    void setParams(float size, float damp, float decay, float mix) {
+        A_ = clamp01(size);          // delay-line size
+        B_ = clamp01(decay);         // regeneration / tail length
+        C_ = clamp01(damp) * 0.5f;   // highpass amount, gentle
+        D_ = clamp01(damp);          // lowpass: 0 damp -> wide open
+        E_ = 1.0f;
         mix_ = clamp01(mix);
         recalc();
     }

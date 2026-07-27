@@ -42,8 +42,9 @@ typedef struct {
     float         scratch[2 * DR32_KIT_MAX_BLOCK];
     // Slot params are cached so the UI can set one at a time (the bus API takes
     // them together). [p1,p2,p3,mix].
-    float         send_p[2][4];
-    float         insert_p[2][4];
+    // [size, damp, decay, predelay, mix]
+    float         send_p[2][5];
+    float         insert_p[2][5];
     // Mirrors of slot state the UI reads back (the bus itself is write-only).
     dr32_efx_type send_type[2];
     dr32_efx_type insert_type[2];

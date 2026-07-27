@@ -117,10 +117,11 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
             const char *f2 = q + 2;
             const float *cache = is_send ? kit->send_p[slot] : kit->insert_p[slot];
             int idx = -1;
-            if      (!strcmp(f2, "size") || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
-            else if (!strcmp(f2, "damp") || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
-            else if (!strcmp(f2, "big")  || !strcmp(f2, "trans")  || !strcmp(f2, "p3")) idx = 2;
-            else if (!strcmp(f2, "mix")) idx = 3;
+            if      (!strcmp(f2, "size")  || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
+            else if (!strcmp(f2, "damp")  || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
+            else if (!strcmp(f2, "decay") || !strcmp(f2, "trans")  || !strcmp(f2, "p3")) idx = 2;
+            else if (!strcmp(f2, "predelay")) idx = 3;
+            else if (!strcmp(f2, "mix"))      idx = 4;
             if (idx >= 0) return snprintf(buf, buf_len, "%g", (double)cache[idx]);
             if (!strcmp(f2, "return") && is_send)
                 return snprintf(buf, buf_len, "%g", (double)kit->send_return_ui[slot]);
@@ -211,14 +212,15 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
             // They must be DISTINCT keys (the host rejects a hierarchy with any
             // duplicate key), but they address the same underlying parameter.
             int idx = -1;
-            if      (!strcmp(f2, "size")   || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
-            else if (!strcmp(f2, "damp")   || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
-            else if (!strcmp(f2, "big")    || !strcmp(f2, "trans")  || !strcmp(f2, "p3")) idx = 2;
-            else if (!strcmp(f2, "mix"))  idx = 3;
+            if      (!strcmp(f2, "size")  || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
+            else if (!strcmp(f2, "damp")  || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
+            else if (!strcmp(f2, "decay") || !strcmp(f2, "trans")  || !strcmp(f2, "p3")) idx = 2;
+            else if (!strcmp(f2, "predelay")) idx = 3;
+            else if (!strcmp(f2, "mix"))      idx = 4;
             if (idx >= 0) {
                 cache[idx] = v;
-                if (is_send) dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2]);
-                else         dr32_fxbus_set_insert_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+                if (is_send) dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+                else         dr32_fxbus_set_insert_params(fx, slot, cache[0], cache[1], cache[2], cache[3], cache[4]);
                 return 1;
             }
         }

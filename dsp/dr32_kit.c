@@ -16,14 +16,18 @@ void dr32_kit_init(dr32_kit *k) {
     }
     k->master_gain = 1.0f;
     for (int i = 0; i < 2; i++) {
-        k->send_p[i][0] = k->send_p[i][1] = k->send_p[i][2] = 0.5f;
-        k->send_p[i][3] = 1.0f;                 // a send bus runs fully wet
+        k->send_p[i][0] = 0.5f;   // size
+        k->send_p[i][1] = 0.3f;   // damping
+        k->send_p[i][2] = 0.5f;   // decay
+        k->send_p[i][3] = 0.0f;   // pre-delay OFF by default (it was 125 ms)
+        k->send_p[i][4] = 1.0f;
         // Insert defaults: Compress/Crunch off, Transients CENTRED (0.5 is
         // neutral for a bipolar control), fully wet.
-        k->insert_p[i][0] = 0.0f;
-        k->insert_p[i][1] = 0.0f;
-        k->insert_p[i][2] = 0.5f;
-        k->insert_p[i][3] = 1.0f;
+        k->insert_p[i][0] = 0.0f;   // compress / size
+        k->insert_p[i][1] = 0.0f;   // crunch / damping
+        k->insert_p[i][2] = 0.5f;   // transients (0.5 neutral) / decay
+        k->insert_p[i][3] = 0.0f;   // pre-delay
+        k->insert_p[i][4] = 1.0f;   // dry/wet
         k->send_type[i] = DR32_EFX_NONE;
         k->insert_type[i] = DR32_EFX_NONE;
         k->send_return_ui[i] = 1.0f;
