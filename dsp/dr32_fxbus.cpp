@@ -245,7 +245,7 @@ struct Slot {
         if (type == DR32_EFX_ROOM) {
             chamber.setParams(0.10f + 0.30f * p1, p2, 0.02f + p3 * 0.13f, 1.0f);
         } else {
-            chamber.setParams(0.45f + 0.55f * p1, p2, 0.06f + p3 * 0.26f, 1.0f);
+            chamber.setParams(0.35f + 0.45f * p1, p2, 0.04f + p3 * 0.18f, 1.0f);
         }
         buss.setParams(p1, p2, p3);
         int n = (int)(pd * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
@@ -414,20 +414,26 @@ void dr32_efx_defaults(dr32_efx_type type, float *o) {
     if (!o) return;
     // [size, damp, decay, predelay, mix]. Pre-delay is in 0..200 ms.
     switch (type) {
+        // NOTE on o[4] (mix): a REVERB as an insert must never default to fully
+        // wet — that replaces the kit with its own ambience. Sends ignore this
+        // value entirely (a send return is always 100% wet by design), so it
+        // only affects insert slots.
         case DR32_EFX_PLATE:
             // Snare/clap plate: medium tank, a little damping so it is not
             // brittle, short-ish tail, ~10 ms pre-delay to keep the hit clear.
-            o[0] = 0.45f; o[1] = 0.35f; o[2] = 0.45f; o[3] = 0.05f; o[4] = 1.0f; break;
+            o[0] = 0.45f; o[1] = 0.35f; o[2] = 0.45f; o[3] = 0.05f; o[4] = 0.28f; break;
         case DR32_EFX_ROOM:
             // Small, dry-ish, minimal pre-delay — ambience rather than effect.
-            o[0] = 0.30f; o[1] = 0.40f; o[2] = 0.30f; o[3] = 0.02f; o[4] = 1.0f; break;
+            o[0] = 0.30f; o[1] = 0.40f; o[2] = 0.30f; o[3] = 0.02f; o[4] = 0.25f; break;
         case DR32_EFX_HALL:
-            // Big and damped, longer tail, ~20 ms pre-delay for the sense of
-            // distance a hall needs.
-            o[0] = 0.75f; o[1] = 0.55f; o[2] = 0.70f; o[3] = 0.10f; o[4] = 1.0f; break;
+            // A hall, not a cathedral: moderate size and a ~2 s tail. The old
+            // defaults (size .75 / decay .70) measured over 6 s and swamped the
+            // kit.
+            o[0] = 0.40f; o[1] = 0.55f; o[2] = 0.30f; o[3] = 0.08f; o[4] = 0.22f; break;
         case DR32_EFX_DRUMBUSS:
             // Gentle glue with a hint of grit and a little extra attack —
-            // audible but not a statement.
+            // audible but not a statement. Fully wet: it is a processor, not an
+            // ambience, so dry/dry blending would just weaken it.
             o[0] = 0.30f; o[1] = 0.15f; o[2] = 0.60f; o[3] = 0.0f; o[4] = 1.0f; break;
         default:
             o[0] = 0.5f; o[1] = 0.3f; o[2] = 0.5f; o[3] = 0.0f; o[4] = 1.0f; break;

@@ -203,6 +203,13 @@ int main(void) {
         // Drum Buss should be doing something on arrival, but gently.
         CHECK(db[0] > 0.05f && db[0] < 0.6f, "drum buss compress default %.2f is not gentle", db[0]);
         CHECK(db[2] > 0.5f, "drum buss should add a little attack by default (%.2f)", db[2]);
+
+        // A REVERB as an insert must never arrive fully wet — that replaces the
+        // kit with its own ambience. A processor like Drum Buss should be wet.
+        CHECK(pl[4] < 0.5f, "plate insert default mix %.2f is too wet", pl[4]);
+        CHECK(rm[4] < 0.5f, "room insert default mix %.2f is too wet", rm[4]);
+        CHECK(hl[4] < 0.5f, "hall insert default mix %.2f is too wet", hl[4]);
+        CHECK(db[4] > 0.9f, "drum buss should be fully wet (%.2f)", db[4]);
     }
 
     // ---- an idle send bus must stop costing CPU, but only after its tail
