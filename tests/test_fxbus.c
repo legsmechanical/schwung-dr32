@@ -192,9 +192,11 @@ int main(void) {
         dr32_efx_defaults(DR32_EFX_HALL, hl);
         dr32_efx_defaults(DR32_EFX_DRUMBUSS, db);
 
-        CHECK(hl[0] > pl[0] && pl[0] > rm[0], "size should order hall > plate > room (%.2f/%.2f/%.2f)",
-              hl[0], pl[0], rm[0]);
-        CHECK(hl[2] > rm[2], "hall should decay longer than room (%.2f vs %.2f)", hl[2], rm[2]);
+        // Deliberately NOT comparing knob values across types: Plate is the
+        // Dattorro tank and Room/Hall are Chamber, so 0.40 on one is not
+        // comparable to 0.45 on another. What matters is the RESULT, measured
+        // below. Pre-delay is on the same scale for all of them, so that one is
+        // comparable.
         CHECK(hl[3] > rm[3], "hall should have more pre-delay than room");
         for (int i = 0; i < 4; i++) {
             CHECK(pl[i] >= 0.0f && pl[i] <= 1.0f, "plate default %d out of range", i);
@@ -210,6 +212,42 @@ int main(void) {
         CHECK(rm[4] < 0.5f, "room insert default mix %.2f is too wet", rm[4]);
         CHECK(hl[4] < 0.5f, "hall insert default mix %.2f is too wet", hl[4]);
         CHECK(db[4] > 0.9f, "drum buss should be fully wet (%.2f)", db[4]);
+    }
+
+    // ---- at their DEFAULT settings, the three reverbs must actually differ in
+    //      decay time, and none may be enormous. This is the check that matters
+    //      (Hall once measured >6 s at its defaults and swamped the kit).
+    {
+        struct { dr32_efx_type t; const char *n; } T[] = {
+            { DR32_EFX_ROOM, "Room" }, { DR32_EFX_PLATE, "Plate" }, { DR32_EFX_HALL, "Hall" },
+        };
+        float rt[3];
+        for (int k = 0; k < 3; k++) {
+            float d[5];
+            dr32_efx_defaults(T[k].t, d);
+            dr32_fxbus *fx = dr32_fxbus_create(SR);
+            dr32_fxbus_set_insert_type(fx, 0, T[k].t);
+            dr32_fxbus_set_insert_params(fx, 0, d[0], d[1], d[2], d[3], 1.0f);
+            float peak = 0.0f;
+            int last = 0;
+            const int blocks = SR * 8 / 128;
+            for (int b = 0; b < blocks; b++) {
+                float blk[2 * 128];
+                memset(blk, 0, sizeof(blk));
+                if (b == 0) for (int i = 0; i < 32; i++) { blk[2 * i] = 0.7f; blk[2 * i + 1] = 0.7f; }
+                dr32_fxbus_process(fx, blk, 128);
+                float m = 0.0f;
+                for (int i = 0; i < 128; i++) { float a = fabsf(blk[2 * i]); if (a > m) m = a; }
+                if (b < 40 && m > peak) peak = m;
+                if (m > peak * 0.001f) last = b;
+            }
+            rt[k] = (float)last * 128.0f / SR;
+            dr32_fxbus_destroy(fx);
+        }
+        printf("  default RT60: Room %.2fs  Plate %.2fs  Hall %.2fs\n", rt[0], rt[1], rt[2]);
+        CHECK(rt[0] < rt[2], "hall should decay longer than room at defaults (%.2f vs %.2f)", rt[2], rt[0]);
+        CHECK(rt[2] < 3.0f, "hall default decay %.2f s is too big for a drum kit", rt[2]);
+        CHECK(rt[0] > 0.1f, "room default decay %.2f s is inaudibly short", rt[0]);
     }
 
     // ---- an idle send bus must stop costing CPU, but only after its tail
