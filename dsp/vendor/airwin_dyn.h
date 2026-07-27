@@ -1,6 +1,6 @@
 #pragma once
 // ============================================================================
-//  airwin_dyn.h - Airwindows dynamics, transplanted for DR32s Drum Buss.
+//  airwin_dyn.h - Airwindows dynamics, transplanted for DR32's Drum Bus.
 //
 //    Pop3   -> the Compress stage. A real threshold-and-ratio compressor with
 //              independent attack and release. Its gain is
@@ -12,12 +12,11 @@
 //              drag up the sample noise floor and room bleed.
 //              It also carries a gate/sustain section (tail shortening).
 //
-//    Point  -> the Transients stage. Ratio of a fast and a slow leaky
-//              integrator, with the SLOW ones speed moved to set direction.
-//              Unlike a difference-of-envelopes it returns to exactly unity in
-//              steady state, and the tail moves OPPOSITE the attack (measured
-//              -5.9 dB attack / +0.7 dB tail one way, +5.5 / -1.1 the other),
-//              which is real attack-vs-sustain separation.
+//  Point was here too, driving the Attack stage, and has been removed: it
+//  sharpens well but is nearly inert at softening, because it boosts by
+//  DIVIDING its slow follower's rate and softens by MULTIPLYING it. The whole
+//  lower half of the knob bought under 2 dB. Attack is now an in-house
+//  detector in dr32_fxbus.cpp, symmetric by construction.
 //
 //  Original algorithms (c) Chris Johnson / Airwindows, MIT licence.
 //  Transplanted VERBATIM by tools/port_airwindows.py; both null against
@@ -45,11 +44,6 @@ typedef int VstInt32;
 //
 // Both verified still null against upstream (see tools/port_airwindows.py).
 
-// Point's upstream loop ends with `*in1++;` (a dereference whose result is
-// discarded). It is harmless, and the transplant is deliberately verbatim, so
-// the warning is silenced here rather than the vendored DSP edited.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-value"
 
 // ---------------------------------------------------------------------------
 //  Pop3 -- (c) Chris Johnson / Airwindows, MIT licence.
@@ -155,153 +149,3 @@ struct Pop3 {
 } // namespace awk_pop3
 
 
-// ---------------------------------------------------------------------------
-//  Point -- (c) Chris Johnson / Airwindows, MIT licence.
-//  Transplanted from the upstream LinuxVST source by tools/port_airwindows.py:
-//  the processReplacing body and all state are VERBATIM, only the VST base
-//  class and parameter plumbing are replaced. Null-tested against upstream.
-// ---------------------------------------------------------------------------
-namespace awk_point {
-
-struct Point {
-    // upstream parameter defaults
-    float A = 0.5; float B = 0.5; float C = 0.5;
-    double sampleRate = 44100.0;
-    double getSampleRate() const { return sampleRate; }
-    void setSampleRate(double sr) { sampleRate = sr; }
-
-	uint32_t fpdL;
-	uint32_t fpdR;
-	bool fpFlip;
-	double nibAL;
-	double nobAL;
-	double nibBL;
-	double nobBL;
-	double nibAR;
-	double nobAR;
-	double nibBR;
-	double nobBR;
-
-    Point() { reset(); }
-    void reset() {
-    	nibAL = 0.0;
-    	nobAL = 0.0;
-    	nibBL = 0.0;
-    	nobBL = 0.0;
-    	nibAR = 0.0;
-    	nobAR = 0.0;
-    	nibBR = 0.0;
-    	nobBR = 0.0;
-    	fpdL = 1.0; while (fpdL < 16386) fpdL = rand()*UINT32_MAX;
-    	fpdR = 1.0; while (fpdR < 16386) fpdR = rand()*UINT32_MAX;
-    	fpFlip = true;
-    	//this is reset: values being initialized only once. Startup values, whatever they are.
-    }
-
-    void processReplacing(float **inputs, float **outputs, int sampleFrames) {
-    
-        float* in1  =  inputs[0];
-        float* in2  =  inputs[1];
-        float* out1 = outputs[0];
-        float* out2 = outputs[1];
-    
-    	double overallscale = 1.0;
-    	overallscale /= 44100.0;
-    	overallscale *= getSampleRate();
-    	
-    	double gaintrim = pow(10.0,((A*24.0)-12.0)/20);
-    	double nibDiv = 1 / pow(C+0.2,7);
-    	nibDiv /= overallscale;
-    	double nobDiv;
-    	if (((B*2.0)-1.0) > 0) nobDiv = nibDiv / (1.001-((B*2.0)-1.0));
-    	else nobDiv = nibDiv * (1.001-pow(((B*2.0)-1.0)*0.75,2));
-    	double nibnobFactor = 0.0; //start with the fallthrough value, why not
-    	double absolute;
-    	
-    	double inputSampleL;
-    	double inputSampleR;
-    	    
-        while (--sampleFrames >= 0)
-        {
-    		inputSampleL = *in1;
-    		inputSampleR = *in2;
-    		if (fabs(inputSampleL)<1.18e-23) inputSampleL = fpdL * 1.18e-17;
-    		if (fabs(inputSampleR)<1.18e-23) inputSampleR = fpdR * 1.18e-17;
-    
-    		inputSampleL *= gaintrim;
-    		absolute = fabs(inputSampleL);
-    		if (fpFlip)
-    		{
-    			nibAL = nibAL + (absolute / nibDiv);
-    			nibAL = nibAL / (1 + (1/nibDiv));
-    			nobAL = nobAL + (absolute / nobDiv);
-    			nobAL = nobAL / (1 + (1/nobDiv));
-    			if (nobAL > 0)
-    			{
-    				nibnobFactor = nibAL / nobAL;
-    			}
-    		}
-    		else
-    		{
-    			nibBL = nibBL + (absolute / nibDiv);
-    			nibBL = nibBL / (1 + (1/nibDiv));
-    			nobBL = nobBL + (absolute / nobDiv);
-    			nobBL = nobBL / (1 + (1/nobDiv));
-    			if (nobBL > 0)
-    			{
-    				nibnobFactor = nibBL / nobBL;
-    			}		
-    		}
-    		inputSampleL *= nibnobFactor;
-    		
-    		
-    		inputSampleR *= gaintrim;
-    		absolute = fabs(inputSampleR);
-    		if (fpFlip)
-    		{
-    			nibAR = nibAR + (absolute / nibDiv);
-    			nibAR = nibAR / (1 + (1/nibDiv));
-    			nobAR = nobAR + (absolute / nobDiv);
-    			nobAR = nobAR / (1 + (1/nobDiv));
-    			if (nobAR > 0)
-    			{
-    				nibnobFactor = nibAR / nobAR;
-    			}
-    		}
-    		else
-    		{
-    			nibBR = nibBR + (absolute / nibDiv);
-    			nibBR = nibBR / (1 + (1/nibDiv));
-    			nobBR = nobBR + (absolute / nobDiv);
-    			nobBR = nobBR / (1 + (1/nobDiv));
-    			if (nobBR > 0)
-    			{
-    				nibnobFactor = nibBR / nobBR;
-    			}		
-    		}
-    		inputSampleR *= nibnobFactor;
-    		fpFlip = !fpFlip;
-    		
-    		//begin 32 bit stereo floating point dither
-    		int expon; frexpf((float)inputSampleL, &expon);
-    		fpdL ^= fpdL << 13; fpdL ^= fpdL >> 17; fpdL ^= fpdL << 5;
-    		inputSampleL += ((double(fpdL)-uint32_t(0x7fffffff)) * 5.5e-36 * ldexp(1.0,expon+62));
-    		frexpf((float)inputSampleR, &expon);
-    		fpdR ^= fpdR << 13; fpdR ^= fpdR >> 17; fpdR ^= fpdR << 5;
-    		inputSampleR += ((double(fpdR)-uint32_t(0x7fffffff)) * 5.5e-36 * ldexp(1.0,expon+62));
-    		//end 32 bit stereo floating point dither
-    
-    		*out1 = inputSampleL;
-    		*out2 = inputSampleR;
-    
-    		*in1++;
-    		*in2++;
-    		*out1++;
-    		*out2++;
-        }
-    }
-};
-} // namespace awk_point
-
-
-#pragma GCC diagnostic pop

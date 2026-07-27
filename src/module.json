@@ -433,7 +433,7 @@
               "type": "enum",
               "options": [
                 "Off",
-                "Drum Buss",
+                "Drum Bus",
                 "Plate",
                 "Spaces"
               ]
@@ -447,7 +447,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert1_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -460,7 +460,7 @@
               "default": 0.3,
               "visible_if": {
                 "param": "insert1_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -472,7 +472,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert1_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -485,7 +485,7 @@
               "default": 0.0,
               "visible_if": {
                 "param": "insert1_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -497,7 +497,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert1_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {
@@ -509,7 +509,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert1_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {
@@ -521,7 +521,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert1_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {
@@ -533,7 +533,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert1_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {
@@ -562,7 +562,7 @@
               "type": "enum",
               "options": [
                 "Off",
-                "Drum Buss",
+                "Drum Bus",
                 "Plate",
                 "Spaces"
               ]
@@ -576,7 +576,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert2_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -589,7 +589,7 @@
               "default": 0.3,
               "visible_if": {
                 "param": "insert2_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -601,7 +601,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert2_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -614,7 +614,7 @@
               "default": 0.0,
               "visible_if": {
                 "param": "insert2_type",
-                "not_equals": "Drum Buss"
+                "not_equals": "Drum Bus"
               }
             },
             {
@@ -626,7 +626,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert2_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {
@@ -638,7 +638,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert2_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {
@@ -650,7 +650,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert2_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {
@@ -662,7 +662,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "insert2_type",
-                "equals": "Drum Buss"
+                "equals": "Drum Bus"
               }
             },
             {

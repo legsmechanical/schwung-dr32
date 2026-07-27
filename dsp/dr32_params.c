@@ -120,7 +120,7 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
             if      (!strcmp(f2, "size")  || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
             else if (!strcmp(f2, "damp")  || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
             else if (!strcmp(f2, "decay") || !strcmp(f2, "attack") || !strcmp(f2, "p3")) idx = 2;
-            // Slot 3 is pre-delay for the reverbs; the Drum Buss has no use for
+            // Slot 3 is pre-delay for the reverbs; the Drum Bus has no use for
             // one, so it reuses that slot as Sustain rather than growing the
             // fxbus API a sixth parameter.
             else if (!strcmp(f2, "predelay") || !strcmp(f2, "sustain")) idx = 3;
@@ -229,7 +229,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
             if      (!strcmp(f2, "size")  || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
             else if (!strcmp(f2, "damp")  || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
             else if (!strcmp(f2, "decay") || !strcmp(f2, "attack") || !strcmp(f2, "p3")) idx = 2;
-            // Slot 3 is pre-delay for the reverbs; the Drum Buss has no use for
+            // Slot 3 is pre-delay for the reverbs; the Drum Bus has no use for
             // one, so it reuses that slot as Sustain rather than growing the
             // fxbus API a sixth parameter.
             else if (!strcmp(f2, "predelay") || !strcmp(f2, "sustain")) idx = 3;

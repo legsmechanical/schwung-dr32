@@ -1,7 +1,7 @@
-// FX bus tests — sends, inserts, and the Drum Buss stages.
+// FX bus tests — sends, inserts, and the Drum Bus stages.
 //
 // These exist because "it isn't doing anything" and "it thins the low end" are
-// both measurable, and were both true of the first Drum Buss: Transients used a
+// both measurable, and were both true of the first Drum Bus: Transients used a
 // level-dependent difference that vanished on quiet material, and Crunch was a
 // band-split that audibly removed lows.
 
@@ -46,7 +46,7 @@ static float rms_range(const float *x, int from, int to) {
 }
 
 /** Run a block through an insert slot and return the processed buffer. */
-// p4 is pre-delay for the reverbs and SUSTAIN for the Drum Buss. Drum Buss
+// p4 is pre-delay for the reverbs and SUSTAIN for the Drum Bus. Drum Bus
 // callers must pass 0.5 for neutral -- 0.0 pulls the tail down 8 dB.
 static void run_insert4(dr32_efx_type type, float p1, float p2, float p3, float p4,
                         float mix, const float *in, float *out, int n) {
@@ -70,7 +70,7 @@ int main(void) {
     printf("fx bus\n");
     static float dry[2 * N], wet[2 * N], wet2[2 * N];
 
-    // ---- Drum Buss / Attack must actually change the attack-to-tail balance
+    // ---- Drum Bus / Attack must actually change the attack-to-tail balance
     {
         hit(dry, N, 120.0f, 0.4f);
         const int atk_from = 0, atk_to = SR / 200;          // first 5 ms
@@ -220,16 +220,19 @@ int main(void) {
             CHECK(pl[i] >= 0.0f && pl[i] <= 1.0f, "plate default %d out of range", i);
             CHECK(hl[i] >= 0.0f && hl[i] <= 1.0f, "hall default %d out of range", i);
         }
-        // Drum Buss should be doing something on arrival, but gently.
-        CHECK(db[0] > 0.05f && db[0] < 0.6f, "drum buss compress default %.2f is not gentle", db[0]);
-        CHECK(db[2] > 0.5f, "drum buss should add a little attack by default (%.2f)", db[2]);
+        // The Drum Bus arrives NEUTRAL — a processor should not change the kit
+        // until you turn something. Compress and Crunch are unipolar so neutral
+        // is 0; Attack and Sustain are bipolar so neutral is 0.5.
+        CHECK(db[0] == 0.0f, "drum bus compress default %.2f should be neutral (0)", db[0]);
+        CHECK(db[1] == 0.0f, "drum bus crunch default %.2f should be neutral (0)", db[1]);
+        CHECK(db[2] == 0.5f, "drum bus attack default %.2f should be neutral (0.5)", db[2]);
+        CHECK(db[3] == 0.5f, "drum bus sustain default %.2f should be neutral (0.5)", db[3]);
 
         // A REVERB as an insert must never arrive fully wet — that replaces the
-        // kit with its own ambience. A processor like Drum Buss should be wet.
+        // kit with its own ambience. A processor like Drum Bus should be wet.
         CHECK(pl[4] < 0.5f, "plate insert default mix %.2f is too wet", pl[4]);
-        CHECK(rm[4] < 0.5f, "room insert default mix %.2f is too wet", rm[4]);
-        CHECK(hl[4] < 0.5f, "hall insert default mix %.2f is too wet", hl[4]);
-        CHECK(db[4] > 0.9f, "drum buss should be fully wet (%.2f)", db[4]);
+        CHECK(rm[4] < 0.5f, "spaces insert default mix %.2f is too wet", rm[4]);
+        CHECK(db[4] > 0.9f, "drum bus should be fully wet (%.2f)", db[4]);
     }
 
     // ---- at their DEFAULT settings, the three reverbs must actually differ in
@@ -477,6 +480,46 @@ int main(void) {
                   "%s loses %+.2f dB when summed to mono — the width is phase cancellation",
                   nm[t], fold);
         }
+    }
+
+
+    // ---- Type names must round-trip.
+    //      Types persist as strings, so name and from_name have to agree. This
+    //      is NOT a backward-compatibility check: kits are a clean slate until
+    //      development settles, so renaming a type needs no legacy fallback.
+    {
+        for (int t = 1; t < DR32_EFX_COUNT; t++) {
+            const char *n = dr32_efx_name((dr32_efx_type)t);
+            CHECK(dr32_efx_from_name(n) == (dr32_efx_type)t,
+                  "type %d name \"%s\" does not round-trip", t, n);
+        }
+        CHECK(dr32_efx_from_name("Off") == DR32_EFX_NONE, "\"Off\" should be NONE");
+        CHECK(dr32_efx_from_name("nonsense") == DR32_EFX_NONE,
+              "an unknown name should resolve to NONE");
+        printf("  type names round-trip\n");
+    }
+
+
+    // ---- At its defaults the Drum Bus must be TRANSPARENT.
+    //      Asserting the knob values is not the same as asserting the result:
+    //      a neutral-looking setting that still ran a saturator or an envelope
+    //      follower would pass that and still colour the kit. So push real
+    //      audio through it at the defaults and require the output back.
+    {
+        float d[5];
+        dr32_efx_defaults(DR32_EFX_DRUMBUSS, d);
+        hit(dry, N, 90.0f, 0.5f);
+        run_insert4(DR32_EFX_DRUMBUSS, d[0], d[1], d[2], d[3], d[4], dry, wet, N);
+        double diff = 0, ref = 0;
+        for (int i = 0; i < N; i++) {
+            double e = (double)wet[2 * i] - dry[2 * i];
+            diff += e * e; ref += (double)dry[2 * i] * dry[2 * i];
+        }
+        float nulldb = 10.0f * log10f((float)((diff + 1e-30) / (ref + 1e-30)));
+        printf("  drum bus at defaults: null vs dry %.1f dB\n", nulldb);
+        CHECK(nulldb < -100.0f,
+              "Drum Bus colours the kit at its defaults (null only %.1f dB) — "
+              "selecting it should change nothing until a knob moves", nulldb);
     }
 
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);

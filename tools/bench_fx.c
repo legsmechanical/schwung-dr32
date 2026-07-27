@@ -72,6 +72,6 @@ int main(void) {
     bench("bypass",    DR32_EFX_NONE,     1);
     bench("Plate",     DR32_EFX_PLATE,    0);
     bench("Spaces",    DR32_EFX_SPACES,   0);
-    bench("Drum Buss", DR32_EFX_DRUMBUSS, 1);
+    bench("Drum Bus", DR32_EFX_DRUMBUSS, 1);
     return 0;
 }

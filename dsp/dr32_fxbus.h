@@ -47,9 +47,9 @@ void dr32_fxbus_set_insert_type(dr32_fxbus *fx, int slot, dr32_efx_type type);
 /** Generic per-slot controls, all 0..1.
  *  Plate:     size / damping / decay / PRE-DELAY (0..200 ms)
  *  Spaces:    size / tone    / decay / PRE-DELAY (0..200 ms)
- *  Drum Buss: compress / crunch / attack / SUSTAIN
+ *  Drum Bus: compress / crunch / attack / SUSTAIN
  *
- *  ⚠ The fourth slot is pre-delay for a reverb and Sustain for the Drum Buss.
+ *  ⚠ The fourth slot is pre-delay for a reverb and Sustain for the Drum Bus.
  *  Both Attack and Sustain are bipolar about 0.5, so passing 0.0 for a Drum
  *  Buss is NOT neutral — it pulls the tail down about 8 dB.
  *

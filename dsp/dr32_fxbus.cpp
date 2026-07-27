@@ -20,20 +20,21 @@
 
 namespace {
 
-/** Drum Buss — a drum-bus glue insert in the spirit of Ableton's Drum Buss.
+/** Drum Bus — a drum-bus glue insert in the spirit of Ableton's Drum Buss.
  *
  *    Compress   — Airwindows *Pop3*'s compressor section, driven by ONE knob
  *                 that sweeps a coordinated threshold + ratio + release
  *                 program, followed by our own makeup gain.
  *    Crunch     — full-band saturation: tanh soft knee, a cubic term for grit,
  *                 and a deliberate asymmetry so it produces EVEN harmonics too.
- *    Attack     — Airwindows *Point*, fast reaction: bipolar transient shaping.
+ *    Attack     — fast/smoothed envelope pair, shaping the onset only.
  *    Sustain    — dual-release envelope detector shaping the decay only.
  *
- *  Attack and Sustain are orthogonal by measurement, not by intent: sweeping
- *  Sustain end to end moves the tail -8.0 to +11.9 dB while the attack stays at
- *  0.00 dB, and sweeping Attack moves the hit -1.9 to +8.5 dB with the tail
- *  moving the other way.
+ *  Attack and Sustain are orthogonal AND symmetric by measurement: sweeping
+ *  Sustain end to end moves the tail -8.0 to +11.9 dB with the attack at
+ *  0.00 dB, and sweeping Attack moves the hit -14.5 to +14.6 dB with the tail
+ *  at 0.00 dB. Attack is also program-dependent — a 40 ms swell gets about half
+ *  the treatment of a real hit, and steady material moves 0.17 dB.
  *
  *  ── why not what was here before ────────────────────────────────────────
  *  The previous Compress was Airwindows Pressure4, a vari-mu LEVELLER. It was
@@ -59,14 +60,73 @@ namespace {
  *  envelope followers, so the tail tracked the attack instead of opposing it:
  *  at knob 0 it took the attack down 18.1 dB and the tail down 3.0 dB. There
  *  was no sustain control anywhere on it, despite the comment claiming one.
- *  Point returns to exactly unity in steady state and moves the tail OPPOSITE
- *  the attack, which is what a transient designer is supposed to do.
+ *  Both stages now use in-house detectors that are symmetric by construction
+ *  and target disjoint parts of the hit.
  */
 struct DrumBuss {
     float fs = 44100.0f;
 
     awk_pop3::Pop3   comp;      // compressor (its gate section is left off)
-    awk_point::Point atk;       // Point, fast reaction — attack shaping
+    /** Attack section.
+     *
+     *  Was Airwindows Point, which is excellent at SHARPENING and nearly inert
+     *  at softening — the whole lower half of the knob bought under 2 dB
+     *  (measured -1.92 dB at 0.00, -0.10 dB at 0.375) against +8.54 dB at the
+     *  top. That is structural, not tuning: Point boosts by DIVIDING the slow
+     *  follower's rate (nibDiv/(1.001-x), which reaches 3.1x) and softens by
+     *  MULTIPLYING it (nibDiv*(1.001-(0.75x)^2), which cannot get past 0.44x).
+     *  The softening direction simply cannot travel.
+     *
+     *  So the detector is ours, and symmetric by construction: a fast peak
+     *  follower, and a slow SMOOTHING of that follower. Their difference is
+     *  large only while the fast one is outrunning the smoothed one, i.e. at an
+     *  onset.
+     *
+     *  The smoothed follower is what makes this attack-only. During a decay it
+     *  lags ABOVE the fast one, so the difference goes negative and clamps to
+     *  zero — the tail is untouched. An earlier version used two followers with
+     *  different ATTACKS and a shared release; that never reconverged, because
+     *  two envelopes falling at the same exponential rate keep whatever gap
+     *  they had, so its "transient" reading stayed constant through the decay
+     *  and the stage became a broadband gain (measured: attack AND tail both
+     *  moved together). */
+    struct Attack {
+        float aFast = 0.0f, rFast = 0.0f, aSmooth = 0.0f;
+        float envF[2] = { 0.0f, 0.0f }, envS[2] = { 0.0f, 0.0f };
+        float depth = 0.0f;
+        void setSampleRate(float fs) {
+            aFast   = 1.0f - expf(-1.0f / (0.0005f * fs));  // 0.5 ms attack
+            rFast   = 1.0f - expf(-1.0f / (0.050f * fs));   // 50 ms release
+            aSmooth = 1.0f - expf(-1.0f / (0.030f * fs));   // 30 ms, both ways
+        }
+        void reset() { envF[0] = envF[1] = envS[0] = envS[1] = 0.0f; }
+        inline void run(float *l, float *r, int n) {
+            float *ch[2] = { l, r };
+            for (int c = 0; c < 2; c++) {
+                for (int i = 0; i < n; i++) {
+                    float m = fabsf(ch[c][i]);
+                    envF[c] += (m > envF[c] ? aFast : rFast) * (m - envF[c]);
+                    envS[c] += aSmooth * (envF[c] - envS[c]);
+                    // Normalised by envF, NOT by envS. Dividing by the
+                    // smoothed follower looks equivalent and is not: coming out
+                    // of silence envS is ~0, so the ratio explodes for ANY
+                    // onset however gradual. Measured, that version applied an
+                    // identical +-16.26 dB to a 3 ms click and to a 25 ms
+                    // fade-in — a fixed gain on the first few ms, not transient
+                    // shaping. Against envF the quantity is bounded in [0,1]
+                    // and reads as "what fraction of this moment is faster than
+                    // the local average", which is what transient-ness means.
+                    float t = (envF[c] - envS[c]) / (envF[c] + 1e-6f);
+                    if (t < 0.0f) t = 0.0f;      // decay: smoothed sits above
+                    if (t > 1.0f) t = 1.0f;
+                    float g = exp2f(depth * t);
+                    if (g < 0.05f) g = 0.05f;
+                    if (g > 12.0f) g = 12.0f;
+                    ch[c][i] *= g;
+                }
+            }
+        }
+    } atk;
 
     /** Sustain section.
      *
@@ -127,7 +187,7 @@ struct DrumBuss {
         fs = (sr > 1.0f) ? sr : 44100.0f;
         comp.setSampleRate(fs);
         atk.setSampleRate(fs);
-        sus.setSampleRate(fs);   // Sustain::setSampleRate, not Point's
+        sus.setSampleRate(fs);
     }
 
     static float clamp01(float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); }
@@ -139,18 +199,35 @@ struct DrumBuss {
         compOn = c > 0.001f;
 
         // --- one knob, a coordinated program ---------------------------------
-        // Threshold -6 dBFS down to -30 dBFS, ratio 0.30 -> 1.00 (Pop3's ratio
-        // is a blend from 1:1 to limiting), release 100 -> 180 ms. Attack is
-        // pinned near Pop3's fastest (~11 ms): slow enough to let the beater
-        // click through, fast enough to catch the body. That combination is
-        // what produced +14.5 dB of click-to-body on the bench.
-        const float thrDb  = -6.0f - 24.0f * c;
+        // Threshold, ratio and release all move together, on a SQUARED taper.
+        //
+        // The first version drove them linearly and started the ratio at 0.30,
+        // so the knob stepped straight into audible compression the moment it
+        // left zero and then had little left to give: measured hat-duck went
+        // -1.2 / -3.6 / -7.5 / -14.5 dB across the knob. Squaring spreads the
+        // gentle half out and saves the violence for the top, and the top now
+        // reaches further than it used to (threshold to -38 dBFS, ratio to a
+        // full limit, release down to ~55 ms so it pumps rather than just
+        // flattens).
+        //
+        // Attack stays pinned near Pop3's fastest (~11 ms) at every setting:
+        // slow enough to let the beater click through, fast enough to catch the
+        // body. That is what keeps click-to-body positive as this is pushed.
+        // Exponent chosen off the measured duck curve, not by feel. Linear stepped
+        // straight into audible compression (-1.2 dB of duck at knob 0.25) and
+        // had little left at the top. 1.6 keeps the bottom genuinely subtle
+        // (-0.22 dB at 0.30) while leaving real glue through the middle
+        // (-1.4 at 0.50, -4.4 at 0.70) and saving the violence for the end
+        // (-11.5 at 0.90, -21.5 at 1.00). A square law was tried and left the
+        // whole bottom half inert.
+        const float cc = powf(c, 1.6f);
+        const float thrDb  = -4.0f - 34.0f * cc;
         const float thrLin = powf(10.0f, thrDb / 20.0f);
         comp.A = powf(thrLin, 0.25f);                 // compThresh = A^4
-        const float ratio  = 0.30f + 0.70f * c;
+        const float ratio  = 0.06f + 0.94f * cc;
         comp.B = 1.0f - sqrtf(1.0f - ratio);          // compRatio = 1-(1-B)^2
         comp.C = 0.10f;                               // ~11.5 ms attack
-        comp.D = 0.60f + 0.10f * c;                   // ~100..180 ms release
+        comp.D = 0.62f - 0.10f * cc;                  // ~115 ms down to ~55 ms
         comp.E = 0.0f;  comp.F = 0.0f;                // gate section off
         comp.G = 0.5f;  comp.H = 0.5f;
 
@@ -172,9 +249,8 @@ struct DrumBuss {
         // band where the response stays monotonic.
         atkOn = fabsf(p3 - 0.5f) > 0.005f;
         susOn = fabsf(p4 - 0.5f) > 0.005f;
-        atk.A = 0.5f;                                  // unity input trim
-        atk.B = 0.5f + clampBi(p3) * 0.34f;            // 0.16 .. 0.84
-        atk.C = 0.30f;                                 // ~3 ms: shapes the hit
+        // Signed depth, so up sharpens and down softens by comparable amounts.
+        atk.depth = clampBi(p3) * 2.6f;   // +-15.6 dB at a fully transient onset
         // Sustain depth is signed: up lengthens the tail, down shortens it.
         sus.depth = clampBi(p4) * 1.15f;
 
@@ -251,7 +327,7 @@ struct DrumBuss {
         for (int i = 0; i < n; i++) { sl[i] = io[2 * i]; sr[i] = io[2 * i + 1]; }
         float *in[2] = { sl, sr }, *out[2] = { sl, sr };
 
-        if (atkOn) atk.processReplacing(in, out, n);
+        if (atkOn) atk.run(sl, sr, n);
         if (susOn) sus.run(sl, sr, n);
 
         if (crunch > 0.0f) {
@@ -369,7 +445,7 @@ struct Slot {
     dr32_efx_type type = DR32_EFX_NONE;
     float p1 = 0.5f, p2 = 0.5f, p3 = 0.5f, mix = 1.0f;
     float pd = 0.0f;                       // pre-delay 0..1 -> 0..200 ms
-                                           // (Drum Buss reuses this as Sustain)
+                                           // (Drum Bus reuses this as Sustain)
 
     // Pre-delay line, applied before the reverb. The plate has its own internal
     // pre-delay (its third parameter!) but the k-reverbs have none, so one line
@@ -447,7 +523,7 @@ struct Slot {
         spaces.C = p2;
         spaces.D = 1.0f;
 
-        // The Drum Buss has no use for pre-delay, so that knob is its Sustain.
+        // The Drum Bus has no use for pre-delay, so that knob is its Sustain.
         buss.setParams(p1, p2, p3, pd);
 
         int n = (int)(pd * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
@@ -663,15 +739,18 @@ void dr32_efx_defaults(dr32_efx_type type, float *o) {
             // a hall, so it should open somewhere you would actually start.
             o[0] = 0.35f; o[1] = 0.40f; o[2] = 0.45f; o[3] = 0.02f; o[4] = 0.25f; break;
         case DR32_EFX_DRUMBUSS:
-            // Gentle glue with a hint of grit and a little extra attack —
-            // audible but not a statement. Fully wet: it is a processor, not an
-            // ambience, so dry/dry blending would just weaken it.
+            // Every control lands at NEUTRAL, so selecting the Drum Bus changes
+            // nothing until you turn something. Unlike a reverb, which has to
+            // arrive sounding like a reverb to be worth selecting, this is a
+            // processor: it should start out of the way.
             //
-            // o[2] is Attack and o[3] is Sustain here, and BOTH are bipolar
-            // about 0.5 — o[3] is the slot the reverbs use for pre-delay, so
-            // leaving it at 0.0 would ship the Drum Buss with its tail pulled
-            // down 8 dB.
-            o[0] = 0.30f; o[1] = 0.15f; o[2] = 0.60f; o[3] = 0.5f; o[4] = 1.0f; break;
+            // Neutral is 0 for Compress and Crunch and 0.5 for Attack and
+            // Sustain, which are bipolar. o[3] is the slot the reverbs use for
+            // pre-delay, so leaving it at 0.0 would ship with the tail pulled
+            // down 8 dB. Fully wet, because with everything neutral the stage
+            // is already transparent and a dry blend would only weaken it once
+            // the knobs move.
+            o[0] = 0.0f; o[1] = 0.0f; o[2] = 0.5f; o[3] = 0.5f; o[4] = 1.0f; break;
         default:
             o[0] = 0.5f; o[1] = 0.3f; o[2] = 0.5f; o[3] = 0.0f; o[4] = 1.0f; break;
     }
@@ -681,7 +760,7 @@ const char *dr32_efx_name(dr32_efx_type type) {
     switch (type) {
         case DR32_EFX_PLATE: return "Plate";
         case DR32_EFX_SPACES: return "Spaces";
-        case DR32_EFX_DRUMBUSS: return "Drum Buss";
+        case DR32_EFX_DRUMBUSS: return "Drum Bus";
         default:             return "Off";
     }
 }
@@ -690,12 +769,7 @@ dr32_efx_type dr32_efx_from_name(const char *name) {
     if (!name || !*name) return DR32_EFX_NONE;
     if (!std::strcmp(name, "Plate")) return DR32_EFX_PLATE;
     if (!std::strcmp(name, "Spaces")) return DR32_EFX_SPACES;
-    // Kits store the effect type BY NAME, so anything saved before Room and
-    // Hall were folded into one flexible model must still load. They map onto
-    // Spaces rather than silently becoming "off".
-    if (!std::strcmp(name, "Room"))  return DR32_EFX_SPACES;
-    if (!std::strcmp(name, "Hall"))  return DR32_EFX_SPACES;
-    if (!std::strcmp(name, "Drum Buss")) return DR32_EFX_DRUMBUSS;
+    if (!std::strcmp(name, "Drum Bus")) return DR32_EFX_DRUMBUSS;
     return DR32_EFX_NONE;
 }
 
