@@ -306,8 +306,7 @@
               "options": [
                 "Off",
                 "Plate",
-                "Room",
-                "Hall"
+                "Spaces"
               ]
             },
             {
@@ -371,8 +370,7 @@
               "options": [
                 "Off",
                 "Plate",
-                "Room",
-                "Hall"
+                "Spaces"
               ]
             },
             {
@@ -437,8 +435,7 @@
                 "Off",
                 "Drum Buss",
                 "Plate",
-                "Room",
-                "Hall"
+                "Spaces"
               ]
             },
             {
@@ -516,13 +513,24 @@
               }
             },
             {
-              "key": "insert1_trans",
-              "name": "Transients",
+              "key": "insert1_attack",
+              "name": "Attack",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.5,
+              "visible_if": {
+                "param": "insert1_type",
+                "equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert1_sustain",
+              "name": "Sustain",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
               "visible_if": {
                 "param": "insert1_type",
                 "equals": "Drum Buss"
@@ -556,8 +564,7 @@
                 "Off",
                 "Drum Buss",
                 "Plate",
-                "Room",
-                "Hall"
+                "Spaces"
               ]
             },
             {
@@ -635,13 +642,24 @@
               }
             },
             {
-              "key": "insert2_trans",
-              "name": "Transients",
+              "key": "insert2_attack",
+              "name": "Attack",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.5,
+              "visible_if": {
+                "param": "insert2_type",
+                "equals": "Drum Buss"
+              }
+            },
+            {
+              "key": "insert2_sustain",
+              "name": "Sustain",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
               "visible_if": {
                 "param": "insert2_type",
                 "equals": "Drum Buss"

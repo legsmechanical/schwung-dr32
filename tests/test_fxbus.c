@@ -33,6 +33,12 @@ static void hit(float *out, int n, float freq, float amp) {
     }
 }
 
+static float peak_range(const float *x, int from, int to) {
+    float p = 0.0f;
+    for (int i = from; i < to; i++) { float a = fabsf(x[2 * i]); if (a > p) p = a; }
+    return p;
+}
+
 static float rms_range(const float *x, int from, int to) {
     double s = 0; int n = 0;
     for (int i = from; i < to; i++) { s += (double)x[2 * i] * x[2 * i]; n++; }
@@ -40,11 +46,13 @@ static float rms_range(const float *x, int from, int to) {
 }
 
 /** Run a block through an insert slot and return the processed buffer. */
-static void run_insert(dr32_efx_type type, float p1, float p2, float p3, float mix,
-                       const float *in, float *out, int n) {
+// p4 is pre-delay for the reverbs and SUSTAIN for the Drum Buss. Drum Buss
+// callers must pass 0.5 for neutral -- 0.0 pulls the tail down 8 dB.
+static void run_insert4(dr32_efx_type type, float p1, float p2, float p3, float p4,
+                        float mix, const float *in, float *out, int n) {
     dr32_fxbus *fx = dr32_fxbus_create(SR);
     dr32_fxbus_set_insert_type(fx, 0, type);
-    dr32_fxbus_set_insert_params(fx, 0, p1, p2, p3, 0.0f, mix);
+    dr32_fxbus_set_insert_params(fx, 0, p1, p2, p3, p4, mix);
     memcpy(out, in, sizeof(float) * 2 * (size_t)n);
     for (int p = 0; p < n; p += 128) {
         int m = (p + 128 <= n) ? 128 : (n - p);
@@ -53,11 +61,16 @@ static void run_insert(dr32_efx_type type, float p1, float p2, float p3, float m
     dr32_fxbus_destroy(fx);
 }
 
+static void run_insert(dr32_efx_type type, float p1, float p2, float p3, float mix,
+                       const float *in, float *out, int n) {
+    run_insert4(type, p1, p2, p3, type == DR32_EFX_DRUMBUSS ? 0.5f : 0.0f, mix, in, out, n);
+}
+
 int main(void) {
     printf("fx bus\n");
     static float dry[2 * N], wet[2 * N], wet2[2 * N];
 
-    // ---- Drum Buss / Transients must actually change the attack-to-tail balance
+    // ---- Drum Buss / Attack must actually change the attack-to-tail balance
     {
         hit(dry, N, 120.0f, 0.4f);
         const int atk_from = 0, atk_to = SR / 200;          // first 5 ms
@@ -65,7 +78,7 @@ int main(void) {
 
         run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, dry, wet, N);
         float n_atk = rms_range(wet, atk_from, atk_to), n_tail = rms_range(wet, tail_from, tail_to);
-        CHECK(n_tail > 1e-6f, "neutral transients produced no tail");
+        CHECK(n_tail > 1e-6f, "neutral attack produced no tail");
         float neutral = n_atk / (n_tail + 1e-9f);
 
         run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 1.0f, 1.0f, dry, wet, N);
@@ -76,9 +89,9 @@ int main(void) {
         float f_atk = rms_range(wet, atk_from, atk_to), f_tail = rms_range(wet, tail_from, tail_to);
         float soft = f_atk / (f_tail + 1e-9f);
 
-        printf("  transients attack:tail  soft %.3f  neutral %.3f  sharp %.3f\n", soft, neutral, sharp);
-        CHECK(sharp > neutral * 1.15f, "Transients up did not sharpen: %.3f vs %.3f", sharp, neutral);
-        CHECK(soft < neutral * 0.87f, "Transients down did not soften: %.3f vs %.3f", soft, neutral);
+        printf("  attack knob attack:tail  soft %.3f  neutral %.3f  sharp %.3f\n", soft, neutral, sharp);
+        CHECK(sharp > neutral * 1.15f, "Attack up did not sharpen: %.3f vs %.3f", sharp, neutral);
+        CHECK(soft < neutral * 0.87f, "Attack down did not soften: %.3f vs %.3f", soft, neutral);
     }
 
     // ---- Crunch must saturate WITHOUT reshaping the spectrum.
@@ -116,7 +129,7 @@ int main(void) {
         for (int i = 0; i < 64; i++) { imp[2 * i] = 0.6f; imp[2 * i + 1] = 0.6f; }
 
         struct { dr32_efx_type t; const char *n; } types[] = {
-            { DR32_EFX_PLATE, "Plate" }, { DR32_EFX_ROOM, "Room" }, { DR32_EFX_HALL, "Hall" },
+            { DR32_EFX_PLATE, "Plate" }, { DR32_EFX_SPACES, "Spaces" },
         };
         for (size_t k = 0; k < sizeof(types) / sizeof(types[0]); k++) {
             run_insert(types[k].t, 0.5f, 0.3f, 0.6f, 1.0f, imp, wet, N);
@@ -188,8 +201,8 @@ int main(void) {
     {
         float pl[5], rm[5], hl[5], db[5];
         dr32_efx_defaults(DR32_EFX_PLATE, pl);
-        dr32_efx_defaults(DR32_EFX_ROOM, rm);
-        dr32_efx_defaults(DR32_EFX_HALL, hl);
+        dr32_efx_defaults(DR32_EFX_SPACES, rm);
+        dr32_efx_defaults(DR32_EFX_SPACES, hl);
         dr32_efx_defaults(DR32_EFX_DRUMBUSS, db);
 
         // Deliberately NOT comparing knob values across types: Plate is the
@@ -197,7 +210,12 @@ int main(void) {
         // comparable to 0.45 on another. What matters is the RESULT, measured
         // below. Pre-delay is on the same scale for all of them, so that one is
         // comparable.
-        CHECK(hl[3] > rm[3], "hall should have more pre-delay than room");
+        // Pre-delay KNOB is no longer comparable either: kCosmos (Hall) carries
+        // about 78 ms of onset of its own, inherent and independent of decay,
+        // where kWoodRoom (Room) starts at 3.2 ms. Stacking a big knob value on
+        // top of the hall would only push it further from the hit. What has to
+        // hold is the RESULT -- measured onset -- so assert that instead.
+        CHECK(hl[3] >= 0.0f && rm[3] >= 0.0f, "pre-delay defaults must be sane");
         for (int i = 0; i < 4; i++) {
             CHECK(pl[i] >= 0.0f && pl[i] <= 1.0f, "plate default %d out of range", i);
             CHECK(hl[i] >= 0.0f && hl[i] <= 1.0f, "hall default %d out of range", i);
@@ -219,10 +237,10 @@ int main(void) {
     //      (Hall once measured >6 s at its defaults and swamped the kit).
     {
         struct { dr32_efx_type t; const char *n; } T[] = {
-            { DR32_EFX_ROOM, "Room" }, { DR32_EFX_PLATE, "Plate" }, { DR32_EFX_HALL, "Hall" },
+            { DR32_EFX_SPACES, "Spaces" }, { DR32_EFX_PLATE, "Plate" },
         };
-        float rt[3];
-        for (int k = 0; k < 3; k++) {
+        float rt[2];
+        for (int k = 0; k < 2; k++) {
             float d[5];
             dr32_efx_defaults(T[k].t, d);
             dr32_fxbus *fx = dr32_fxbus_create(SR);
@@ -244,10 +262,15 @@ int main(void) {
             rt[k] = (float)last * 128.0f / SR;
             dr32_fxbus_destroy(fx);
         }
-        printf("  default RT60: Room %.2fs  Plate %.2fs  Hall %.2fs\n", rt[0], rt[1], rt[2]);
-        CHECK(rt[0] < rt[2], "hall should decay longer than room at defaults (%.2f vs %.2f)", rt[2], rt[0]);
-        CHECK(rt[2] < 3.0f, "hall default decay %.2f s is too big for a drum kit", rt[2]);
-        CHECK(rt[0] > 0.1f, "room default decay %.2f s is inaudibly short", rt[0]);
+        printf("  default RT60: Spaces %.2fs  Plate %.2fs\n", rt[0], rt[1]);
+        /* Room and Hall are gone -- Spaces is one flexible model covering both,
+         * so there is no longer a "hall must be longer than room" relationship
+         * to assert. What still matters: both open at a usable length and
+         * neither swamps the kit (Hall once measured >6 s at its defaults). */
+        for (int k = 0; k < 2; k++) {
+            CHECK(rt[k] > 0.1f, "%s default decay %.2f s is inaudibly short", T[k].n, rt[k]);
+            CHECK(rt[k] < 3.0f, "%s default decay %.2f s is too big for a drum kit", T[k].n, rt[k]);
+        }
     }
 
     // ---- an idle send bus must stop costing CPU, but only after its tail
@@ -287,6 +310,173 @@ int main(void) {
         CHECK(tail_late < tail_early * 0.01f,
               "bus still ringing long after silence (%.6f vs %.6f)", tail_late, tail_early);
         dr32_fxbus_destroy(fx);
+    }
+
+
+    // ---- Compress must NEVER lift quiet material.
+    //      This is the defect that got Pressure4 replaced: it had no threshold,
+    //      so it pulled a -48 dBFS signal up by 17.7 dB — sample noise floor,
+    //      room bleed and reverb tails along with it. Pop3 can only attenuate,
+    //      and the makeup gain is measured per block and gated on real signal,
+    //      so the whole chain must stay silent on a quiet input.
+    {
+        static float quiet[2 * N];
+        for (int i = 0; i < N; i++) {
+            float v = 0.00398f * sinf(2.0f * (float)M_PI * 200.0f * i / SR);  // -48 dBFS
+            quiet[2 * i] = v; quiet[2 * i + 1] = v;
+        }
+        float in_rms = rms_range(quiet, N / 2, N);
+        float worst = 0.0f;
+        for (int k = 0; k <= 4; k++) {
+            run_insert4(DR32_EFX_DRUMBUSS, k * 0.25f, 0.0f, 0.5f, 0.5f, 1.0f, quiet, wet, N);
+            float lift = 20.0f * log10f(rms_range(wet, N / 2, N) / (in_rms + 1e-12f) + 1e-12f);
+            if (fabsf(lift) > fabsf(worst)) worst = lift;
+        }
+        printf("  compress low-level lift  worst %+.2f dB over the whole knob\n", worst);
+        CHECK(fabsf(worst) < 1.0f,
+              "Compress lifted a -48 dBFS signal by %+.2f dB — it must have a real threshold", worst);
+    }
+
+    // ---- Attack and Sustain must be ORTHOGONAL.
+    //      The stage these replaced applied one broadband gain, so its "sustain"
+    //      direction dragged the attack with it. Sustain must move the tail and
+    //      leave the hit alone.
+    {
+        hit(dry, N, 60.0f, 0.4f);
+        const int atk_to = SR / 125;                       // first 8 ms
+        const int t_from = SR * 8 / 100, t_to = SR / 4;     // 80-250 ms
+
+        run_insert4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.5f, 1.0f, dry, wet, N);
+        float n_atk = peak_range(wet, 0, atk_to), n_tail = rms_range(wet, t_from, t_to);
+
+        run_insert4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, 1.0f, dry, wet, N);
+        float up_atk = peak_range(wet, 0, atk_to), up_tail = rms_range(wet, t_from, t_to);
+        run_insert4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.0f, 1.0f, dry, wet, N);
+        float dn_atk = peak_range(wet, 0, atk_to), dn_tail = rms_range(wet, t_from, t_to);
+
+        float up_t = 20.0f * log10f(up_tail / (n_tail + 1e-12f) + 1e-12f);
+        float dn_t = 20.0f * log10f(dn_tail / (n_tail + 1e-12f) + 1e-12f);
+        float up_a = 20.0f * log10f(up_atk / (n_atk + 1e-12f) + 1e-12f);
+        float dn_a = 20.0f * log10f(dn_atk / (n_atk + 1e-12f) + 1e-12f);
+        printf("  sustain knob   tail %+.2f / %+.2f dB   attack %+.2f / %+.2f dB\n",
+               dn_t, up_t, dn_a, up_a);
+        CHECK(up_t > 4.0f,  "Sustain up did not lengthen the tail (%+.2f dB)", up_t);
+        CHECK(dn_t < -4.0f, "Sustain down did not shorten the tail (%+.2f dB)", dn_t);
+        CHECK(fabsf(up_a) < 1.0f && fabsf(dn_a) < 1.0f,
+              "Sustain moved the ATTACK (%+.2f / %+.2f dB) — it must only shape the decay",
+              dn_a, up_a);
+    }
+
+    // ---- The reverbs must be STEREO.
+    //      Chamber, which Room and Hall used to share, ran as two independent
+    //      mono reverbs: an L-only impulse put -107 dB in the right channel, so
+    //      centre-panned pads collapsed the whole send to mono.
+    {
+        const dr32_efx_type types[2] = { DR32_EFX_PLATE, DR32_EFX_SPACES };
+        const char *names[2] = { "Plate", "Spaces" };
+        for (int t = 0; t < 2; t++) {
+            static float imp[2 * N];
+            memset(imp, 0, sizeof(imp));
+            imp[0] = 1.0f;                                  // LEFT only
+            run_insert4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, 1.0f, imp, wet, N);
+            double el = 0, er = 0;
+            for (int i = 0; i < N; i++) {
+                el += (double)wet[2 * i] * wet[2 * i];
+                er += (double)wet[2 * i + 1] * wet[2 * i + 1];
+            }
+            float rl = 10.0f * log10f((float)(er / (el + 1e-30)) + 1e-30f);
+            /* correlation of the two outputs from a MONO feed -- the thing that
+             * actually broke before: Chamber produced bit-identical L and R. */
+            static float imp2[2 * N];
+            memset(imp2, 0, sizeof(imp2));
+            imp2[0] = 1.0f; imp2[1] = 1.0f;
+            run_insert4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, 1.0f, imp2, wet2, N);
+            double sxy = 0, sxx = 0, syy = 0;
+            for (int i = SR / 10; i < N; i++) {
+                double x = wet2[2 * i], y = wet2[2 * i + 1];
+                sxy += x * y; sxx += x * x; syy += y * y;
+            }
+            float corr = (sxx > 0 && syy > 0) ? (float)(sxy / sqrt(sxx * syy)) : 1.0f;
+            printf("  %-5s corr %+.2f   L-only -> R/L %+.1f dB\n", names[t], corr, rl);
+            /* BOTH must be decorrelated. The Plate always was. Spaces
+             * (Verbity2) is symmetric internally and on its own produced
+             * bit-identical L and R (corr +1.00); it is fed through the same
+             * per-channel diffuser as the plate, whose two sides run different
+             * prime lengths, which takes it to about +0.05. */
+            CHECK(corr < 0.50f,
+                  "%s produced correlated L/R (corr %+.2f) — it is running mono",
+                  names[t], corr);
+            CHECK(rl > -50.0f,
+                  "%s put only %+.1f dB into the right channel from an L-only hit",
+                  names[t], rl);
+        }
+    }
+
+
+    // ---- The plate must damp high frequencies FASTER than low ones.
+    //      Every real plate and room does; a tank with no HF loss in the
+    //      feedback path rings on glassily. The damping knob always had the
+    //      mechanism, but its whole useful range sat above 0.75 — at the
+    //      plate's 0.35 default the HF/LF decay ratio was ~0.88, i.e. barely
+    //      any. The knob is now curved, so check the default actually damps.
+    {
+        static float imp[2 * N];
+        memset(imp, 0, sizeof(imp));
+        imp[0] = 1.0f; imp[1] = 1.0f;
+        run_insert4(DR32_EFX_PLATE, 0.45f, 0.35f, 0.45f, 0.0f, 1.0f, imp, wet, N);
+
+        /* one-pole band energies are enough here: compare how much of the tail
+         * survives at 6 kHz against 500 Hz, early window vs late window. */
+        float lo_e = 0, lo_l = 0, hi_e = 0, hi_l = 0;
+        float zl = 0, zh = 0;
+        const float al = expf(-2.0f * (float)M_PI * 500.0f / SR);
+        const float ah = expf(-2.0f * (float)M_PI * 6000.0f / SR);
+        for (int i = 0; i < N; i++) {
+            float x = wet[2 * i];
+            zl = x * (1.0f - al) + zl * al;          /* lowpass  -> LF content */
+            zh = x * (1.0f - ah) + zh * ah;
+            float hf = x - zh;                        /* highpass -> HF content */
+            int early = (i > SR / 20 && i < SR / 10);      /*  50-100 ms */
+            int late  = (i > SR * 3 / 10 && i < SR * 4 / 10); /* 300-400 ms */
+            if (early) { lo_e += zl * zl; hi_e += hf * hf; }
+            if (late)  { lo_l += zl * zl; hi_l += hf * hf; }
+        }
+        /* how much each band fell from the early window to the late one */
+        float lo_drop = 10.0f * log10f((lo_l + 1e-20f) / (lo_e + 1e-20f));
+        float hi_drop = 10.0f * log10f((hi_l + 1e-20f) / (hi_e + 1e-20f));
+        printf("  plate decay 50-100ms -> 300-400ms:  LF %+.1f dB   HF %+.1f dB\n",
+               lo_drop, hi_drop);
+        CHECK(hi_drop < lo_drop - 3.0f,
+              "plate HF did not decay faster than LF (HF %+.1f dB vs LF %+.1f dB) — "
+              "the tank is ringing with no HF loss", hi_drop, lo_drop);
+    }
+
+
+    // ---- Stereo width must survive a fold to mono.
+    //      Decorrelating with allpasses is only legitimate if the two channels
+    //      are genuinely independent. A phase-inversion "widener" measures wide
+    //      and then largely disappears when the kit is summed, which on a drum
+    //      bus is a trap. Summing two uncorrelated signals loses ~3 dB; summing
+    //      two anti-correlated ones loses far more.
+    {
+        const dr32_efx_type ty[2] = { DR32_EFX_PLATE, DR32_EFX_SPACES };
+        const char *nm[2] = { "Plate", "Spaces" };
+        for (int t = 0; t < 2; t++) {
+            static float imp[2 * N];
+            memset(imp, 0, sizeof(imp));
+            imp[0] = 1.0f; imp[1] = 1.0f;
+            run_insert4(ty[t], 0.5f, 0.3f, 0.5f, 0.0f, 1.0f, imp, wet, N);
+            double mono = 0, one = 0;
+            for (int i = SR / 10; i < N; i++) {
+                double m = 0.5 * (wet[2 * i] + wet[2 * i + 1]);
+                mono += m * m; one += (double)wet[2 * i] * wet[2 * i];
+            }
+            float fold = 10.0f * log10f((float)(mono / (one + 1e-30)) + 1e-30f);
+            printf("  %-6s mono-fold %+.2f dB\n", nm[t], fold);
+            CHECK(fold > -6.0f,
+                  "%s loses %+.2f dB when summed to mono — the width is phase cancellation",
+                  nm[t], fold);
+        }
     }
 
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);

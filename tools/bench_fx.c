@@ -28,7 +28,8 @@ static void bench(const char *name, dr32_efx_type type, int as_insert) {
     dr32_fxbus *fx = dr32_fxbus_create(SR);
     if (as_insert) {
         dr32_fxbus_set_insert_type(fx, 0, type);
-        dr32_fxbus_set_insert_params(fx, 0, 0.6f, 0.3f, 0.6f, 0.2f, 1.0f);
+        dr32_fxbus_set_insert_params(fx, 0, 0.6f, 0.3f, 0.6f,
+                                     type == DR32_EFX_DRUMBUSS ? 0.5f : 0.2f, 1.0f);
     } else {
         dr32_fxbus_set_send_type(fx, 0, type);
         dr32_fxbus_set_send_params(fx, 0, 0.6f, 0.3f, 0.6f, 0.2f);
@@ -43,7 +44,7 @@ static void bench(const char *name, dr32_efx_type type, int as_insert) {
         for (int i = 0; i < BLOCK; i++) {
             float v = (b == 0 && i < 8) ? 0.5f : 0.0f;
             blk[2 * i] = v; blk[2 * i + 1] = v;
-            if (!as_insert) dr32_fxbus_send(fx, 0, v, v);
+            if (!as_insert) dr32_fxbus_send(fx, 0, i, v, v);
         }
         dr32_fxbus_process(fx, blk, BLOCK);
     }
@@ -53,7 +54,7 @@ static void bench(const char *name, dr32_efx_type type, int as_insert) {
         for (int i = 0; i < BLOCK; i++) {
             float v = ((b & 63) == 0 && i < 8) ? 0.5f : 0.0f;   /* a hit every ~186 ms */
             blk[2 * i] = v; blk[2 * i + 1] = v;
-            if (!as_insert) dr32_fxbus_send(fx, 0, v, v);
+            if (!as_insert) dr32_fxbus_send(fx, 0, i, v, v);
         }
         dr32_fxbus_process(fx, blk, BLOCK);
     }
@@ -70,8 +71,7 @@ int main(void) {
     printf("(one slot active; 4 slots exist, so multiply by what you actually use)\n");
     bench("bypass",    DR32_EFX_NONE,     1);
     bench("Plate",     DR32_EFX_PLATE,    0);
-    bench("Room",      DR32_EFX_ROOM,     0);
-    bench("Hall",      DR32_EFX_HALL,     0);
+    bench("Spaces",    DR32_EFX_SPACES,   0);
     bench("Drum Buss", DR32_EFX_DRUMBUSS, 1);
     return 0;
 }

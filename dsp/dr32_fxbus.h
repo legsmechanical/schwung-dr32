@@ -29,10 +29,9 @@ extern "C" {
  *  offers the sensible subset per slot. 0 is always "off". */
 typedef enum {
     DR32_EFX_NONE = 0,
-    DR32_EFX_PLATE,        // Dattorro figure-eight plate tank — the drum reverb
-    DR32_EFX_ROOM,         // Airwindows Chamber — natural small space
-    DR32_EFX_HALL,         // Airwindows InfinityVerb — long, large
-    DR32_EFX_DRUMBUSS,     // drum-bus glue: compress + drive + boom, wet/dry
+    DR32_EFX_PLATE,        // Dattorro figure-eight plate tank + input diffusion
+    DR32_EFX_SPACES,       // Airwindows Verbity2 — one flexible room-to-hall model
+    DR32_EFX_DRUMBUSS,     // drum-bus glue: compress / crunch / attack / sustain
     DR32_EFX_COUNT
 } dr32_efx_type;
 
@@ -46,8 +45,13 @@ void dr32_fxbus_set_send_type(dr32_fxbus *fx, int slot, dr32_efx_type type);
 void dr32_fxbus_set_insert_type(dr32_fxbus *fx, int slot, dr32_efx_type type);
 
 /** Generic per-slot controls, all 0..1.
- *  Reverbs:   size / damping / decay / PRE-DELAY (0..200 ms)
- *  Drum Buss: compress / crunch / transients (pre-delay unused)
+ *  Plate:     size / damping / decay / PRE-DELAY (0..200 ms)
+ *  Spaces:    size / tone    / decay / PRE-DELAY (0..200 ms)
+ *  Drum Buss: compress / crunch / attack / SUSTAIN
+ *
+ *  ⚠ The fourth slot is pre-delay for a reverb and Sustain for the Drum Buss.
+ *  Both Attack and Sustain are bipolar about 0.5, so passing 0.0 for a Drum
+ *  Buss is NOT neutral — it pulls the tail down about 8 dB.
  *
  *  A send bus is ALWAYS 100% wet: its return carries only the effect, and its
  *  level is set by the pad send amounts and the return gain. There is
