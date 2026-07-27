@@ -139,13 +139,49 @@ int main(void) {
             memset(blk, 0, sizeof(blk));
             for (int i = 0; i < 128 && p + i < N; i++) {
                 float v = (p + i < 64) ? 0.6f : 0.0f;
-                dr32_fxbus_send(fx, 0, v, v);
+                dr32_fxbus_send(fx, 0, i, v, v);
             }
             dr32_fxbus_process(fx, blk, 128);
             for (int i = 0; i < 128; i++) acc += fabsf(blk[2 * i]);
         }
         CHECK(acc > 1e-3f, "send bus returned nothing (%.6f)", acc);
         dr32_fxbus_destroy(fx);
+    }
+
+    // ---- a send bus must be SAMPLE-EQUIVALENT to the same effect as a fully
+    //      wet insert. This is the decisive test: any corruption of when things
+    //      land inside the block shows up immediately.
+    //
+    //      The bug this catches: send writes were all landing on frame 0, so a
+    //      send became an impulse train at the block rate (~344 Hz) and rang
+    //      metallically, while inserts stayed clean. A weaker test that merely
+    //      asserted "the send returns something" passed the whole time.
+    {
+        static float sig[2 * N], as_insert[2 * N], as_send[2 * N];
+        hit(sig, N, 200.0f, 0.5f);
+
+        run_insert(DR32_EFX_PLATE, 0.5f, 0.3f, 0.5f, 1.0f, sig, as_insert, N);
+
+        dr32_fxbus *fx = dr32_fxbus_create(SR);
+        dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
+        dr32_fxbus_set_send_params(fx, 0, 0.5f, 0.3f, 0.5f, 0.0f);
+        dr32_fxbus_set_send_return(fx, 0, 1.0f);
+        memset(as_send, 0, sizeof(as_send));
+        for (int p = 0; p + 128 <= N; p += 128) {
+            for (int i = 0; i < 128; i++) dr32_fxbus_send(fx, 0, i, sig[2 * (p + i)], sig[2 * (p + i) + 1]);
+            dr32_fxbus_process(fx, as_send + 2 * p, 128);
+        }
+        dr32_fxbus_destroy(fx);
+
+        double num = 0.0, den = 0.0;
+        for (int i = 0; i < 2 * (N - 128); i++) {
+            double d = (double)as_send[i] - as_insert[i];
+            num += d * d;
+            den += (double)as_insert[i] * as_insert[i];
+        }
+        double err_db = (den > 0) ? 10.0 * log10((num + 1e-30) / den) : 0.0;
+        printf("  send vs wet insert: %.1f dB error\n", err_db);
+        CHECK(err_db < -60.0, "send path does not match a fully wet insert (%.1f dB error)", err_db);
     }
 
     // ---- per-type defaults are musical AND distinct from each other
@@ -178,7 +214,7 @@ int main(void) {
 
         float blk[2 * 128];
         /* one hit, then silence */
-        for (int i = 0; i < 128; i++) dr32_fxbus_send(fx, 0, 0.6f, 0.6f);
+        for (int i = 0; i < 128; i++) dr32_fxbus_send(fx, 0, i, 0.6f, 0.6f);
         memset(blk, 0, sizeof(blk));
         dr32_fxbus_process(fx, blk, 128);
 

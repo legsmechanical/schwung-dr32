@@ -205,17 +205,21 @@ struct Slot {
     float pre[2 * DR32_PREDELAY_MAX];
     int   preW = 0, preLen = 0;
 
-    SpaceExtra plate;      // Dattorro plate tank
-    Chamber    room;       // Airwindows Chamber
-    InfinityVerb hall;     // Airwindows InfinityVerb
-    DrumBuss   buss;       // compress + drive + boom
+    // Plate AND Room are both the Dattorro tank, at different scales — Room is
+    // simply a small, short, damped one. Hall is Airwindows Chamber.
+    //
+    // InfinityVerb was dropped: it is Airwindows' *infinite* reverb, built to
+    // sustain forever without blowing up, and it measured a 20 s RT60 at EVERY
+    // decay setting. Wrong tool for a hall.
+    SpaceExtra tank;       // Dattorro figure-eight plate tank (Plate + Room)
+    Chamber    chamber;    // Airwindows Chamber (Hall)
+    DrumBuss   buss;
 
     void setSampleRate(float fs) {
         fs_ = fs;
-        plate.setSampleRate(fs);
-        room.setSampleRate(fs);
-        hall.setSampleRate(fs);
-        plate.setType(SpaceExtra::Plate);
+        tank.setSampleRate(fs);
+        chamber.setSampleRate(fs);
+        tank.setType(SpaceExtra::Plate);
         buss.setSampleRate(fs);
         apply();
     }
@@ -225,9 +229,24 @@ struct Slot {
         // internal pre-delay, so it is pinned to 0 and decay goes to `feed`
         // instead — previously p3 was passed as BOTH, so one knob was
         // simultaneously pre-delay and decay.
-        plate.setParams(p1, p2, /*internal predelay*/ 0.0f, /*feed = decay*/ p3, 1.0f);
-        room.setParams(p1, p2, p3, 1.0f);
-        hall.setParams(p1, p2, p3, 1.0f);
+        // Decay is mapped per type so the knob spans a musical range instead of
+        // saturating. Measured targets: ~0.3 s at 0, ~1.2 s at 0.5, ~4 s at 1.
+        tank.setParams(p1, p2, /*internal predelay*/ 0.0f, /*feed = decay*/ p3 * 0.75f, 1.0f);
+
+        // Room and Hall are the SAME algorithm at different scales, which is
+        // what they physically are: two rooms of different size. Chamber is an
+        // actual chamber/room model, so it suits both far better than a shrunk
+        // plate tank (which just sounds like a small plate).
+        //
+        // Chamber's B_ ("bigness") is really regeneration, and its
+        // regen = (1-(1-B)^6)*0.123 curve saturates by about B = 0.3 — so the
+        // whole useful range lives in the bottom third, with a floor offset so
+        // even a minimum-decay hall still sounds like a hall.
+        if (type == DR32_EFX_ROOM) {
+            chamber.setParams(0.10f + 0.30f * p1, p2, 0.02f + p3 * 0.13f, 1.0f);
+        } else {
+            chamber.setParams(0.45f + 0.55f * p1, p2, 0.06f + p3 * 0.26f, 1.0f);
+        }
         buss.setParams(p1, p2, p3);
         int n = (int)(pd * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
         if (n < 0) n = 0;
@@ -240,9 +259,8 @@ struct Slot {
     void reset() {
         std::memset(pre, 0, sizeof(pre));
         preW = 0;
-        plate.reset();
-        room.reset();
-        hall.reset();
+        tank.reset();
+        chamber.reset();
         buss.reset();
     }
 
@@ -259,9 +277,9 @@ struct Slot {
             preW = (preW + 1) % DR32_PREDELAY_MAX;
         }
         switch (type) {
-            case DR32_EFX_PLATE: plate.tick(l, r); break;
-            case DR32_EFX_ROOM:  room.tick(l, r);  break;
-            case DR32_EFX_HALL:  hall.tick(l, r);  break;
+            case DR32_EFX_PLATE: tank.tick(l, r); break;
+            case DR32_EFX_ROOM:
+            case DR32_EFX_HALL:  chamber.tick(l, r); break;
             case DR32_EFX_DRUMBUSS: buss.tick(l, r); break;
             default: break;
         }
@@ -279,7 +297,6 @@ struct dr32_fxbus {
     float send_return[DR32_SEND_SLOTS] = { 1.0f, 1.0f };
     // Per-block accumulation of what the pads sent to each bus.
     float send_buf[DR32_SEND_SLOTS][2 * DR32_MAX_BLOCK];
-    int   send_pos[DR32_SEND_SLOTS] = { 0, 0 };
     // Blocks since anything was fed to each bus. A loaded-but-unused reverb
     // should cost nothing, but its tail must still ring out first.
     int   idle_blocks[DR32_SEND_SLOTS] = { 0, 0 };
@@ -335,12 +352,11 @@ void dr32_fxbus_set_send_return(dr32_fxbus *fx, int slot, float gain) {
     fx->send_return[slot] = gain;
 }
 
-void dr32_fxbus_send(dr32_fxbus *fx, int slot, float l, float r) {
+void dr32_fxbus_send(dr32_fxbus *fx, int slot, int frame, float l, float r) {
     if (!fx || slot < 0 || slot >= DR32_SEND_SLOTS) return;
-    int p = fx->send_pos[slot];
-    if (p >= DR32_MAX_BLOCK) return;
-    fx->send_buf[slot][2 * p]     += l;
-    fx->send_buf[slot][2 * p + 1] += r;
+    if (frame < 0 || frame >= DR32_MAX_BLOCK) return;
+    fx->send_buf[slot][2 * frame]     += l;
+    fx->send_buf[slot][2 * frame + 1] += r;
 }
 
 void dr32_fxbus_process(dr32_fxbus *fx, float *out, int n) {
@@ -368,7 +384,6 @@ void dr32_fxbus_process(dr32_fxbus *fx, float *out, int n) {
             }
         }
         std::memset(buf, 0, sizeof(float) * 2 * (size_t)n);
-        fx->send_pos[s] = 0;
     }
 
     // --- inserts: serial, wet/dry per slot
@@ -391,7 +406,6 @@ void dr32_fxbus_reset(dr32_fxbus *fx) {
     for (int i = 0; i < DR32_SEND_SLOTS; i++) {
         fx->sends[i].reset();
         std::memset(fx->send_buf[i], 0, sizeof(fx->send_buf[i]));
-        fx->send_pos[i] = 0;
     }
     for (int i = 0; i < DR32_INSERT_SLOTS; i++) fx->inserts[i].reset();
 }

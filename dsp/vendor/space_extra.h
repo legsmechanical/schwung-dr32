@@ -172,7 +172,10 @@ private:
             switch (type_) {
                 case SpaceRev: decay_ = 0.85f + 0.147f * feed_; modHz_ = 0.35f; modDepth_ = 22.0f; break;
                 case GatedRev: decay_ = 0.72f;                 modHz_ = 0.9f;  modDepth_ = 8.0f;  break;
-                default:       decay_ = 0.30f + 0.65f * feed_; modHz_ = 0.7f;  modDepth_ = 9.0f;  break;
+                /* DR32: widened from 0.30+0.65*feed. The old floor gave a
+                 * 1.3 s minimum RT60 — far too long for a drum plate, and it
+                 * left most of the knob above 3 s. */
+                default:       decay_ = 0.05f + 0.90f * feed_; modHz_ = 0.7f;  modDepth_ = 9.0f;  break;
             }
             gateHoldSamps_ = (int)((0.05f + 0.45f * feed_) * fs_);   /* GatedRev: 50..500 ms */
         } else {

@@ -174,8 +174,8 @@ void dr32_kit_render(dr32_kit *k, float *out, int frames) {
             float l = k->scratch[2 * f], r = k->scratch[2 * f + 1];
             out[2 * f]     += l;
             out[2 * f + 1] += r;
-            if (s0 > 0.0f) dr32_fxbus_send(k->fx, 0, l * s0, r * s0);
-            if (s1 > 0.0f) dr32_fxbus_send(k->fx, 1, l * s1, r * s1);
+            if (s0 > 0.0f) dr32_fxbus_send(k->fx, 0, f, l * s0, r * s0);
+            if (s1 > 0.0f) dr32_fxbus_send(k->fx, 1, f, l * s1, r * s1);
         }
     }
 

@@ -60,8 +60,15 @@ void dr32_fxbus_set_insert_params(dr32_fxbus *fx, int slot,
 /** Return level of a send bus into the master mix, linear. */
 void dr32_fxbus_set_send_return(dr32_fxbus *fx, int slot, float gain);
 
-/** Feed one stereo frame into a send bus (accumulated across pads). */
-void dr32_fxbus_send(dr32_fxbus *fx, int slot, float l, float r);
+/** Feed one stereo frame into a send bus at a specific FRAME within the block
+ *  (accumulated across pads).
+ *
+ *  ⚠ The frame index is not optional. An earlier version tracked a write
+ *  position internally and never advanced it, so every sample of every pad
+ *  landed on frame 0 — the bus then saw one impulse per block, i.e. an impulse
+ *  train at the block rate (~344 Hz at 128 frames), heard as a metallic ring
+ *  on every send while inserts stayed clean. */
+void dr32_fxbus_send(dr32_fxbus *fx, int slot, int frame, float l, float r);
 
 /** Run the buses and inserts over a rendered block, in place.
  *  `out` is interleaved stereo, `n` frames. Call once per block AFTER all pads
