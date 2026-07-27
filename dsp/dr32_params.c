@@ -199,8 +199,19 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
             float *cache = is_send ? kit->send_p[slot] : kit->insert_p[slot];
             if (!strcmp(f2, "type")) {
                 dr32_efx_type t = dr32_efx_from_name(val);
-                if (is_send) { dr32_fxbus_set_send_type(fx, slot, t); kit->send_type[slot] = t; }
-                else         { dr32_fxbus_set_insert_type(fx, slot, t); kit->insert_type[slot] = t; }
+                // Load that type's musical starting point. Selecting an effect
+                // should sound like something immediately, not inherit the
+                // previous effect's knob positions.
+                if (t != DR32_EFX_NONE) dr32_efx_defaults(t, cache);
+                if (is_send) {
+                    dr32_fxbus_set_send_type(fx, slot, t);
+                    kit->send_type[slot] = t;
+                    dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+                } else {
+                    dr32_fxbus_set_insert_type(fx, slot, t);
+                    kit->insert_type[slot] = t;
+                    dr32_fxbus_set_insert_params(fx, slot, cache[0], cache[1], cache[2], cache[3], cache[4]);
+                }
                 return 1;
             }
             if (!strcmp(f2, "return") && is_send) {

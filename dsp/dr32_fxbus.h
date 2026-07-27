@@ -71,6 +71,11 @@ void dr32_fxbus_process(dr32_fxbus *fx, float *out, int n);
 /** Drop all tails (kit change, panic). */
 void dr32_fxbus_reset(dr32_fxbus *fx);
 
+/** Musical starting point for a type: fills [size,damp,decay,predelay,mix].
+ *  Selecting an effect should give something usable immediately rather than
+ *  whatever the previous effect's knobs happened to be. */
+void dr32_efx_defaults(dr32_efx_type type, float *out5);
+
 /** Name for a type, for UI readback. */
 const char *dr32_efx_name(dr32_efx_type type);
 dr32_efx_type dr32_efx_from_name(const char *name);

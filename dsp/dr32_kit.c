@@ -32,6 +32,19 @@ void dr32_kit_init(dr32_kit *k) {
         k->insert_type[i] = DR32_EFX_NONE;
         k->send_return_ui[i] = 1.0f;
     }
+
+    // Send 1 starts as a Plate — the drum reverb — so raising a pad's Send 1 is
+    // immediately useful. It costs nothing until a pad actually feeds it (the
+    // bus skips processing while idle), and every pad send starts at -70 = off,
+    // so nothing is audible until asked for.
+    if (k->fx) {
+        dr32_efx_defaults(DR32_EFX_PLATE, k->send_p[0]);
+        k->send_type[0] = DR32_EFX_PLATE;
+        dr32_fxbus_set_send_type(k->fx, 0, DR32_EFX_PLATE);
+        dr32_fxbus_set_send_params(k->fx, 0, k->send_p[0][0], k->send_p[0][1],
+                                   k->send_p[0][2], k->send_p[0][3]);
+        dr32_fxbus_set_send_return(k->fx, 0, 1.0f);
+    }
 }
 
 void dr32_kit_free(dr32_kit *k) {

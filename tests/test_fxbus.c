@@ -148,6 +148,66 @@ int main(void) {
         dr32_fxbus_destroy(fx);
     }
 
+    // ---- per-type defaults are musical AND distinct from each other
+    {
+        float pl[5], rm[5], hl[5], db[5];
+        dr32_efx_defaults(DR32_EFX_PLATE, pl);
+        dr32_efx_defaults(DR32_EFX_ROOM, rm);
+        dr32_efx_defaults(DR32_EFX_HALL, hl);
+        dr32_efx_defaults(DR32_EFX_DRUMBUSS, db);
+
+        CHECK(hl[0] > pl[0] && pl[0] > rm[0], "size should order hall > plate > room (%.2f/%.2f/%.2f)",
+              hl[0], pl[0], rm[0]);
+        CHECK(hl[2] > rm[2], "hall should decay longer than room (%.2f vs %.2f)", hl[2], rm[2]);
+        CHECK(hl[3] > rm[3], "hall should have more pre-delay than room");
+        for (int i = 0; i < 4; i++) {
+            CHECK(pl[i] >= 0.0f && pl[i] <= 1.0f, "plate default %d out of range", i);
+            CHECK(hl[i] >= 0.0f && hl[i] <= 1.0f, "hall default %d out of range", i);
+        }
+        // Drum Buss should be doing something on arrival, but gently.
+        CHECK(db[0] > 0.05f && db[0] < 0.6f, "drum buss compress default %.2f is not gentle", db[0]);
+        CHECK(db[2] > 0.5f, "drum buss should add a little attack by default (%.2f)", db[2]);
+    }
+
+    // ---- an idle send bus must stop costing CPU, but only after its tail
+    {
+        dr32_fxbus *fx = dr32_fxbus_create(SR);
+        dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
+        dr32_fxbus_set_send_params(fx, 0, 0.5f, 0.3f, 0.6f, 0.0f);
+        dr32_fxbus_set_send_return(fx, 0, 1.0f);
+
+        float blk[2 * 128];
+        /* one hit, then silence */
+        for (int i = 0; i < 128; i++) dr32_fxbus_send(fx, 0, 0.6f, 0.6f);
+        memset(blk, 0, sizeof(blk));
+        dr32_fxbus_process(fx, blk, 128);
+
+        float tail_early = 0.0f;
+        for (int b = 0; b < 20; b++) {          /* ~58 ms later: tail must survive */
+            memset(blk, 0, sizeof(blk));
+            dr32_fxbus_process(fx, blk, 128);
+            for (int i = 0; i < 128; i++) tail_early += fabsf(blk[2 * i]);
+        }
+        CHECK(tail_early > 1e-4f, "idle-skip cut the reverb tail off (%.6f)", tail_early);
+
+        /* run well past the idle threshold, then measure the SAME window size
+         * as tail_early — comparing a 3000-block sum with a 20-block sum would
+         * just measure the block count. */
+        for (int b = 0; b < 3000; b++) {
+            memset(blk, 0, sizeof(blk));
+            dr32_fxbus_process(fx, blk, 128);
+        }
+        float tail_late = 0.0f;
+        for (int b = 0; b < 20; b++) {
+            memset(blk, 0, sizeof(blk));
+            dr32_fxbus_process(fx, blk, 128);
+            for (int i = 0; i < 128; i++) tail_late += fabsf(blk[2 * i]);
+        }
+        CHECK(tail_late < tail_early * 0.01f,
+              "bus still ringing long after silence (%.6f vs %.6f)", tail_late, tail_early);
+        dr32_fxbus_destroy(fx);
+    }
+
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);
     return failures ? 1 : 0;
 }

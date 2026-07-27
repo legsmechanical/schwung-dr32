@@ -280,6 +280,9 @@ struct dr32_fxbus {
     // Per-block accumulation of what the pads sent to each bus.
     float send_buf[DR32_SEND_SLOTS][2 * DR32_MAX_BLOCK];
     int   send_pos[DR32_SEND_SLOTS] = { 0, 0 };
+    // Blocks since anything was fed to each bus. A loaded-but-unused reverb
+    // should cost nothing, but its tail must still ring out first.
+    int   idle_blocks[DR32_SEND_SLOTS] = { 0, 0 };
 };
 
 extern "C" {
@@ -348,7 +351,14 @@ void dr32_fxbus_process(dr32_fxbus *fx, float *out, int n) {
     for (int s = 0; s < DR32_SEND_SLOTS; s++) {
         Slot &slot = fx->sends[s];
         float *buf = fx->send_buf[s];
-        if (slot.active()) {
+
+        int fed = 0;
+        for (int i = 0; i < 2 * n; i++) { if (buf[i] != 0.0f) { fed = 1; break; } }
+        fx->idle_blocks[s] = fed ? 0 : (fx->idle_blocks[s] + 1);
+        // ~4 s of silence is well past any tail these reverbs produce.
+        const int idle_limit = (int)(4.0f * 44100.0f / (float)(n > 0 ? n : 128));
+
+        if (slot.active() && fx->idle_blocks[s] <= idle_limit) {
             const float g = fx->send_return[s];   // return is fully wet by design
             for (int i = 0; i < n; i++) {
                 float l = buf[2 * i], r = buf[2 * i + 1];
@@ -384,6 +394,30 @@ void dr32_fxbus_reset(dr32_fxbus *fx) {
         fx->send_pos[i] = 0;
     }
     for (int i = 0; i < DR32_INSERT_SLOTS; i++) fx->inserts[i].reset();
+}
+
+void dr32_efx_defaults(dr32_efx_type type, float *o) {
+    if (!o) return;
+    // [size, damp, decay, predelay, mix]. Pre-delay is in 0..200 ms.
+    switch (type) {
+        case DR32_EFX_PLATE:
+            // Snare/clap plate: medium tank, a little damping so it is not
+            // brittle, short-ish tail, ~10 ms pre-delay to keep the hit clear.
+            o[0] = 0.45f; o[1] = 0.35f; o[2] = 0.45f; o[3] = 0.05f; o[4] = 1.0f; break;
+        case DR32_EFX_ROOM:
+            // Small, dry-ish, minimal pre-delay — ambience rather than effect.
+            o[0] = 0.30f; o[1] = 0.40f; o[2] = 0.30f; o[3] = 0.02f; o[4] = 1.0f; break;
+        case DR32_EFX_HALL:
+            // Big and damped, longer tail, ~20 ms pre-delay for the sense of
+            // distance a hall needs.
+            o[0] = 0.75f; o[1] = 0.55f; o[2] = 0.70f; o[3] = 0.10f; o[4] = 1.0f; break;
+        case DR32_EFX_DRUMBUSS:
+            // Gentle glue with a hint of grit and a little extra attack —
+            // audible but not a statement.
+            o[0] = 0.30f; o[1] = 0.15f; o[2] = 0.60f; o[3] = 0.0f; o[4] = 1.0f; break;
+        default:
+            o[0] = 0.5f; o[1] = 0.3f; o[2] = 0.5f; o[3] = 0.0f; o[4] = 1.0f; break;
+    }
 }
 
 const char *dr32_efx_name(dr32_efx_type type) {
