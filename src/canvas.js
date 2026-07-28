@@ -674,580 +674,6 @@ function shapeSample(shape, t) {
 function nowMs() { return (typeof host_now_ms === "function") ? host_now_ms() : Date.now(); }
 
 
-/* ==== full param names from module.json ==== */
-
-KIT_PARAM_NAMES = {
- "editor": "Pad Editor",
- "ui_auto_select_pad": "Follow Pads",
- "master": "Master",
- "transpose": "Transpose",
- "pad0_transpose": "Transpose",
- "pad1_transpose": "Transpose",
- "pad2_transpose": "Transpose",
- "pad3_transpose": "Transpose",
- "pad4_transpose": "Transpose",
- "pad5_transpose": "Transpose",
- "pad6_transpose": "Transpose",
- "pad7_transpose": "Transpose",
- "pad8_transpose": "Transpose",
- "pad9_transpose": "Transpose",
- "pad10_transpose": "Transpose",
- "pad11_transpose": "Transpose",
- "pad12_transpose": "Transpose",
- "pad13_transpose": "Transpose",
- "pad14_transpose": "Transpose",
- "pad15_transpose": "Transpose",
- "pad16_transpose": "Transpose",
- "pad17_transpose": "Transpose",
- "pad18_transpose": "Transpose",
- "pad19_transpose": "Transpose",
- "pad20_transpose": "Transpose",
- "pad21_transpose": "Transpose",
- "pad22_transpose": "Transpose",
- "pad23_transpose": "Transpose",
- "pad24_transpose": "Transpose",
- "pad25_transpose": "Transpose",
- "pad26_transpose": "Transpose",
- "pad27_transpose": "Transpose",
- "pad28_transpose": "Transpose",
- "pad29_transpose": "Transpose",
- "pad30_transpose": "Transpose",
- "pad31_transpose": "Transpose",
- "attack": "Attack",
- "pad0_attack": "Attack",
- "pad1_attack": "Attack",
- "pad2_attack": "Attack",
- "pad3_attack": "Attack",
- "pad4_attack": "Attack",
- "pad5_attack": "Attack",
- "pad6_attack": "Attack",
- "pad7_attack": "Attack",
- "pad8_attack": "Attack",
- "pad9_attack": "Attack",
- "pad10_attack": "Attack",
- "pad11_attack": "Attack",
- "pad12_attack": "Attack",
- "pad13_attack": "Attack",
- "pad14_attack": "Attack",
- "pad15_attack": "Attack",
- "pad16_attack": "Attack",
- "pad17_attack": "Attack",
- "pad18_attack": "Attack",
- "pad19_attack": "Attack",
- "pad20_attack": "Attack",
- "pad21_attack": "Attack",
- "pad22_attack": "Attack",
- "pad23_attack": "Attack",
- "pad24_attack": "Attack",
- "pad25_attack": "Attack",
- "pad26_attack": "Attack",
- "pad27_attack": "Attack",
- "pad28_attack": "Attack",
- "pad29_attack": "Attack",
- "pad30_attack": "Attack",
- "pad31_attack": "Attack",
- "hold": "Hold",
- "pad0_hold": "Hold",
- "pad1_hold": "Hold",
- "pad2_hold": "Hold",
- "pad3_hold": "Hold",
- "pad4_hold": "Hold",
- "pad5_hold": "Hold",
- "pad6_hold": "Hold",
- "pad7_hold": "Hold",
- "pad8_hold": "Hold",
- "pad9_hold": "Hold",
- "pad10_hold": "Hold",
- "pad11_hold": "Hold",
- "pad12_hold": "Hold",
- "pad13_hold": "Hold",
- "pad14_hold": "Hold",
- "pad15_hold": "Hold",
- "pad16_hold": "Hold",
- "pad17_hold": "Hold",
- "pad18_hold": "Hold",
- "pad19_hold": "Hold",
- "pad20_hold": "Hold",
- "pad21_hold": "Hold",
- "pad22_hold": "Hold",
- "pad23_hold": "Hold",
- "pad24_hold": "Hold",
- "pad25_hold": "Hold",
- "pad26_hold": "Hold",
- "pad27_hold": "Hold",
- "pad28_hold": "Hold",
- "pad29_hold": "Hold",
- "pad30_hold": "Hold",
- "pad31_hold": "Hold",
- "decay": "Decay",
- "pad0_decay": "Decay",
- "pad1_decay": "Decay",
- "pad2_decay": "Decay",
- "pad3_decay": "Decay",
- "pad4_decay": "Decay",
- "pad5_decay": "Decay",
- "pad6_decay": "Decay",
- "pad7_decay": "Decay",
- "pad8_decay": "Decay",
- "pad9_decay": "Decay",
- "pad10_decay": "Decay",
- "pad11_decay": "Decay",
- "pad12_decay": "Decay",
- "pad13_decay": "Decay",
- "pad14_decay": "Decay",
- "pad15_decay": "Decay",
- "pad16_decay": "Decay",
- "pad17_decay": "Decay",
- "pad18_decay": "Decay",
- "pad19_decay": "Decay",
- "pad20_decay": "Decay",
- "pad21_decay": "Decay",
- "pad22_decay": "Decay",
- "pad23_decay": "Decay",
- "pad24_decay": "Decay",
- "pad25_decay": "Decay",
- "pad26_decay": "Decay",
- "pad27_decay": "Decay",
- "pad28_decay": "Decay",
- "pad29_decay": "Decay",
- "pad30_decay": "Decay",
- "pad31_decay": "Decay",
- "cutoff": "Filter Freq",
- "pad0_cutoff": "Filter Freq",
- "pad1_cutoff": "Filter Freq",
- "pad2_cutoff": "Filter Freq",
- "pad3_cutoff": "Filter Freq",
- "pad4_cutoff": "Filter Freq",
- "pad5_cutoff": "Filter Freq",
- "pad6_cutoff": "Filter Freq",
- "pad7_cutoff": "Filter Freq",
- "pad8_cutoff": "Filter Freq",
- "pad9_cutoff": "Filter Freq",
- "pad10_cutoff": "Filter Freq",
- "pad11_cutoff": "Filter Freq",
- "pad12_cutoff": "Filter Freq",
- "pad13_cutoff": "Filter Freq",
- "pad14_cutoff": "Filter Freq",
- "pad15_cutoff": "Filter Freq",
- "pad16_cutoff": "Filter Freq",
- "pad17_cutoff": "Filter Freq",
- "pad18_cutoff": "Filter Freq",
- "pad19_cutoff": "Filter Freq",
- "pad20_cutoff": "Filter Freq",
- "pad21_cutoff": "Filter Freq",
- "pad22_cutoff": "Filter Freq",
- "pad23_cutoff": "Filter Freq",
- "pad24_cutoff": "Filter Freq",
- "pad25_cutoff": "Filter Freq",
- "pad26_cutoff": "Filter Freq",
- "pad27_cutoff": "Filter Freq",
- "pad28_cutoff": "Filter Freq",
- "pad29_cutoff": "Filter Freq",
- "pad30_cutoff": "Filter Freq",
- "pad31_cutoff": "Filter Freq",
- "resonance": "Filter Reso",
- "pad0_resonance": "Filter Reso",
- "pad1_resonance": "Filter Reso",
- "pad2_resonance": "Filter Reso",
- "pad3_resonance": "Filter Reso",
- "pad4_resonance": "Filter Reso",
- "pad5_resonance": "Filter Reso",
- "pad6_resonance": "Filter Reso",
- "pad7_resonance": "Filter Reso",
- "pad8_resonance": "Filter Reso",
- "pad9_resonance": "Filter Reso",
- "pad10_resonance": "Filter Reso",
- "pad11_resonance": "Filter Reso",
- "pad12_resonance": "Filter Reso",
- "pad13_resonance": "Filter Reso",
- "pad14_resonance": "Filter Reso",
- "pad15_resonance": "Filter Reso",
- "pad16_resonance": "Filter Reso",
- "pad17_resonance": "Filter Reso",
- "pad18_resonance": "Filter Reso",
- "pad19_resonance": "Filter Reso",
- "pad20_resonance": "Filter Reso",
- "pad21_resonance": "Filter Reso",
- "pad22_resonance": "Filter Reso",
- "pad23_resonance": "Filter Reso",
- "pad24_resonance": "Filter Reso",
- "pad25_resonance": "Filter Reso",
- "pad26_resonance": "Filter Reso",
- "pad27_resonance": "Filter Reso",
- "pad28_resonance": "Filter Reso",
- "pad29_resonance": "Filter Reso",
- "pad30_resonance": "Filter Reso",
- "pad31_resonance": "Filter Reso",
- "filter_type": "Filter Type",
- "pad0_filter_type": "Filter Type",
- "pad1_filter_type": "Filter Type",
- "pad2_filter_type": "Filter Type",
- "pad3_filter_type": "Filter Type",
- "pad4_filter_type": "Filter Type",
- "pad5_filter_type": "Filter Type",
- "pad6_filter_type": "Filter Type",
- "pad7_filter_type": "Filter Type",
- "pad8_filter_type": "Filter Type",
- "pad9_filter_type": "Filter Type",
- "pad10_filter_type": "Filter Type",
- "pad11_filter_type": "Filter Type",
- "pad12_filter_type": "Filter Type",
- "pad13_filter_type": "Filter Type",
- "pad14_filter_type": "Filter Type",
- "pad15_filter_type": "Filter Type",
- "pad16_filter_type": "Filter Type",
- "pad17_filter_type": "Filter Type",
- "pad18_filter_type": "Filter Type",
- "pad19_filter_type": "Filter Type",
- "pad20_filter_type": "Filter Type",
- "pad21_filter_type": "Filter Type",
- "pad22_filter_type": "Filter Type",
- "pad23_filter_type": "Filter Type",
- "pad24_filter_type": "Filter Type",
- "pad25_filter_type": "Filter Type",
- "pad26_filter_type": "Filter Type",
- "pad27_filter_type": "Filter Type",
- "pad28_filter_type": "Filter Type",
- "pad29_filter_type": "Filter Type",
- "pad30_filter_type": "Filter Type",
- "pad31_filter_type": "Filter Type",
- "env_mode": "Envelope",
- "pad0_env_mode": "Envelope",
- "pad1_env_mode": "Envelope",
- "pad2_env_mode": "Envelope",
- "pad3_env_mode": "Envelope",
- "pad4_env_mode": "Envelope",
- "pad5_env_mode": "Envelope",
- "pad6_env_mode": "Envelope",
- "pad7_env_mode": "Envelope",
- "pad8_env_mode": "Envelope",
- "pad9_env_mode": "Envelope",
- "pad10_env_mode": "Envelope",
- "pad11_env_mode": "Envelope",
- "pad12_env_mode": "Envelope",
- "pad13_env_mode": "Envelope",
- "pad14_env_mode": "Envelope",
- "pad15_env_mode": "Envelope",
- "pad16_env_mode": "Envelope",
- "pad17_env_mode": "Envelope",
- "pad18_env_mode": "Envelope",
- "pad19_env_mode": "Envelope",
- "pad20_env_mode": "Envelope",
- "pad21_env_mode": "Envelope",
- "pad22_env_mode": "Envelope",
- "pad23_env_mode": "Envelope",
- "pad24_env_mode": "Envelope",
- "pad25_env_mode": "Envelope",
- "pad26_env_mode": "Envelope",
- "pad27_env_mode": "Envelope",
- "pad28_env_mode": "Envelope",
- "pad29_env_mode": "Envelope",
- "pad30_env_mode": "Envelope",
- "pad31_env_mode": "Envelope",
- "pan": "Pan",
- "pad0_pan": "Pan",
- "pad1_pan": "Pan",
- "pad2_pan": "Pan",
- "pad3_pan": "Pan",
- "pad4_pan": "Pan",
- "pad5_pan": "Pan",
- "pad6_pan": "Pan",
- "pad7_pan": "Pan",
- "pad8_pan": "Pan",
- "pad9_pan": "Pan",
- "pad10_pan": "Pan",
- "pad11_pan": "Pan",
- "pad12_pan": "Pan",
- "pad13_pan": "Pan",
- "pad14_pan": "Pan",
- "pad15_pan": "Pan",
- "pad16_pan": "Pan",
- "pad17_pan": "Pan",
- "pad18_pan": "Pan",
- "pad19_pan": "Pan",
- "pad20_pan": "Pan",
- "pad21_pan": "Pan",
- "pad22_pan": "Pan",
- "pad23_pan": "Pan",
- "pad24_pan": "Pan",
- "pad25_pan": "Pan",
- "pad26_pan": "Pan",
- "pad27_pan": "Pan",
- "pad28_pan": "Pan",
- "pad29_pan": "Pan",
- "pad30_pan": "Pan",
- "pad31_pan": "Pan",
- "volume": "Volume",
- "pad0_volume": "Volume",
- "pad1_volume": "Volume",
- "pad2_volume": "Volume",
- "pad3_volume": "Volume",
- "pad4_volume": "Volume",
- "pad5_volume": "Volume",
- "pad6_volume": "Volume",
- "pad7_volume": "Volume",
- "pad8_volume": "Volume",
- "pad9_volume": "Volume",
- "pad10_volume": "Volume",
- "pad11_volume": "Volume",
- "pad12_volume": "Volume",
- "pad13_volume": "Volume",
- "pad14_volume": "Volume",
- "pad15_volume": "Volume",
- "pad16_volume": "Volume",
- "pad17_volume": "Volume",
- "pad18_volume": "Volume",
- "pad19_volume": "Volume",
- "pad20_volume": "Volume",
- "pad21_volume": "Volume",
- "pad22_volume": "Volume",
- "pad23_volume": "Volume",
- "pad24_volume": "Volume",
- "pad25_volume": "Volume",
- "pad26_volume": "Volume",
- "pad27_volume": "Volume",
- "pad28_volume": "Volume",
- "pad29_volume": "Volume",
- "pad30_volume": "Volume",
- "pad31_volume": "Volume",
- "choke": "Choke",
- "pad0_choke": "Choke",
- "pad1_choke": "Choke",
- "pad2_choke": "Choke",
- "pad3_choke": "Choke",
- "pad4_choke": "Choke",
- "pad5_choke": "Choke",
- "pad6_choke": "Choke",
- "pad7_choke": "Choke",
- "pad8_choke": "Choke",
- "pad9_choke": "Choke",
- "pad10_choke": "Choke",
- "pad11_choke": "Choke",
- "pad12_choke": "Choke",
- "pad13_choke": "Choke",
- "pad14_choke": "Choke",
- "pad15_choke": "Choke",
- "pad16_choke": "Choke",
- "pad17_choke": "Choke",
- "pad18_choke": "Choke",
- "pad19_choke": "Choke",
- "pad20_choke": "Choke",
- "pad21_choke": "Choke",
- "pad22_choke": "Choke",
- "pad23_choke": "Choke",
- "pad24_choke": "Choke",
- "pad25_choke": "Choke",
- "pad26_choke": "Choke",
- "pad27_choke": "Choke",
- "pad28_choke": "Choke",
- "pad29_choke": "Choke",
- "pad30_choke": "Choke",
- "pad31_choke": "Choke",
- "detune": "Detune",
- "pad0_detune": "Detune",
- "pad1_detune": "Detune",
- "pad2_detune": "Detune",
- "pad3_detune": "Detune",
- "pad4_detune": "Detune",
- "pad5_detune": "Detune",
- "pad6_detune": "Detune",
- "pad7_detune": "Detune",
- "pad8_detune": "Detune",
- "pad9_detune": "Detune",
- "pad10_detune": "Detune",
- "pad11_detune": "Detune",
- "pad12_detune": "Detune",
- "pad13_detune": "Detune",
- "pad14_detune": "Detune",
- "pad15_detune": "Detune",
- "pad16_detune": "Detune",
- "pad17_detune": "Detune",
- "pad18_detune": "Detune",
- "pad19_detune": "Detune",
- "pad20_detune": "Detune",
- "pad21_detune": "Detune",
- "pad22_detune": "Detune",
- "pad23_detune": "Detune",
- "pad24_detune": "Detune",
- "pad25_detune": "Detune",
- "pad26_detune": "Detune",
- "pad27_detune": "Detune",
- "pad28_detune": "Detune",
- "pad29_detune": "Detune",
- "pad30_detune": "Detune",
- "pad31_detune": "Detune",
- "start": "Start",
- "pad0_start": "Start",
- "pad1_start": "Start",
- "pad2_start": "Start",
- "pad3_start": "Start",
- "pad4_start": "Start",
- "pad5_start": "Start",
- "pad6_start": "Start",
- "pad7_start": "Start",
- "pad8_start": "Start",
- "pad9_start": "Start",
- "pad10_start": "Start",
- "pad11_start": "Start",
- "pad12_start": "Start",
- "pad13_start": "Start",
- "pad14_start": "Start",
- "pad15_start": "Start",
- "pad16_start": "Start",
- "pad17_start": "Start",
- "pad18_start": "Start",
- "pad19_start": "Start",
- "pad20_start": "Start",
- "pad21_start": "Start",
- "pad22_start": "Start",
- "pad23_start": "Start",
- "pad24_start": "Start",
- "pad25_start": "Start",
- "pad26_start": "Start",
- "pad27_start": "Start",
- "pad28_start": "Start",
- "pad29_start": "Start",
- "pad30_start": "Start",
- "pad31_start": "Start",
- "length": "Length",
- "pad0_length": "Length",
- "pad1_length": "Length",
- "pad2_length": "Length",
- "pad3_length": "Length",
- "pad4_length": "Length",
- "pad5_length": "Length",
- "pad6_length": "Length",
- "pad7_length": "Length",
- "pad8_length": "Length",
- "pad9_length": "Length",
- "pad10_length": "Length",
- "pad11_length": "Length",
- "pad12_length": "Length",
- "pad13_length": "Length",
- "pad14_length": "Length",
- "pad15_length": "Length",
- "pad16_length": "Length",
- "pad17_length": "Length",
- "pad18_length": "Length",
- "pad19_length": "Length",
- "pad20_length": "Length",
- "pad21_length": "Length",
- "pad22_length": "Length",
- "pad23_length": "Length",
- "pad24_length": "Length",
- "pad25_length": "Length",
- "pad26_length": "Length",
- "pad27_length": "Length",
- "pad28_length": "Length",
- "pad29_length": "Length",
- "pad30_length": "Length",
- "pad31_length": "Length",
- "send1": "Send 1",
- "pad0_send1": "Send 1",
- "pad1_send1": "Send 1",
- "pad2_send1": "Send 1",
- "pad3_send1": "Send 1",
- "pad4_send1": "Send 1",
- "pad5_send1": "Send 1",
- "pad6_send1": "Send 1",
- "pad7_send1": "Send 1",
- "pad8_send1": "Send 1",
- "pad9_send1": "Send 1",
- "pad10_send1": "Send 1",
- "pad11_send1": "Send 1",
- "pad12_send1": "Send 1",
- "pad13_send1": "Send 1",
- "pad14_send1": "Send 1",
- "pad15_send1": "Send 1",
- "pad16_send1": "Send 1",
- "pad17_send1": "Send 1",
- "pad18_send1": "Send 1",
- "pad19_send1": "Send 1",
- "pad20_send1": "Send 1",
- "pad21_send1": "Send 1",
- "pad22_send1": "Send 1",
- "pad23_send1": "Send 1",
- "pad24_send1": "Send 1",
- "pad25_send1": "Send 1",
- "pad26_send1": "Send 1",
- "pad27_send1": "Send 1",
- "pad28_send1": "Send 1",
- "pad29_send1": "Send 1",
- "pad30_send1": "Send 1",
- "pad31_send1": "Send 1",
- "send2": "Send 2",
- "pad0_send2": "Send 2",
- "pad1_send2": "Send 2",
- "pad2_send2": "Send 2",
- "pad3_send2": "Send 2",
- "pad4_send2": "Send 2",
- "pad5_send2": "Send 2",
- "pad6_send2": "Send 2",
- "pad7_send2": "Send 2",
- "pad8_send2": "Send 2",
- "pad9_send2": "Send 2",
- "pad10_send2": "Send 2",
- "pad11_send2": "Send 2",
- "pad12_send2": "Send 2",
- "pad13_send2": "Send 2",
- "pad14_send2": "Send 2",
- "pad15_send2": "Send 2",
- "pad16_send2": "Send 2",
- "pad17_send2": "Send 2",
- "pad18_send2": "Send 2",
- "pad19_send2": "Send 2",
- "pad20_send2": "Send 2",
- "pad21_send2": "Send 2",
- "pad22_send2": "Send 2",
- "pad23_send2": "Send 2",
- "pad24_send2": "Send 2",
- "pad25_send2": "Send 2",
- "pad26_send2": "Send 2",
- "pad27_send2": "Send 2",
- "pad28_send2": "Send 2",
- "pad29_send2": "Send 2",
- "pad30_send2": "Send 2",
- "pad31_send2": "Send 2",
- "send1_type": "Type",
- "send1_size": "Size",
- "send1_damp": "Damping",
- "send1_decay": "Decay",
- "send1_predelay": "Pre-delay",
- "send1_return": "Return",
- "send2_type": "Type",
- "send2_size": "Size",
- "send2_damp": "Damping",
- "send2_decay": "Decay",
- "send2_predelay": "Pre-delay",
- "send2_return": "Return",
- "insert1_type": "Type",
- "insert1_size": "Size",
- "insert1_damp": "Damping",
- "insert1_decay": "Decay",
- "insert1_predelay": "Pre-delay",
- "insert1_comp": "Compress",
- "insert1_crunch": "Crunch",
- "insert1_attack": "Attack",
- "insert1_sustain": "Sustain",
- "insert1_mix": "Dry/Wet",
- "insert2_type": "Type",
- "insert2_size": "Size",
- "insert2_damp": "Damping",
- "insert2_decay": "Decay",
- "insert2_predelay": "Pre-delay",
- "insert2_comp": "Compress",
- "insert2_crunch": "Crunch",
- "insert2_attack": "Attack",
- "insert2_sustain": "Sustain",
- "insert2_mix": "Dry/Wet",
- "kit_move": "Move",
- "kit_user": "User",
- "sample_move": "Move",
- "sample_user": "User",
- "pad_sample_move": "Move",
- "pad_sample_user": "User"
-};
-
 /* ==== module config (canvas.config.js) ==== */
 
 /* DR32 canvas config for schwung-canvaskit (../../schwung-canvaskit).
@@ -1441,32 +867,24 @@ const PAD_BANK_SPECS = [
   ] }
 ];
 
-/* The focused pad lives in the DSP (kit->ui_current_pad), because only the DSP
- * sees pad hits — the host consumes them before the canvas MIDI dispatch, so
- * the canvas never receives a pad note at all (verified on device: jog arrives,
- * pads never do). */
+/* The focused pad lives in the DSP (kit->ui_current_pad) because every cell
+ * addresses it through the "pad_" alias, but the canvas is what WRITES it (see
+ * CONFIG.onMidi). The host forwards raw hardware pad notes 68-99 to an open
+ * canvas — this file's earlier claim that "the canvas never receives a pad note
+ * at all" was true only of the host before that landed. */
 function padOf(ctx) {
-  /* Read through the cache — cheap, and refreshed by padPoll() below. */
+  /* Read through the cache; CONFIG.onMidi flushes it when focus moves. */
   const p = parseInt(ctx.getParam("ui_current_pad"), 10) | 0;
   return p < 0 ? 0 : (p >= PAD_COUNT ? PAD_COUNT - 1 : p);
 }
 
-/* Focus is now owned by CONFIG.onMidi, which writes ui_current_pad the instant
- * a pad is hit — so there is nothing to poll for. The earlier version
- * force-refreshed ui_current_pad every third frame to catch the DSP moving it,
- * and that was the reported lag: a device getParam blocks ~2.6 ms, so the poll
- * alone cost ~40 ms/sec and still trailed the press by up to a frame.
- *
- * Kept as the single place that reads focus so a redraw stays consistent. */
-function padPoll(ctx, s) {
-  const cur = padOf(ctx);
-  if (s.lastSeenPad !== cur) {
-    s.lastSeenPad = cur;
-    if (ctx._pcache) ctx._pcache = {};
-    s.padMapUntil = (s.frames | 0) + 40;
-  }
-  return cur;
-}
+/* Focus is owned entirely by CONFIG.onMidi, which writes ui_current_pad the
+ * instant a pad is hit, so nothing polls for it. Two earlier attempts are worth
+ * not repeating: force-refreshing ui_current_pad every third frame to catch the
+ * DSP moving focus was the reported lag (a device getParam blocks ~2.6 ms, so
+ * the poll alone cost ~40 ms/sec and still trailed the press by up to a frame),
+ * and the reconciling padPoll() that replaced it became dead weight once the
+ * DSP stopped moving focus at all — onMidi is the only writer. */
 
 /* Header carries the target, because every cell is bound to it and getting
  * that wrong is silent: "PAD 07 - Kick01". */
@@ -1602,35 +1020,13 @@ function insertBank(n) {
 
 const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), insertBank(1), insertBank(2)]);
 
-/* ---------- pad map overlay -------------------------------------------- */
-
-/* A 4x8 map of the kit: selected pad inverted, loaded pads filled, empty
- * outlined. Shown while SHIFT is held and for a beat after the pad changes,
- * so a MIDI-driven jump is never silent. Pad 1 is bottom-left, matching the
- * hardware. */
-function drawPadMap(ctx, cells, s) {
-  /* Our own frame counter. The previous version compared against `s.frame`,
-   * which the engine does not maintain — so it was always 0, always less than
-   * the deadline, and the map sat on top of the parameters permanently. */
-  s.frames = (s.frames | 0) + 1;
-  const cur = padPoll(ctx, s);
-  const showing = s.shift || (s.frames | 0) < (s.padMapUntil | 0);
-  if (!showing) return;
-  const W = 9, H = 7, GX = 2, GY = 2;
-  const gw = 8 * W + 7 * GX, gh = 4 * H + 3 * GY;
-  const x0 = ((ctx.width - gw) / 2) | 0, y0 = ((ctx.height - gh) / 2) | 0;
-  ctx.fillRect(x0 - 4, y0 - 4, gw + 8, gh + 8, 0);
-  ctx.drawRect(x0 - 4, y0 - 4, gw + 8, gh + 8, 1);
-  const sel = cur;
-  for (let i = 0; i < PAD_COUNT; i++) {
-    const row = 3 - ((i >> 3) & 3), col = i & 7;
-    const x = x0 + col * (W + GX), y = y0 + row * (H + GY);
-    const loaded = String(ctx.getParam(`pad${i}_loaded`) || "0") === "1";
-    if (i === sel) ctx.fillRect(x, y, W, H, 1);
-    else if (loaded) ctx.fillRect(x + 2, y + 2, W - 4, H - 4, 1);
-    else ctx.drawRect(x, y, W, H, 1);
-  }
-}
+/* There is deliberately NO pad-map overlay. A 4x8 map of the kit used to be
+ * drawn over the parameters whenever focus moved, because focus could move
+ * without the player having touched anything and a silent jump would have been
+ * confusing. Now that focus only ever follows a pad you physically pressed —
+ * including under co-run, where the tool keeps the pad and the canvas merely
+ * observes it — the map only ever confirmed what your own finger just did,
+ * while covering the parameters you were reading. Removed 2026-07-27. */
 
 /* ---------- config ------------------------------------------------------ */
 
@@ -1651,13 +1047,23 @@ const CONFIG = {
 
   /* Edit focus follows the pad you physically hit.
    *
-   * The host forwards raw hardware pad notes (68-99) to a canvas while one is
-   * open — see MODULES.md, "Pad presses in a canvas UI". That is the ONLY
-   * signal that separates a finger from the sequencer: measured on device, a
-   * live hit and a sequenced note are identical by the time they reach the DSP
-   * (same status, channel, note, and both tagged EXTERNAL). Owning focus here
-   * rather than in the DSP is what stops playback from stealing the edit
-   * target.
+   * This handler contributes exactly ONE bit: "that was a finger, not the
+   * sequencer." It deliberately does NOT decide which pad — the note does, and
+   * the DSP already owns the note -> pad map, so no pad geometry lives here.
+   *
+   * That split is the whole design, and getting it wrong cost two rounds. The
+   * host forwards raw hardware pad notes (68-99) to an open canvas (MODULES.md,
+   * "Pad presses in a canvas UI"); that is the ONLY signal separating a live hit
+   * from a sequenced one, since by the time a note reaches the DSP the two are
+   * identical — same status, channel, note, both tagged EXTERNAL (measured on
+   * device). But the grid note identifies a POSITION, not a pad, and position
+   * is not pad: only the right 4x4 plays, and davebox transposes it up 16 notes
+   * to reach pads 17-32 while sending the identical grid note. An earlier
+   * version derived the pad from the grid note and could therefore only ever
+   * address 1-16, with the rows mis-strided on top of that.
+   *
+   * So: signal liveness, let the note say which. A press on the dead left 4x4
+   * arms nothing in practice — no note follows it, so the arm simply expires.
    *
    * Observation only — never sound these. The ordinary note is already on its
    * way to the synth; playing them too would double-trigger every pad. */
@@ -1665,20 +1071,13 @@ const CONFIG = {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
-    const pad = d[1] - 68;
-    if (pad < 0 || pad >= PAD_COUNT) return false;
-    if (pad !== s.lastSeenPad) {
-      /* Flush BEFORE the write: every cell addresses "pad_*", which now means
-       * a different pad, and setParam write-through must survive the flush. */
-      if (ctx._pcache) ctx._pcache = {};
-      ctx.setParam("ui_current_pad", String(pad));
-      s.lastSeenPad = pad;
-      s.padMapUntil = (s.frames | 0) + 40;      /* flash the map */
-    }
+    if (d[1] < 68 || d[1] > 99) return false;
+    /* Flush BEFORE arming: every cell addresses "pad_*", which is about to mean
+     * a different pad, and the cache must not outlive the change. */
+    if (ctx._pcache) ctx._pcache = {};
+    ctx.setParam("ui_live_press", "1");
     return true;
   },
-
-  overlays: [drawPadMap],
 
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the

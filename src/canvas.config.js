@@ -189,32 +189,24 @@ const PAD_BANK_SPECS = [
   ] }
 ];
 
-/* The focused pad lives in the DSP (kit->ui_current_pad), because only the DSP
- * sees pad hits — the host consumes them before the canvas MIDI dispatch, so
- * the canvas never receives a pad note at all (verified on device: jog arrives,
- * pads never do). */
+/* The focused pad lives in the DSP (kit->ui_current_pad) because every cell
+ * addresses it through the "pad_" alias, but the canvas is what WRITES it (see
+ * CONFIG.onMidi). The host forwards raw hardware pad notes 68-99 to an open
+ * canvas — this file's earlier claim that "the canvas never receives a pad note
+ * at all" was true only of the host before that landed. */
 function padOf(ctx) {
-  /* Read through the cache — cheap, and refreshed by padPoll() below. */
+  /* Read through the cache; CONFIG.onMidi flushes it when focus moves. */
   const p = parseInt(ctx.getParam("ui_current_pad"), 10) | 0;
   return p < 0 ? 0 : (p >= PAD_COUNT ? PAD_COUNT - 1 : p);
 }
 
-/* Focus is now owned by CONFIG.onMidi, which writes ui_current_pad the instant
- * a pad is hit — so there is nothing to poll for. The earlier version
- * force-refreshed ui_current_pad every third frame to catch the DSP moving it,
- * and that was the reported lag: a device getParam blocks ~2.6 ms, so the poll
- * alone cost ~40 ms/sec and still trailed the press by up to a frame.
- *
- * Kept as the single place that reads focus so a redraw stays consistent. */
-function padPoll(ctx, s) {
-  const cur = padOf(ctx);
-  if (s.lastSeenPad !== cur) {
-    s.lastSeenPad = cur;
-    if (ctx._pcache) ctx._pcache = {};
-    s.padMapUntil = (s.frames | 0) + 40;
-  }
-  return cur;
-}
+/* Focus is owned entirely by CONFIG.onMidi, which writes ui_current_pad the
+ * instant a pad is hit, so nothing polls for it. Two earlier attempts are worth
+ * not repeating: force-refreshing ui_current_pad every third frame to catch the
+ * DSP moving focus was the reported lag (a device getParam blocks ~2.6 ms, so
+ * the poll alone cost ~40 ms/sec and still trailed the press by up to a frame),
+ * and the reconciling padPoll() that replaced it became dead weight once the
+ * DSP stopped moving focus at all — onMidi is the only writer. */
 
 /* Header carries the target, because every cell is bound to it and getting
  * that wrong is silent: "PAD 07 - Kick01". */
@@ -350,35 +342,13 @@ function insertBank(n) {
 
 const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), insertBank(1), insertBank(2)]);
 
-/* ---------- pad map overlay -------------------------------------------- */
-
-/* A 4x8 map of the kit: selected pad inverted, loaded pads filled, empty
- * outlined. Shown while SHIFT is held and for a beat after the pad changes,
- * so a MIDI-driven jump is never silent. Pad 1 is bottom-left, matching the
- * hardware. */
-function drawPadMap(ctx, cells, s) {
-  /* Our own frame counter. The previous version compared against `s.frame`,
-   * which the engine does not maintain — so it was always 0, always less than
-   * the deadline, and the map sat on top of the parameters permanently. */
-  s.frames = (s.frames | 0) + 1;
-  const cur = padPoll(ctx, s);
-  const showing = s.shift || (s.frames | 0) < (s.padMapUntil | 0);
-  if (!showing) return;
-  const W = 9, H = 7, GX = 2, GY = 2;
-  const gw = 8 * W + 7 * GX, gh = 4 * H + 3 * GY;
-  const x0 = ((ctx.width - gw) / 2) | 0, y0 = ((ctx.height - gh) / 2) | 0;
-  ctx.fillRect(x0 - 4, y0 - 4, gw + 8, gh + 8, 0);
-  ctx.drawRect(x0 - 4, y0 - 4, gw + 8, gh + 8, 1);
-  const sel = cur;
-  for (let i = 0; i < PAD_COUNT; i++) {
-    const row = 3 - ((i >> 3) & 3), col = i & 7;
-    const x = x0 + col * (W + GX), y = y0 + row * (H + GY);
-    const loaded = String(ctx.getParam(`pad${i}_loaded`) || "0") === "1";
-    if (i === sel) ctx.fillRect(x, y, W, H, 1);
-    else if (loaded) ctx.fillRect(x + 2, y + 2, W - 4, H - 4, 1);
-    else ctx.drawRect(x, y, W, H, 1);
-  }
-}
+/* There is deliberately NO pad-map overlay. A 4x8 map of the kit used to be
+ * drawn over the parameters whenever focus moved, because focus could move
+ * without the player having touched anything and a silent jump would have been
+ * confusing. Now that focus only ever follows a pad you physically pressed —
+ * including under co-run, where the tool keeps the pad and the canvas merely
+ * observes it — the map only ever confirmed what your own finger just did,
+ * while covering the parameters you were reading. Removed 2026-07-27. */
 
 /* ---------- config ------------------------------------------------------ */
 
@@ -399,13 +369,23 @@ const CONFIG = {
 
   /* Edit focus follows the pad you physically hit.
    *
-   * The host forwards raw hardware pad notes (68-99) to a canvas while one is
-   * open — see MODULES.md, "Pad presses in a canvas UI". That is the ONLY
-   * signal that separates a finger from the sequencer: measured on device, a
-   * live hit and a sequenced note are identical by the time they reach the DSP
-   * (same status, channel, note, and both tagged EXTERNAL). Owning focus here
-   * rather than in the DSP is what stops playback from stealing the edit
-   * target.
+   * This handler contributes exactly ONE bit: "that was a finger, not the
+   * sequencer." It deliberately does NOT decide which pad — the note does, and
+   * the DSP already owns the note -> pad map, so no pad geometry lives here.
+   *
+   * That split is the whole design, and getting it wrong cost two rounds. The
+   * host forwards raw hardware pad notes (68-99) to an open canvas (MODULES.md,
+   * "Pad presses in a canvas UI"); that is the ONLY signal separating a live hit
+   * from a sequenced one, since by the time a note reaches the DSP the two are
+   * identical — same status, channel, note, both tagged EXTERNAL (measured on
+   * device). But the grid note identifies a POSITION, not a pad, and position
+   * is not pad: only the right 4x4 plays, and davebox transposes it up 16 notes
+   * to reach pads 17-32 while sending the identical grid note. An earlier
+   * version derived the pad from the grid note and could therefore only ever
+   * address 1-16, with the rows mis-strided on top of that.
+   *
+   * So: signal liveness, let the note say which. A press on the dead left 4x4
+   * arms nothing in practice — no note follows it, so the arm simply expires.
    *
    * Observation only — never sound these. The ordinary note is already on its
    * way to the synth; playing them too would double-trigger every pad. */
@@ -413,20 +393,13 @@ const CONFIG = {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
-    const pad = d[1] - 68;
-    if (pad < 0 || pad >= PAD_COUNT) return false;
-    if (pad !== s.lastSeenPad) {
-      /* Flush BEFORE the write: every cell addresses "pad_*", which now means
-       * a different pad, and setParam write-through must survive the flush. */
-      if (ctx._pcache) ctx._pcache = {};
-      ctx.setParam("ui_current_pad", String(pad));
-      s.lastSeenPad = pad;
-      s.padMapUntil = (s.frames | 0) + 40;      /* flash the map */
-    }
+    if (d[1] < 68 || d[1] > 99) return false;
+    /* Flush BEFORE arming: every cell addresses "pad_*", which is about to mean
+     * a different pad, and the cache must not outlive the change. */
+    if (ctx._pcache) ctx._pcache = {};
+    ctx.setParam("ui_live_press", "1");
     return true;
   },
-
-  overlays: [drawPadMap],
 
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the

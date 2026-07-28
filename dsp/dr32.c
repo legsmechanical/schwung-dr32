@@ -125,6 +125,9 @@ static void destroy_instance(void *instance) {
 }
 
 static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
+    /* `source` is deliberately unread — see the note below. Kept in the
+     * signature because plugin_api_v2 defines it. */
+    (void)source;
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || len < 3) return;
     uint8_t status = msg[0] & 0xF0;

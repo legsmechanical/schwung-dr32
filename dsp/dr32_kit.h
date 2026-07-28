@@ -50,11 +50,31 @@ typedef struct {
     dr32_efx_type insert_type[2];
     float         send_return_ui[2];
     // Which pad the UI is editing, and whether playing a pad moves that focus.
-    // The DSP owns this because it is the only side that sees pad hits: the
-    // host consumes them before the canvas MIDI dispatch.
     int           ui_current_pad;
     int           ui_auto_select_pad;
+
+    // Live-press correlation. Neither side can move focus alone: the canvas
+    // knows a press was PHYSICAL (it gets the raw grid note, which the
+    // sequencer cannot produce) but not which pad, because a grid position is
+    // not a pad — only the right 4x4 plays, and a tool may transpose it to
+    // reach the upper 16. The note knows which pad but not whether a finger
+    // sent it. Here the two meet: the canvas sets ui_live_press, and the pad
+    // comes from note_to_pad.
+    //
+    // The two arrive in either order (the canvas is a separate process), so the
+    // match looks both ways within a short window rather than assuming one.
+    int           live_armed;      // canvas signalled a press, awaiting its note
+    unsigned      live_arm_block;  // block it was signalled on
+    int           last_hit_pad;    // pad of the most recent note-on, -1 = none
+    unsigned      last_hit_block;  // block that note-on landed on
 } dr32_kit;
+
+// How far apart the press signal and its note may land and still be considered
+// the same event. Blocks are 128 frames @ 44.1 kHz = ~2.9 ms, so 20 blocks is
+// ~58 ms — comfortably above canvas->DSP IPC latency, and short enough that an
+// unrelated sequenced note is very unlikely to fall inside it. Even when one
+// does, the cost is focusing a pad that genuinely just played.
+#define DR32_LIVE_MATCH_BLOCKS 20u
 
 void dr32_kit_init(dr32_kit *k);
 void dr32_kit_free(dr32_kit *k);

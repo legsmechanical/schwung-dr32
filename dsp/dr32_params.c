@@ -310,6 +310,32 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);
         return 1;
     }
+    if (!strcmp(key, "ui_live_press")) {
+        /* The canvas saw a physical pad press. It cannot say WHICH pad — a grid
+         * position is not a pad — so the note decides, and this only vouches
+         * that a finger was involved.
+         *
+         * The note usually beats this signal here (it comes straight off the
+         * MIDI stream, while this crosses a process boundary), so look back
+         * first and only arm forward if nothing recent matches. Handling just
+         * one order would drop roughly half the presses. */
+        if (!kit->ui_auto_select_pad) return 1;
+        if (kit->last_hit_pad >= 0 &&
+            (kit->block - kit->last_hit_block) <= DR32_LIVE_MATCH_BLOCKS) {
+            kit->ui_current_pad = kit->last_hit_pad;
+            kit->live_armed = 0;
+            /* Consume it. A note may vouch for ONE press: leaving it claimable
+             * let a second press inside the window re-match the same note, so a
+             * press on a dead pad (the left 4x4 plays nothing, but the host
+             * still forwards it) could grab whatever the SEQUENCER had just
+             * played and yank focus there. Caught by tests/test_kit.c. */
+            kit->last_hit_pad = -1;
+        } else {
+            kit->live_armed = 1;
+            kit->live_arm_block = kit->block;
+        }
+        return 1;
+    }
     if (!strcmp(key, "ui_auto_select_pad")) {
         // The host's filepath browser_hooks suspend this while a browser is
         // open (MODULES.md documents the pattern), so accept both spellings.

@@ -1,6 +1,7 @@
 // Kit-layer tests: note map, choke groups, sample swap safety, 32-pad range.
 
 #include "../dsp/dr32_kit.h"
+#include "../dsp/dr32_params.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -129,6 +130,69 @@ int main(void) {
           dr32_kit_active_voices(&k));
     float full = peak(&k, 512);
     CHECK(isfinite(full), "32-voice mix went non-finite");
+
+    // ---- live-press correlation: focus follows a VOUCHED note, in either order
+    //
+    // The canvas ("a finger pressed a pad") and the note ("which pad") arrive
+    // from different processes, so neither order can be assumed. Both must land
+    // on the same pad, and an unvouched note must not move focus at all — that
+    // last one is the whole reason the DSP stopped following notes.
+    {
+        dr32_kit t;
+        dr32_kit_init(&t);
+
+        // Sequenced note alone: no press signal, focus must not move.
+        t.ui_current_pad = 3;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 9, 100);
+        CHECK(t.ui_current_pad == 3, "unvouched note moved focus to %d", t.ui_current_pad);
+
+        // Note first, then the press signal catches up (the common order).
+        t.ui_current_pad = 0;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 7, 100);
+        dr32_apply_param(&t, "ui_live_press", "1");
+        CHECK(t.ui_current_pad == 7, "note-then-press focused %d, want 7", t.ui_current_pad);
+
+        // Press signal first, note arrives after.
+        t.ui_current_pad = 0;
+        dr32_apply_param(&t, "ui_live_press", "1");
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 21, 100);
+        CHECK(t.ui_current_pad == 21, "press-then-note focused %d, want 21", t.ui_current_pad);
+
+        // Reaches the upper 16 — the case a grid-note mapping could never
+        // address, since a transposed pad sends the identical grid note.
+        t.ui_current_pad = 0;
+        dr32_apply_param(&t, "ui_live_press", "1");
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 31, 100);
+        CHECK(t.ui_current_pad == 31, "upper-bank press focused %d, want 31", t.ui_current_pad);
+
+        // One press signal vouches for ONE note; the next note is not carried.
+        t.ui_current_pad = 0;
+        dr32_apply_param(&t, "ui_live_press", "1");
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 5, 100);
+        t.block += DR32_LIVE_MATCH_BLOCKS + 1;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 12, 100);
+        CHECK(t.ui_current_pad == 5, "second note stole focus to %d, want 5", t.ui_current_pad);
+
+        // A stale note outside the window must not be claimed by a later press.
+        t.ui_current_pad = 2;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 17, 100);
+        t.block += DR32_LIVE_MATCH_BLOCKS + 1;
+        dr32_apply_param(&t, "ui_live_press", "1");
+        CHECK(t.ui_current_pad == 2, "stale note claimed by press: %d", t.ui_current_pad);
+
+        // ...but that press stays armed and takes the NEXT note.
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 4, 100);
+        CHECK(t.ui_current_pad == 4, "armed press missed its note: %d", t.ui_current_pad);
+
+        // auto-select off (a browser is open) suspends the whole mechanism.
+        t.ui_auto_select_pad = 0;
+        t.ui_current_pad = 1;
+        dr32_apply_param(&t, "ui_live_press", "1");
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 30, 100);
+        CHECK(t.ui_current_pad == 1, "focus moved while auto-select off: %d", t.ui_current_pad);
+
+        dr32_kit_free(&t);
+    }
 
     dr32_kit_free(&k);
     remove(wa); remove(wb);

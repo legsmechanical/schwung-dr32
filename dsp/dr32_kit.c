@@ -17,6 +17,10 @@ void dr32_kit_init(dr32_kit *k) {
     k->master_gain = 1.0f;
     k->ui_current_pad = 0;
     k->ui_auto_select_pad = 1;      // playing a pad focuses it, as mrdrums does
+    k->live_armed = 0;
+    k->live_arm_block = 0;
+    k->last_hit_pad = -1;
+    k->last_hit_block = 0;
     for (int i = 0; i < 2; i++) {
         k->send_p[i][0] = 0.5f;   // size
         k->send_p[i][1] = 0.3f;   // damping
@@ -104,10 +108,24 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
     if (note < 0 || note > 127) return;
     int pad = k->note_to_pad[note];
     if (pad < 0) return;
-    /* NOTE: focus does NOT follow from here. Ordinary notes cannot be told
-     * apart from sequenced ones, so following them let playback drag the
-     * editor around. dr32.c moves the focus from MOVE_MIDI_SOURCE_PAD events
-     * instead — real hardware presses only. */
+    /* Focus follows this note ONLY if the canvas vouched that a finger caused
+     * it. A note alone cannot: a live hit and a sequenced one are identical
+     * here (measured on device), so following every note let playback drag the
+     * editor around. The canvas supplies the missing bit via ui_live_press.
+     *
+     * Record the hit either way — the press signal may still be in flight, and
+     * set_param("ui_live_press") looks back at this. (An earlier attempt to
+     * have the host tag the note MOVE_MIDI_SOURCE_PAD reached nothing even with
+     * the gate removed; that plumbing was reverted. Don't re-tread it.) */
+    k->last_hit_pad = pad;
+    k->last_hit_block = k->block;
+    if (k->live_armed && k->ui_auto_select_pad &&
+        (k->block - k->live_arm_block) <= DR32_LIVE_MATCH_BLOCKS) {
+        k->ui_current_pad = pad;
+        k->live_armed = 0;
+        k->last_hit_pad = -1;   /* consumed — see the note in dr32_params.c */
+    }
+
     dr32_pad_slot *s = &k->pads[pad];
 
     // Choke arbitration, per the native DrumChainMidiNode: among note-ons that
