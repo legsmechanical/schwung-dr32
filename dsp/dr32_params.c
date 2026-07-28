@@ -36,6 +36,47 @@ static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) 
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
 }
 
+/** Which of a send's five generic slots a per-type control name addresses.
+ *
+ *  The names have to be DISTINCT keys — the host rejects a whole hierarchy that
+ *  contains any duplicate key — but several of them mean the same underlying
+ *  parameter, so this is the one table both the read and the apply path use.
+ *  They used to be duplicated inline in each, which is exactly how a key ends up
+ *  settable but not readable, and a knob that reads zero looks like dead UI
+ *  rather than a missing case.
+ *
+ *  ⚠ Slot 0 and 1 are 0..1 for the reverbs and a count of SIXTEENTHS (1..16)
+ *  for the Delay. Slot 4 was the vestigial `mix` from the kit-insert era. */
+static int send_slot_index(const char *name) {
+    if (!strcmp(name, "size")     || !strcmp(name, "time_l") || !strcmp(name, "p1")) return 0;
+    if (!strcmp(name, "damp")     || !strcmp(name, "time_r") || !strcmp(name, "p2")) return 1;
+    if (!strcmp(name, "decay")    || !strcmp(name, "feedback") || !strcmp(name, "p3")) return 2;
+    if (!strcmp(name, "predelay") || !strcmp(name, "tone")   || !strcmp(name, "p4")) return 3;
+    if (!strcmp(name, "pingpong") || !strcmp(name, "p5")) return 4;
+    if (!strcmp(name, "sync")     || !strcmp(name, "p6")) return 5;
+    if (!strcmp(name, "ms_l")     || !strcmp(name, "p7")) return 6;
+    if (!strcmp(name, "ms_r")     || !strcmp(name, "p8")) return 7;
+    return -1;
+}
+
+/** Which of the Drum Bus's five controls a key addresses, -1 if none.
+ *
+ *  ⚠ attack and sustain are BIPOLAR here (-1..+1, neutral 0), unlike everything
+ *  else on this bus. `mix` is the parallel blend — it was on the Drum Bus when
+ *  it was a selectable insert, and went missing when the stage was lifted onto
+ *  the master mix. */
+static int bus_slot_index(const char *key) {
+    if (!strncmp(key, "bus_", 4)) {
+        const char *f = key + 4;
+        if (!strcmp(f, "comp")    || !strcmp(f, "compress")) return 0;
+        if (!strcmp(f, "crunch"))                            return 1;
+        if (!strcmp(f, "attack"))                            return 2;
+        if (!strcmp(f, "sustain"))                           return 3;
+        if (!strcmp(f, "mix"))                               return 4;
+    }
+    return -1;
+}
+
 static int parse_filter_type(const char *v) {
     // The JSON's own spellings, measured on device. Accept the numeric form too
     // so the UI can send either.
@@ -205,20 +246,35 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (slot >= 0 && q[1] == '_') {
             const char *f2 = q + 2;
             const float *cache = kit->send_p[slot];
-            int idx = -1;
-            if      (!strcmp(f2, "size")  || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
-            else if (!strcmp(f2, "damp")  || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
-            else if (!strcmp(f2, "decay") || !strcmp(f2, "attack") || !strcmp(f2, "p3")) idx = 2;
-            // Slot 3 is pre-delay for the reverbs; the Drum Bus has no use for
-            // one, so it reuses that slot as Sustain rather than growing the
-            // fxbus API a sixth parameter.
-            else if (!strcmp(f2, "predelay") || !strcmp(f2, "sustain")) idx = 3;
+            /* The ONE param the whole send page's visibility hangs off.
+             *
+             * The host's visible_if takes a SINGLE condition on a SINGLE param
+             * (shadow_ui.c: equals / not_equals / gt / lt / truthy — no AND, no
+             * lists), so "armed type is Delay AND it is running free" cannot be
+             * written directly. Publishing the page's mode as its own read-only
+             * param makes every row a single equality again. */
+            if (!strcmp(f2, "mode")) {
+                if (kit->send_type[slot] != DR32_EFX_DELAY)
+                    return snprintf(buf, buf_len, "%s", "Verb");
+                return snprintf(buf, buf_len, "%s",
+                                cache[5] >= 0.5f ? "Sync" : "Free");
+            }
+            /* Sync reads back as a NAME so the enum round-trips through the
+             * menu the same way the type does. */
+            if (!strcmp(f2, "sync"))
+                return snprintf(buf, buf_len, "%s", cache[5] >= 0.5f ? "Sync" : "Free");
+            int idx = send_slot_index(f2);
             if (idx >= 0) return snprintf(buf, buf_len, "%g", (double)cache[idx]);
             if (!strcmp(f2, "return"))
                 return snprintf(buf, buf_len, "%g", (double)kit->send_return_ui[slot]);
             if (!strcmp(f2, "type"))
                 return snprintf(buf, buf_len, "%s", dr32_efx_name(kit->send_type[slot]));
         }
+    }
+
+    {
+        int bidx = bus_slot_index(key);
+        if (bidx >= 0) return snprintf(buf, buf_len, "%g", (double)kit->bus_p[bidx]);
     }
 
     if (!strcmp(key, "ui_current_pad"))
@@ -302,7 +358,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
                 if (t != DR32_EFX_NONE) dr32_efx_defaults(t, cache);
                 dr32_fxbus_set_send_type(fx, slot, t);
                 kit->send_type[slot] = t;
-                dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
                 return 1;
             }
             if (!strcmp(f2, "return")) {
@@ -310,22 +366,36 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
                 kit->send_return_ui[slot] = v;
                 return 1;
             }
-            // Per-type control names map onto the same three generic slots.
-            // They must be DISTINCT keys (the host rejects a hierarchy with any
-            // duplicate key), but they address the same underlying parameter.
-            int idx = -1;
-            if      (!strcmp(f2, "size")  || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
-            else if (!strcmp(f2, "damp")  || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
-            else if (!strcmp(f2, "decay") || !strcmp(f2, "attack") || !strcmp(f2, "p3")) idx = 2;
-            // Slot 3 is pre-delay for the reverbs; the Drum Bus has no use for
-            // one, so it reuses that slot as Sustain rather than growing the
-            // fxbus API a sixth parameter.
-            else if (!strcmp(f2, "predelay") || !strcmp(f2, "sustain")) idx = 3;
-            if (idx >= 0) {
-                cache[idx] = v;
-                dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
+            if (!strcmp(f2, "sync")) {
+                /* Name or number: the canvas writes the label, a restored state
+                 * or a script may write 0/1. */
+                if (!strcmp(val, "Sync"))      cache[5] = 1.0f;
+                else if (!strcmp(val, "Free")) cache[5] = 0.0f;
+                else                           cache[5] = (v >= 0.5f) ? 1.0f : 0.0f;
+                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
                 return 1;
             }
+            int idx = send_slot_index(f2);
+            if (idx >= 0) {
+                cache[idx] = v;
+                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
+                return 1;
+            }
+        }
+    }
+
+    // --- the always-on Drum Bus: bus_*
+    {
+        int bidx = bus_slot_index(key);
+        if (bidx >= 0) {
+            /* Cache first, apply second: a missing fx bus must not make the
+             * value vanish, or a state restore on an instance that failed to
+             * allocate would silently drop the whole page. */
+            kit->bus_p[bidx] = (float)atof(val);
+            if (kit->fx)
+                dr32_fxbus_set_bus_params(kit->fx, kit->bus_p[0], kit->bus_p[1],
+                                          kit->bus_p[2], kit->bus_p[3], kit->bus_p[4]);
+            return 1;
         }
     }
 

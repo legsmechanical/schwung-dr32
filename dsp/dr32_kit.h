@@ -42,10 +42,19 @@ typedef struct {
     float         scratch[2 * DR32_KIT_MAX_BLOCK];
     // Send params are cached so the UI can set one at a time (the bus API takes
     // them together).
-    // [size, damp, decay, predelay, mix]. mix is vestigial — a send return is
-    // always 100% wet — but dr32_efx_defaults() fills all five, so the width
-    // stays 5 rather than making every per-type default table a special case.
-    float         send_p[2][5];
+    // See dr32_fxbus.h for the per-type slot table.
+    // ⚠ Not everything here is normalised: the Delay's synced times are a count
+    // of SIXTEENTHS (1..16) and its free times are MILLISECONDS. Both pairs are
+    // stored at once and survive a flip of the sync flag, as they do on the
+    // native device.
+    float         send_p[2][DR32_SEND_PARAMS];
+    // The always-on Drum Bus: [compress, crunch, attack, sustain, mix].
+    // Attack and Sustain are BIPOLAR -1..+1 with neutral at 0 (the 0..1-about-
+    // 0.5 form lives inside DrumBuss and nowhere else). Mix is the parallel
+    // blend and defaults to 1 = fully processed, so it only ever takes the
+    // stage away.
+    float         bus_p[5];
+    float         bpm;                // last tempo seen, for the synced Delay
     // Mirrors of slot state the UI reads back (the bus itself is write-only).
     dr32_efx_type send_type[2];
     float         send_return_ui[2];
@@ -114,6 +123,9 @@ void dr32_kit_note_off(dr32_kit *k, int note);
 
 /** Silence everything immediately (kit change, panic). */
 void dr32_kit_all_off(dr32_kit *k);
+
+/** Host tempo, for the synced Delay send. Safe to call every block. */
+void dr32_kit_set_bpm(dr32_kit *k, float bpm);
 
 /** Render `frames` of interleaved stereo. Overwrites `out` (does not add). */
 void dr32_kit_render(dr32_kit *k, float *out, int frames);

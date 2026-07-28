@@ -274,6 +274,12 @@ static void render_block(void *instance, int16_t *out, int frames) {
     if (!in) return;
     if (frames > 1024) frames = 1024;
 
+    /* Tempo for the synced Delay send. get_bpm has its own fallback chain and
+     * documents 120 as the floor of it, but the POINTER may be NULL on an older
+     * host, so it is guarded — and the kit early-outs on an unchanged value, so
+     * this is a float compare per block rather than a recompute. */
+    if (g_host && g_host->get_bpm) dr32_kit_set_bpm(&in->kit, g_host->get_bpm());
+
     dr32_kit_render(&in->kit, in->scratch, frames);
 
     for (int i = 0; i < 2 * frames; i++) {

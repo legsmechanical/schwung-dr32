@@ -28,10 +28,19 @@ void dr32_kit_init(dr32_kit *k) {
         k->send_p[i][1] = 0.3f;   // damping
         k->send_p[i][2] = 0.5f;   // decay
         k->send_p[i][3] = 0.0f;   // pre-delay OFF by default (it was 125 ms)
-        k->send_p[i][4] = 1.0f;
+        for (int j = 4; j < DR32_SEND_PARAMS; j++) k->send_p[i][j] = 0.0f;
         k->send_type[i] = DR32_EFX_NONE;
         k->send_return_ui[i] = 1.0f;
     }
+
+    /* Drum Bus: always on, and starting NEUTRAL so it is inaudible and bypassed
+     * until a knob moves. Attack and Sustain are bipolar -1..+1, neutral 0. */
+    k->bus_p[0] = 0.0f;   // compress
+    k->bus_p[1] = 0.0f;   // crunch
+    k->bus_p[2] = 0.0f;   // attack   (bipolar)
+    k->bus_p[3] = 0.0f;   // sustain  (bipolar)
+    k->bus_p[4] = 1.0f;   // mix — fully processed; only ever takes the bus away
+    k->bpm = 120.0f;
 
     // Send 1 starts as a Plate — the drum reverb — so raising a pad's Send 1 is
     // immediately useful. It costs nothing until a pad actually feeds it (the
@@ -41,10 +50,17 @@ void dr32_kit_init(dr32_kit *k) {
         dr32_efx_defaults(DR32_EFX_PLATE, k->send_p[0]);
         k->send_type[0] = DR32_EFX_PLATE;
         dr32_fxbus_set_send_type(k->fx, 0, DR32_EFX_PLATE);
-        dr32_fxbus_set_send_params(k->fx, 0, k->send_p[0][0], k->send_p[0][1],
-                                   k->send_p[0][2], k->send_p[0][3]);
+        dr32_fxbus_set_send_params(k->fx, 0, k->send_p[0], DR32_SEND_PARAMS);
         dr32_fxbus_set_send_return(k->fx, 0, 1.0f);
+        dr32_fxbus_set_bus_params(k->fx, k->bus_p[0], k->bus_p[1],
+                                  k->bus_p[2], k->bus_p[3], k->bus_p[4]);
     }
+}
+
+void dr32_kit_set_bpm(dr32_kit *k, float bpm) {
+    if (!k) return;
+    k->bpm = bpm;
+    if (k->fx) dr32_fxbus_set_bpm(k->fx, bpm);
 }
 
 /* ---------- folder browse ------------------------------------------------

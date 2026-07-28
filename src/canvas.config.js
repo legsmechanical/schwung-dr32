@@ -405,31 +405,127 @@ function drawWave(ctx, g, cells, s) {
 
 /* ---------- send FX ------------------------------------------------------ */
 
-const kSendTypes   = ["Off", "Plate", "Spaces"];
-const kSendSq      = ["OFF", "PLT", "SPC"];
+const kSendTypes   = ["Off", "Plate", "Spaces", "Delay"];
+const kSendSq      = ["OFF", "PLT", "SPC", "DLY"];
+/* Tempo-synced or free-running, for the Delay. Both times are stored either
+ * way, so flipping this recalls what you last had in that mode rather than
+ * reinterpreting one number in the wrong unit — which is what the native
+ * device does (its Chicago Kit sits unsynced while still carrying its
+ * SyncedSixteenth values). */
+const kSyncModes   = ["Sync", "Free"];
+const kSyncSq      = ["SYN", "FRE"];
 
+/* The reverbs and the Delay share the same five generic slots in the DSP but
+ * mean completely different things by them, so the PAGE has to change with the
+ * armed type — a Delay showing "Size / Damp / Dcy / Pre" is just mislabelled.
+ * `dynamicCells` is the kit's supported way to do that; the alternative of one
+ * union page listing nine cells would leave five of them inert at all times. */
 function sendBank(n) {
   const p = "send" + n + "_";
+  const type = penum(p + "type", "Type", "Send " + n + " Type", kSendTypes, kSendSq);
+  const ret  = plin(p + "return", "Ret", "Return", 0, 2);
+
+  const verb = [
+    type,
+    plin(p + "size", "Size", "Size", 0, 1),
+    plin(p + "damp", "Damp", "Damping", 0, 1),
+    plin(p + "decay", "Dcy", "Decay", 0, 1),
+    plin(p + "predelay", "Pre", "Pre-delay", 0, 1),
+    ret
+  ];
+  /* Sync vs free is a THIRD page, not a variant of the delay page: the two time
+   * controls change unit with it, and one cell cannot honestly be both a count
+   * of sixteenths and a millisecond value.
+   *
+   * Both pages label the two time cells just "L" and "R" (Josh, 2026-07-28).
+   * The cell already sits under a TIME mode cell that says SYN or FRE, and the
+   * value itself reads "4" or "250MS", so spelling the mode into the label too
+   * ("TIML" vs "MSL") repeated what two neighbours were already saying and made
+   * the pair harder to scan, not easier. */
+  const sync = penum(p + "sync", "Time", "Time Mode", kSyncModes, kSyncSq);
+  /* A 2-option enum defaults to the hbar toggle, which draws as an unlabelled
+   * empty/filled bar — fine for on/off, useless here, because "filled" does not
+   * say whether that means Sync or Free. The kit's own note on widgetFor()
+   * calls out this case: a 2-way MODE is a choice you read, not a switch you
+   * flip, so it asks for the labelled square. */
+  sync.widget = "enumsq";
+  const tail = [
+    plin(p + "feedback", "FB", "Feedback", 0, 0.95),
+    plin(p + "tone", "Tone", "Tone", 0, 1),
+    plin(p + "pingpong", "PP", "Ping-Pong", 0, 1),
+    ret
+  ];
+  /* ⚠ Time L/R are a COUNT OF SIXTEENTHS (1..16), not 0..1 — Move's own delay
+   * device syncs in whole sixteenths, and the DSP stores exactly that. Two
+   * traps in one cell: a 0..1 codec would send 1/16 of a sixteenth, and a
+   * continuous cell would send 3.24 sixteenths, which is a synced control
+   * landing off the grid. `pint` is the integer wire, which is both. */
+  const dlySync = [
+    type, sync,
+    pint(p + "time_l", "L", "Time L", 1, 16),
+    pint(p + "time_r", "R", "Time R", 1, 16)
+  ].concat(tail);
+  /* Free time is LOGARITHMIC: 10 ms to 2 s linearly would spend most of the
+   * knob above half a second, where a drum delay rarely lives. */
+  const msFmt = (x) => Math.round(x) + "ms";
+  const dlyFree = [
+    type, sync,
+    plog(p + "ms_l", "L", "Time L", 10, 2000, msFmt),
+    plog(p + "ms_r", "R", "Time R", 10, 2000, msFmt)
+  ].concat(tail);
+
+  const cellsFor = (ctx) => {
+    if (ctx.getParam(p + "type") !== "Delay") return verb;
+    return ctx.getParam(p + "sync") === "Free" ? dlyFree : dlySync;
+  };
+
   return {
     label: "Send " + n,
-    knobs: [
-      penum(p + "type", "Type", "Send " + n + " Type", kSendTypes, kSendSq),
-      plin(p + "size", "Size", "Size", 0, 1),
-      plin(p + "damp", "Damp", "Damping", 0, 1),
-      plin(p + "decay", "Dcy", "Decay", 0, 1),
-      plin(p + "predelay", "Pre", "Pre-delay", 0, 1),
-      plin(p + "return", "Ret", "Return", 0, 2)
-    ],
+    knobs: verb,
+    dynamicCells: cellsFor,
+    /* Every key any of the three pages can address, so the defaults table
+     * covers them all — a cell whose key is missing from DEFAULTS reads as 0 on
+     * first paint. */
+    dynamicKeys: [p + "type", p + "size", p + "damp", p + "decay", p + "predelay",
+                  p + "sync", p + "time_l", p + "time_r", p + "ms_l", p + "ms_r",
+                  p + "feedback", p + "tone", p + "pingpong", p + "return"],
     header: (ctx) => "Send " + n + ": " + (ctx.getParam(p + "type") || "Off")
+  };
+}
+
+/* The Drum Bus is NOT a send and not selectable — it is a fixed stage at the end
+ * of the kit's chain, after both send returns are summed (Josh, 2026-07-28). It
+ * has a page because its four controls are still worth having; it has no Type
+ * cell because there is nothing to choose. Everything starts neutral, where the
+ * stage is bypassed outright. */
+function busBank() {
+  return {
+    label: "Drum Bus",
+    knobs: [
+      plin("bus_comp", "Comp", "Compress", 0, 1),
+      plin("bus_crunch", "Crnch", "Crunch", 0, 1),
+      /* Attack and Sustain are BIPOLAR: down softens/shortens, up sharpens/
+       * lengthens, and the middle is neutral. plin picks the bipolar cell off
+       * the sign of the range, so -1..1 is what makes them draw centred —
+       * as 0..1 they looked like ordinary unipolar knobs whose "off" position
+       * was somewhere in the middle (Josh, 2026-07-28). */
+      plin("bus_attack", "Atk", "Attack", -1, 1),
+      plin("bus_sustain", "Sus", "Sustain", -1, 1),
+      /* Dry/wet, i.e. parallel compression. This was on the Drum Bus when it
+       * was a selectable insert and went missing when the stage was lifted onto
+       * the master mix. */
+      plin("bus_mix", "Mix", "Dry/Wet", 0, 1, (x) => Math.round(x * 100) + "%")
+    ],
+    header: () => "Drum Bus"
   };
 }
 
 /* No insert banks. DR32's kit-level inserts were removed (Josh, 2026-07-27): a
  * Schwung chain slot already carries its own insert FX in front of the output,
  * so a kit insert duplicated a facility the host provides — and only DR32 could
- * reach or persist it. Drum Bus, which only ever made sense as an insert, is
- * moving to its own audio_fx module. */
-const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2)]);
+ * reach or persist it. The Drum Bus above is the one fixed stage, and it is not
+ * a selectable insert either. */
+const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), busBank()]);
 
 /* There is deliberately NO pad-map overlay. A 4x8 map of the kit used to be
  * drawn over the parameters whenever focus moved, because focus could move
@@ -451,9 +547,14 @@ const CONFIG = {
     { name: "Pad Smpl", bank: 0 },
     { name: "Pad Amp", bank: 1 },
     { name: "Pad Filt", bank: 2 },
-    { name: "SendFX", bank: 3 }
+    { name: "SendFX", bank: 3 },
+    { name: "Drum Bus", bank: 5 }
   ],
-  icons: ["pulse", "enva", "lp", "sine", "sine"],
+  /* ⚠ Indexed by BANK, not by section (engine.js: BANK_ICONS[items[i].bank]).
+   * Bank 4 is Send 2, which has no picker row of its own — you jog to it from
+   * Send 1 — but its slot in this array still has to be filled or the Drum Bus
+   * at bank 5 would pick up Send 2's icon. */
+  icons: ["pulse", "enva", "lp", "sine", "sine", "env"],
 
   /* Edit focus follows the pad you physically hit.
    *
@@ -503,7 +604,10 @@ const CONFIG = {
     if (/^pad\d*_browse$/.test(key))
       return ["pad_browse", "pad_sample", "pad_waveform", "pad_loaded", "pad_frames",
               key, "pad_browse_count"];
-    if (/^send\d_type$/.test(key)) return true;
+    /* Both of these swap the whole visible cell set — the type between reverb
+     * and delay, sync between the sixteenth and millisecond time pages — so a
+     * cache that survived either would be describing cells that are gone. */
+    if (/^send\d_(type|sync)$/.test(key)) return true;
     return null;
   },
 

@@ -20,6 +20,9 @@ static int failures = 0, checks = 0;
 
 #define SR 44100
 #define N  (SR / 2)
+/* The delay tests need room for a 4-sixteenth repeat (0.667 s at 90 BPM) and,
+ * for ping-pong, its crossfed second pass — well past N. */
+#define ND (SR * 3 / 2)
 
 
 /** A drum-like hit: fast attack, exponential tail, at `freq` Hz. */
@@ -50,13 +53,14 @@ static float rms_range(const float *x, int from, int to) {
  *  Routed through a send bus with return 1.0, which IS fully wet by design, so
  *  this measures the algorithm itself. (It used to run through an insert slot at
  *  mix=1.0 — sample-equivalent, but kit inserts are gone.) */
-// p4 is pre-delay for the reverbs and SUSTAIN for the Drum Bus. Drum Bus
-// callers must pass 0.5 for neutral -- 0.0 pulls the tail down 8 dB.
-static void run_wet4(dr32_efx_type type, float p1, float p2, float p3, float p4,
-                     const float *in, float *out, int n) {
+// p4 is pre-delay for the reverbs and TONE for the Delay; p5 is the Delay's
+// ping-pong and unused by everything else.
+static void run_wet_p(dr32_efx_type type, const float *p, const float *in,
+                      float *out, int n, float bpm) {
     dr32_fxbus *fx = dr32_fxbus_create(SR);
     dr32_fxbus_set_send_type(fx, 0, type);
-    dr32_fxbus_set_send_params(fx, 0, p1, p2, p3, p4);
+    dr32_fxbus_set_bpm(fx, bpm);
+    dr32_fxbus_set_send_params(fx, 0, p, DR32_SEND_PARAMS);
     dr32_fxbus_set_send_return(fx, 0, 1.0f);
     memset(out, 0, sizeof(float) * 2 * (size_t)n);
     for (int p = 0; p < n; p += 128) {
@@ -68,9 +72,58 @@ static void run_wet4(dr32_efx_type type, float p1, float p2, float p3, float p4,
     dr32_fxbus_destroy(fx);
 }
 
+/* Synced delay / reverb: slots 0-4, sync ON, free times unused. */
+static void run_wet5(dr32_efx_type type, float p1, float p2, float p3, float p4,
+                     float p5, const float *in, float *out, int n, float bpm) {
+    const float p[DR32_SEND_PARAMS] = { p1, p2, p3, p4, p5, 1.0f, 125.0f, 500.0f };
+    run_wet_p(type, p, in, out, n, bpm);
+}
+
+/* FREE-running delay: the times are milliseconds and the tempo is irrelevant,
+ * which is the whole point — the bpm passed here is deliberately absurd so a
+ * test that still tracks it fails loudly. */
+static void run_delay_free(float msL, float msR, float fb, float tone, float pp,
+                           const float *in, float *out, int n, float bpm) {
+    const float p[DR32_SEND_PARAMS] = { 1.0f, 4.0f, fb, tone, pp, 0.0f, msL, msR };
+    run_wet_p(DR32_EFX_DELAY, p, in, out, n, bpm);
+}
+
+static void run_wet4(dr32_efx_type type, float p1, float p2, float p3, float p4,
+                     const float *in, float *out, int n) {
+    run_wet5(type, p1, p2, p3, p4, 0.0f, in, out, n, 120.0f);
+}
+
 static void run_wet(dr32_efx_type type, float p1, float p2, float p3,
                     const float *in, float *out, int n) {
-    run_wet4(type, p1, p2, p3, type == DR32_EFX_DRUMBUSS ? 0.5f : 0.0f, in, out, n);
+    run_wet4(type, p1, p2, p3, 0.0f, in, out, n);
+}
+
+/** Run a signal through the always-on Drum Bus.
+ *
+ *  ⚠ NOT a send. The bus is a fixed stage over the SUMMED mix, so the signal
+ *  goes into the block that dr32_fxbus_process() is handed — the same place the
+ *  dry pads and the send returns have already landed by the time it runs. An
+ *  earlier version of these tests drove it as a send type, which no longer
+ *  exists.
+ *
+ *  Attack and Sustain are BIPOLAR -1..+1 with neutral at 0 (the 0..1-about-0.5
+ *  form lives inside DrumBuss and nowhere above it). `mix` is the parallel
+ *  blend; 1 = fully processed. */
+static void run_bus5(float comp, float crunch, float attack, float sustain,
+                     float mix, const float *in, float *out, int n) {
+    dr32_fxbus *fx = dr32_fxbus_create(SR);
+    dr32_fxbus_set_bus_params(fx, comp, crunch, attack, sustain, mix);
+    for (int p = 0; p < n; p += 128) {
+        int m = (p + 128 <= n) ? 128 : (n - p);
+        memcpy(out + 2 * p, in + 2 * p, sizeof(float) * 2 * (size_t)m);
+        dr32_fxbus_process(fx, out + 2 * p, m);
+    }
+    dr32_fxbus_destroy(fx);
+}
+
+static void run_bus(float comp, float crunch, float attack, float sustain,
+                    const float *in, float *out, int n) {
+    run_bus5(comp, crunch, attack, sustain, 1.0f, in, out, n);
 }
 
 int main(void) {
@@ -83,16 +136,16 @@ int main(void) {
         const int atk_from = 0, atk_to = SR / 200;          // first 5 ms
         const int tail_from = SR / 20, tail_to = SR / 5;    // 50-200 ms
 
-        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, dry, wet, N);
+        run_bus(0.0f, 0.0f, 0.0f, 0.0f, dry, wet, N);
         float n_atk = rms_range(wet, atk_from, atk_to), n_tail = rms_range(wet, tail_from, tail_to);
         CHECK(n_tail > 1e-6f, "neutral attack produced no tail");
         float neutral = n_atk / (n_tail + 1e-9f);
 
-        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 1.0f, dry, wet, N);
+        run_bus(0.0f, 0.0f, 1.0f, 0.0f, dry, wet, N);
         float s_atk = rms_range(wet, atk_from, atk_to), s_tail = rms_range(wet, tail_from, tail_to);
         float sharp = s_atk / (s_tail + 1e-9f);
 
-        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.0f, dry, wet, N);
+        run_bus(0.0f, 0.0f, -1.0f, 0.0f, dry, wet, N);
         float f_atk = rms_range(wet, atk_from, atk_to), f_tail = rms_range(wet, tail_from, tail_to);
         float soft = f_atk / (f_tail + 1e-9f);
 
@@ -108,14 +161,14 @@ int main(void) {
         hit(low, N, 80.0f, 0.4f);
         hit(high, N, 4000.0f, 0.4f);
 
-        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, low, wet, N);
+        run_bus(0.0f, 0.0f, 0.0f, 0.0f, low, wet, N);
         float low_dry = rms_range(wet, 0, SR / 10);
-        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.8f, 0.5f, low, wet, N);
+        run_bus(0.0f, 0.8f, 0.0f, 0.0f, low, wet, N);
         float low_crunch = rms_range(wet, 0, SR / 10);
 
-        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, high, wet2, N);
+        run_bus(0.0f, 0.0f, 0.0f, 0.0f, high, wet2, N);
         float high_dry = rms_range(wet2, 0, SR / 10);
-        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.8f, 0.5f, high, wet2, N);
+        run_bus(0.0f, 0.8f, 0.0f, 0.0f, high, wet2, N);
         float high_crunch = rms_range(wet2, 0, SR / 10);
 
         float low_ratio = low_crunch / (low_dry + 1e-9f);
@@ -150,7 +203,8 @@ int main(void) {
     {
         dr32_fxbus *fx = dr32_fxbus_create(SR);
         dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
-        dr32_fxbus_set_send_params(fx, 0, 0.5f, 0.3f, 0.6f, 0.0f);
+        { const float pp5[5] = { 0.5f, 0.3f, 0.6f, 0.0f, 0.0f };
+          dr32_fxbus_set_send_params(fx, 0, pp5, 5); }
         dr32_fxbus_set_send_return(fx, 0, 1.0f);
 
         float acc = 0.0f;
@@ -189,7 +243,8 @@ int main(void) {
             float *out = mode ? collapsed : correct;
             dr32_fxbus *fx = dr32_fxbus_create(SR);
             dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
-            dr32_fxbus_set_send_params(fx, 0, 0.5f, 0.3f, 0.5f, 0.0f);
+            { const float pp5[5] = { 0.5f, 0.3f, 0.5f, 0.0f, 0.0f };
+              dr32_fxbus_set_send_params(fx, 0, pp5, 5); }
             dr32_fxbus_set_send_return(fx, 0, 1.0f);
             memset(out, 0, sizeof(float) * 2 * N);
             for (int p = 0; p + 128 <= N; p += 128) {
@@ -217,11 +272,12 @@ int main(void) {
 
     // ---- per-type defaults are musical AND distinct from each other
     {
-        float pl[5], rm[5], hl[5], db[5];
+        float pl[DR32_SEND_PARAMS], rm[DR32_SEND_PARAMS],
+              hl[DR32_SEND_PARAMS], dl[DR32_SEND_PARAMS];
         dr32_efx_defaults(DR32_EFX_PLATE, pl);
         dr32_efx_defaults(DR32_EFX_SPACES, rm);
         dr32_efx_defaults(DR32_EFX_SPACES, hl);
-        dr32_efx_defaults(DR32_EFX_DRUMBUSS, db);
+        dr32_efx_defaults(DR32_EFX_DELAY, dl);
 
         // Deliberately NOT comparing knob values across types: Plate is the
         // Dattorro tank and Room/Hall are Chamber, so 0.40 on one is not
@@ -238,16 +294,17 @@ int main(void) {
             CHECK(pl[i] >= 0.0f && pl[i] <= 1.0f, "plate default %d out of range", i);
             CHECK(hl[i] >= 0.0f && hl[i] <= 1.0f, "hall default %d out of range", i);
         }
-        // The Drum Bus arrives NEUTRAL — a processor should not change the kit
-        // until you turn something. Compress and Crunch are unipolar so neutral
-        // is 0; Attack and Sustain are bipolar so neutral is 0.5.
-        CHECK(db[0] == 0.0f, "drum bus compress default %.2f should be neutral (0)", db[0]);
-        CHECK(db[1] == 0.0f, "drum bus crunch default %.2f should be neutral (0)", db[1]);
-        CHECK(db[2] == 0.5f, "drum bus attack default %.2f should be neutral (0.5)", db[2]);
-        CHECK(db[3] == 0.5f, "drum bus sustain default %.2f should be neutral (0.5)", db[3]);
-
-        // No assertion on d[4] (mix). It mattered when a type could be a kit
-        // insert; a send return is always 100% wet, so nothing reads it now.
+        // The Delay's first two slots are SIXTEENTHS, not 0..1, so the range
+        // check above does not apply to them — this is the assertion that
+        // catches someone "tidying" them into normalised values.
+        CHECK(dl[0] >= 1.0f && dl[0] <= 16.0f,
+              "delay time L default %.2f is not a sixteenth count (1..16)", dl[0]);
+        CHECK(dl[1] >= 1.0f && dl[1] <= 16.0f,
+              "delay time R default %.2f is not a sixteenth count (1..16)", dl[1]);
+        // L != R is the whole point: ten of the twelve native delay returns run
+        // L short against R = 4 sixteenths, and that asymmetry is the sound.
+        CHECK(dl[0] != dl[1], "delay defaults have L == R (%.1f) — no stereo pattern", dl[0]);
+        CHECK(dl[2] > 0.0f && dl[2] < 1.0f, "delay feedback default %.2f out of range", dl[2]);
     }
 
     // ---- at their DEFAULT settings, the three reverbs must actually differ in
@@ -259,11 +316,11 @@ int main(void) {
         };
         float rt[2];
         for (int k = 0; k < 2; k++) {
-            float d[5];
+            float d[DR32_SEND_PARAMS];
             dr32_efx_defaults(T[k].t, d);
             dr32_fxbus *fx = dr32_fxbus_create(SR);
             dr32_fxbus_set_send_type(fx, 0, T[k].t);
-            dr32_fxbus_set_send_params(fx, 0, d[0], d[1], d[2], d[3]);
+            dr32_fxbus_set_send_params(fx, 0, d, DR32_SEND_PARAMS);
             dr32_fxbus_set_send_return(fx, 0, 1.0f);
             float peak = 0.0f;
             int last = 0;
@@ -298,7 +355,8 @@ int main(void) {
     {
         dr32_fxbus *fx = dr32_fxbus_create(SR);
         dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
-        dr32_fxbus_set_send_params(fx, 0, 0.5f, 0.3f, 0.6f, 0.0f);
+        { const float pp5[5] = { 0.5f, 0.3f, 0.6f, 0.0f, 0.0f };
+          dr32_fxbus_set_send_params(fx, 0, pp5, 5); }
         dr32_fxbus_set_send_return(fx, 0, 1.0f);
 
         float blk[2 * 128];
@@ -349,7 +407,7 @@ int main(void) {
         float in_rms = rms_range(quiet, N / 2, N);
         float worst = 0.0f;
         for (int k = 0; k <= 4; k++) {
-            run_wet4(DR32_EFX_DRUMBUSS, k * 0.25f, 0.0f, 0.5f, 0.5f, quiet, wet, N);
+            run_bus(k * 0.25f, 0.0f, 0.0f, 0.0f, quiet, wet, N);
             float lift = 20.0f * log10f(rms_range(wet, N / 2, N) / (in_rms + 1e-12f) + 1e-12f);
             if (fabsf(lift) > fabsf(worst)) worst = lift;
         }
@@ -367,12 +425,12 @@ int main(void) {
         const int atk_to = SR / 125;                       // first 8 ms
         const int t_from = SR * 8 / 100, t_to = SR / 4;     // 80-250 ms
 
-        run_wet4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.5f, dry, wet, N);
+        run_bus(0.0f, 0.0f, 0.0f, 0.0f, dry, wet, N);
         float n_atk = peak_range(wet, 0, atk_to), n_tail = rms_range(wet, t_from, t_to);
 
-        run_wet4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, dry, wet, N);
+        run_bus(0.0f, 0.0f, 0.0f, 1.0f, dry, wet, N);
         float up_atk = peak_range(wet, 0, atk_to), up_tail = rms_range(wet, t_from, t_to);
-        run_wet4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.0f, dry, wet, N);
+        run_bus(0.0f, 0.0f, 0.0f, -1.0f, dry, wet, N);
         float dn_atk = peak_range(wet, 0, atk_to), dn_tail = rms_range(wet, t_from, t_to);
 
         float up_t = 20.0f * log10f(up_tail / (n_tail + 1e-12f) + 1e-12f);
@@ -518,26 +576,418 @@ int main(void) {
     }
 
 
-    // ---- At its defaults the Drum Bus must be TRANSPARENT.
-    //      Asserting the knob values is not the same as asserting the result:
-    //      a neutral-looking setting that still ran a saturator or an envelope
-    //      follower would pass that and still colour the kit. So push real
-    //      audio through it at the defaults and require the output back.
+    // ---- The always-on Drum Bus must be BIT-IDENTICAL at neutral.
+    //
+    //      This is the whole justification for running it on every instance
+    //      unconditionally. "Close enough" is not the claim being made: a
+    //      neutral-looking setting that still ran the saturator or an envelope
+    //      follower would colour every kit in DR32 forever, and would show up as
+    //      a small null figure rather than as an obvious break. So require
+    //      EXACT equality — the stage has to be skipped, not merely quiet.
     {
-        float d[5];
-        dr32_efx_defaults(DR32_EFX_DRUMBUSS, d);
         hit(dry, N, 90.0f, 0.5f);
-        run_wet4(DR32_EFX_DRUMBUSS, d[0], d[1], d[2], d[3], dry, wet, N);
-        double diff = 0, ref = 0;
-        for (int i = 0; i < N; i++) {
-            double e = (double)wet[2 * i] - dry[2 * i];
-            diff += e * e; ref += (double)dry[2 * i] * dry[2 * i];
+        run_bus(0.0f, 0.0f, 0.0f, 0.0f, dry, wet, N);
+        int differing = 0;
+        for (int i = 0; i < 2 * N; i++) if (wet[i] != dry[i]) differing++;
+        printf("  drum bus neutral: %d of %d samples differ\n", differing, 2 * N);
+        CHECK(differing == 0,
+              "Drum Bus is not bypassed at neutral (%d samples differ) — an "
+              "always-on stage must be bit-transparent until a knob moves", differing);
+    }
+
+    // ---- ...and the bypass must be a real bypass, not a dead code path.
+    //      If the stage never ran at all the test above would also pass, so
+    //      prove that a non-neutral setting DOES reach the output.
+    {
+        hit(dry, N, 90.0f, 0.5f);
+        run_bus(0.0f, 1.0f, 0.0f, 0.0f, dry, wet, N);
+        int differing = 0;
+        for (int i = 0; i < 2 * N; i++) if (wet[i] != dry[i]) differing++;
+        CHECK(differing > N / 10,
+              "Crunch at full changed only %d samples — the bus is never running",
+              differing);
+    }
+
+    // ---- The bus processes the send RETURNS too, not just the dry pads.
+    //      It sits after the returns are summed, which is what makes it a drum
+    //      BUS rather than a pad insert. Feed only a send and require the bus to
+    //      still colour the result.
+    {
+        static float busout[2 * N], plain[2 * N];
+        for (int pass = 0; pass < 2; pass++) {
+            float *out = pass ? busout : plain;
+            dr32_fxbus *fx = dr32_fxbus_create(SR);
+            dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
+            { const float pp5[5] = { 0.5f, 0.3f, 0.6f, 0.0f, 0.0f };
+          dr32_fxbus_set_send_params(fx, 0, pp5, 5); }
+            dr32_fxbus_set_send_return(fx, 0, 1.0f);
+            if (pass) dr32_fxbus_set_bus_params(fx, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f);
+            memset(out, 0, sizeof(float) * 2 * N);
+            for (int p = 0; p + 128 <= N; p += 128) {
+                /* one hit into the SEND only — the dry path stays empty */
+                if (p == 0) for (int i = 0; i < 64; i++) dr32_fxbus_send(fx, 0, i, 0.6f, 0.6f);
+                dr32_fxbus_process(fx, out + 2 * p, 128);
+            }
+            dr32_fxbus_destroy(fx);
         }
-        float nulldb = 10.0f * log10f((float)((diff + 1e-30) / (ref + 1e-30)));
-        printf("  drum bus at defaults: null vs dry %.1f dB\n", nulldb);
-        CHECK(nulldb < -100.0f,
-              "Drum Bus colours the kit at its defaults (null only %.1f dB) — "
-              "selecting it should change nothing until a knob moves", nulldb);
+        double d2 = 0, r2 = 0;
+        for (int i = 0; i < 2 * N; i++) {
+            double e = (double)busout[i] - plain[i];
+            d2 += e * e; r2 += (double)plain[i] * plain[i];
+        }
+        CHECK(r2 > 0.0, "send produced nothing to test the bus against");
+        CHECK(d2 > r2 * 1e-6,
+              "the Drum Bus left the send return untouched — it must run on the "
+              "SUMMED mix, after the returns");
+    }
+
+    // ---- Delay: the synced time law.
+    //      4 sixteenths at 120 BPM is 0.500 s; at 90 BPM it is 0.667 s. This is
+    //      the check that catches an off-by-four in the division maths, which
+    //      would still produce a perfectly plausible-sounding delay.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        struct { float bpm; float want; } T[] = { { 120.0f, 0.500f }, { 90.0f, 0.6667f } };
+        for (int k = 0; k < 2; k++) {
+            memset(imp, 0, sizeof(imp));
+            imp[0] = 1.0f; imp[1] = 1.0f;
+            /* time L = time R = 4 sixteenths, no feedback, tone wide open */
+            run_wet5(DR32_EFX_DELAY, 4.0f, 4.0f, 0.0f, 1.0f, 0.0f, imp, out, ND, T[k].bpm);
+            int at = -1;
+            float best = 0.0f;
+            for (int i = 16; i < ND; i++) {
+                float a = fabsf(out[2 * i]);
+                if (a > best) { best = a; at = i; }
+            }
+            float secs = (at < 0) ? -1.0f : (float)at / (float)SR;
+            printf("  delay %5.1f BPM, 4/16: repeat at %.4f s (want %.4f)\n",
+                   T[k].bpm, secs, T[k].want);
+            CHECK(best > 0.05f, "delay produced no repeat at %.0f BPM", T[k].bpm);
+            CHECK(fabsf(secs - T[k].want) < 0.002f,
+                  "delay repeat at %.4f s, expected %.4f — the sixteenth maths is wrong",
+                  secs, T[k].want);
+        }
+    }
+
+    // ---- Delay: L and R are timed INDEPENDENTLY.
+    //      Every one of the twelve native delay returns has L != R, so a single
+    //      shared time would reproduce none of them.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        memset(imp, 0, sizeof(imp));
+        imp[0] = 1.0f; imp[1] = 1.0f;
+        run_wet5(DR32_EFX_DELAY, 1.0f, 4.0f, 0.0f, 1.0f, 0.0f, imp, out, ND, 120.0f);
+
+        const int lAt = (int)(0.125f * SR), rAt = (int)(0.500f * SR);
+        float lPeak = 0.0f, rPeak = 0.0f, rEarly = 0.0f;
+        for (int i = lAt - 64; i < lAt + 64; i++) {
+            float a = fabsf(out[2 * i]);     if (a > lPeak) lPeak = a;
+            float b = fabsf(out[2 * i + 1]); if (b > rEarly) rEarly = b;
+        }
+        for (int i = rAt - 64; i < rAt + 64; i++) {
+            float b = fabsf(out[2 * i + 1]); if (b > rPeak) rPeak = b;
+        }
+        printf("  delay L=1/16 R=4/16: L@125ms %.3f  R@125ms %.3f  R@500ms %.3f\n",
+               lPeak, rEarly, rPeak);
+        CHECK(lPeak > 0.05f, "left tap missing at 125 ms (1 sixteenth)");
+        CHECK(rPeak > 0.05f, "right tap missing at 500 ms (4 sixteenths)");
+        CHECK(rEarly < lPeak * 0.1f,
+              "the right channel repeated on the LEFT tap's time — L and R are "
+              "sharing one delay length");
+    }
+
+    // ---- Delay: ping-pong endpoints.
+    //      0 must keep an L-only hit out of R entirely; 1 must throw it across.
+    {
+        static float impL[2 * ND], out[2 * ND];
+        memset(impL, 0, sizeof(impL));
+        impL[0] = 1.0f;                                  // LEFT only
+
+        run_wet5(DR32_EFX_DELAY, 2.0f, 2.0f, 0.5f, 1.0f, 0.0f, impL, out, ND, 120.0f);
+        float rOff = 0.0f;
+        for (int i = 0; i < ND; i++) { float a = fabsf(out[2 * i + 1]); if (a > rOff) rOff = a; }
+
+        run_wet5(DR32_EFX_DELAY, 2.0f, 2.0f, 0.5f, 1.0f, 1.0f, impL, out, ND, 120.0f);
+        float rOn = 0.0f;
+        for (int i = 0; i < ND; i++) { float a = fabsf(out[2 * i + 1]); if (a > rOn) rOn = a; }
+
+        printf("  delay ping-pong: R from an L-only hit  off %.4f  on %.4f\n", rOff, rOn);
+        CHECK(rOff < 1e-6f, "ping-pong at 0 still crossed into R (%.6f)", rOff);
+        CHECK(rOn > 0.02f, "ping-pong at 1 did not cross into R (%.6f)", rOn);
+    }
+
+    // ---- Delay, FREE mode: the time is milliseconds and IGNORES the tempo.
+    //      The whole point of unsyncing. Both runs ask for 300 ms at wildly
+    //      different tempos and must land in the same place.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        const float bpms[2] = { 60.0f, 180.0f };
+        for (int k = 0; k < 2; k++) {
+            memset(imp, 0, sizeof(imp));
+            imp[0] = 1.0f; imp[1] = 1.0f;
+            run_delay_free(300.0f, 300.0f, 0.0f, 1.0f, 0.0f, imp, out, ND, bpms[k]);
+            int at = -1; float best = 0.0f;
+            for (int i = 16; i < ND; i++) {
+                float a = fabsf(out[2 * i]);
+                if (a > best) { best = a; at = i; }
+            }
+            float secs = (at < 0) ? -1.0f : (float)at / (float)SR;
+            printf("  delay FREE 300 ms at %5.1f BPM: repeat at %.4f s\n", bpms[k], secs);
+            CHECK(best > 0.05f, "free delay produced no repeat at %.0f BPM", bpms[k]);
+            CHECK(fabsf(secs - 0.300f) < 0.002f,
+                  "free delay repeat at %.4f s, expected 0.300 — it is still "
+                  "following the tempo", secs);
+            /* ⚠ The AMPLITUDE, not just the position. 300 ms is 13230.001
+             * samples, not an integer, so this exercises the fractional read —
+             * and the first version of that read wrapped in FLOAT, which both
+             * lost the fraction and indexed one past the end of the line. A
+             * unit impulse came back as a single sample of 1/1024: the energy
+             * did not smear, it vanished. Every synced time in these tests
+             * happens to land on an exact integer, so nothing else catches it.
+             * Energy is compared, since a fractional tap legitimately splits
+             * across two samples. */
+            double e = 0.0;
+            for (int i = 0; i < ND; i++) e += (double)out[2 * i] * out[2 * i];
+            CHECK(e > 0.4,
+                  "free delay lost the impulse (energy %.6f of 1.0) — a "
+                  "fractional read must conserve it, not drop it", e);
+        }
+    }
+
+    // ---- Delay: the synced and free times are SEPARATE and both survive.
+    //      The native device carries SyncedSixteenth and its free time at once
+    //      (Chicago Kit sits unsynced while still holding 3/4), so flipping sync
+    //      must recall what that mode last had rather than reinterpreting one
+    //      number in the wrong unit.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        /* synced 4/16 at 120 BPM = 0.500 s; free = 200 ms. Same param array. */
+        const float p[DR32_SEND_PARAMS] = { 4.0f, 4.0f, 0.0f, 1.0f, 0.0f,
+                                            1.0f, 200.0f, 200.0f };
+        float pFree[DR32_SEND_PARAMS];
+        memcpy(pFree, p, sizeof(p));
+        pFree[5] = 0.0f;                                  // ONLY the flag differs
+
+        float seen[2];
+        for (int k = 0; k < 2; k++) {
+            memset(imp, 0, sizeof(imp));
+            imp[0] = 1.0f; imp[1] = 1.0f;
+            run_wet_p(DR32_EFX_DELAY, k ? pFree : p, imp, out, ND, 120.0f);
+            int at = -1; float best = 0.0f;
+            for (int i = 16; i < ND; i++) {
+                float a = fabsf(out[2 * i]);
+                if (a > best) { best = a; at = i; }
+            }
+            seen[k] = (at < 0) ? -1.0f : (float)at / (float)SR;
+        }
+        printf("  delay sync flag only:  synced %.3f s   free %.3f s\n", seen[0], seen[1]);
+        CHECK(fabsf(seen[0] - 0.500f) < 0.002f,
+              "synced time wrong (%.3f s) with the free time also set", seen[0]);
+        CHECK(fabsf(seen[1] - 0.200f) < 0.002f,
+              "free time wrong (%.3f s) — flipping sync must recall the free "
+              "value, not reinterpret the sixteenth count", seen[1]);
+    }
+
+    // ---- Delay: ping-pong must work with the two times EQUAL and a CENTRED hit.
+    //
+    //      This is the case that shipped broken (Josh, on the device): crossing
+    //      only the FEEDBACK is a no-op when outL and outR are identical, so the
+    //      control did nothing at all in the most ordinary setup there is — a
+    //      centre-panned pad with L and R synced. The test above missed it
+    //      precisely because an L-only impulse is the one input that works
+    //      without steering the input as well.
+    //
+    //      Real ping-pong alternates: repeat 1 left, repeat 2 right, and so on.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        memset(imp, 0, sizeof(imp));
+        imp[0] = 1.0f; imp[1] = 1.0f;                  // CENTRED, both channels
+        /* 2 sixteenths = 250 ms, both sides, feedback up so there are repeats */
+        run_wet5(DR32_EFX_DELAY, 2.0f, 2.0f, 0.7f, 1.0f, 1.0f, imp, out, ND, 120.0f);
+
+        const int step = (int)(0.250f * SR);
+        float l1 = 0, r1 = 0, l2 = 0, r2 = 0;
+        for (int i = step - 64; i < step + 64; i++) {
+            float a = fabsf(out[2 * i]);     if (a > l1) l1 = a;
+            float b = fabsf(out[2 * i + 1]); if (b > r1) r1 = b;
+        }
+        for (int i = 2 * step - 64; i < 2 * step + 64; i++) {
+            float a = fabsf(out[2 * i]);     if (a > l2) l2 = a;
+            float b = fabsf(out[2 * i + 1]); if (b > r2) r2 = b;
+        }
+        printf("  delay ping-pong, equal times, centred hit:  "
+               "repeat1 L %.3f R %.3f   repeat2 L %.3f R %.3f\n", l1, r1, l2, r2);
+        CHECK(l1 > 0.05f, "no first repeat at all");
+        CHECK(r1 < l1 * 0.25f,
+              "repeat 1 came out of BOTH channels (L %.3f R %.3f) — ping-pong is "
+              "not steering the input, only the feedback", l1, r1);
+        CHECK(r2 > l2 * 4.0f,
+              "repeat 2 did not swap to the right (L %.3f R %.3f) — the taps are "
+              "not alternating", l2, r2);
+    }
+
+    // ---- Delay: ping-pong at 0 must leave a centred hit centred.
+    //      The other half of the same control: steering the input must not
+    //      collapse an ordinary stereo delay to one side.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        memset(imp, 0, sizeof(imp));
+        imp[0] = 1.0f; imp[1] = 1.0f;
+        run_wet5(DR32_EFX_DELAY, 2.0f, 2.0f, 0.5f, 1.0f, 0.0f, imp, out, ND, 120.0f);
+        double el = 0, er = 0;
+        for (int i = 0; i < ND; i++) {
+            el += (double)out[2 * i] * out[2 * i];
+            er += (double)out[2 * i + 1] * out[2 * i + 1];
+        }
+        float bal = 10.0f * log10f((float)((er + 1e-30) / (el + 1e-30)));
+        printf("  delay ping-pong 0, centred hit: R/L balance %+.2f dB\n", bal);
+        CHECK(fabsf(bal) < 0.5f,
+              "ping-pong at 0 unbalanced a centred hit by %+.2f dB", bal);
+    }
+
+    // ---- Drum Bus: Mix is a real dry/wet blend (parallel compression).
+    //      It was on the Drum Bus as an insert and went missing when the stage
+    //      was lifted onto the master mix (Josh spotted it, 2026-07-28).
+    {
+        hit(dry, N, 90.0f, 0.5f);
+        static float wetFull[2 * N], wetHalf[2 * N], wetNone[2 * N];
+        run_bus5(0.0f, 1.0f, 0.0f, 0.0f, 1.0f, dry, wetFull, N);
+        run_bus5(0.0f, 1.0f, 0.0f, 0.0f, 0.5f, dry, wetHalf, N);
+        run_bus5(0.0f, 1.0f, 0.0f, 0.0f, 0.0f, dry, wetNone, N);
+
+        /* mix 0 = the dry signal back, exactly */
+        int differing = 0;
+        for (int i = 0; i < 2 * N; i++) if (wetNone[i] != dry[i]) differing++;
+        CHECK(differing == 0, "Mix at 0 is not the dry signal (%d samples differ)", differing);
+
+        /* mix 0.5 = exactly halfway between dry and fully processed */
+        double err = 0, ref = 0;
+        for (int i = 0; i < 2 * N; i++) {
+            double want = 0.5 * dry[i] + 0.5 * wetFull[i];
+            double e = wetHalf[i] - want;
+            err += e * e; ref += want * want;
+        }
+        float nulldb = 10.0f * log10f((float)((err + 1e-30) / (ref + 1e-30)));
+        printf("  drum bus mix 0.5 vs the exact blend: %.1f dB\n", nulldb);
+        CHECK(nulldb < -100.0f, "Mix is not a linear dry/wet blend (%.1f dB)", nulldb);
+    }
+
+    // ---- Delay: feedback must be BOUNDED.
+    //      A send return has no dry path to balance it, so a runaway loop is not
+    //      self-limiting the way an insert's would feel. Drive it at the top of
+    //      the knob with a repeating hit and require it to stay finite.
+    {
+        dr32_fxbus *fx = dr32_fxbus_create(SR);
+        dr32_fxbus_set_send_type(fx, 0, DR32_EFX_DELAY);
+        dr32_fxbus_set_bpm(fx, 120.0f);
+        { const float pd8[DR32_SEND_PARAMS] = { 1.0f, 2.0f, 1.0f, 1.0f, 0.5f, 1.0f, 125.0f, 500.0f };
+          dr32_fxbus_set_send_params(fx, 0, pd8, DR32_SEND_PARAMS); }
+        dr32_fxbus_set_send_return(fx, 0, 1.0f);
+        float peak = 0.0f;
+        const int blocks = SR * 30 / 128;              // 30 s
+        for (int b = 0; b < blocks; b++) {
+            float blk[2 * 128];
+            memset(blk, 0, sizeof(blk));
+            /* a hit every ~0.37 s, forever */
+            if (b % 128 == 0) for (int i = 0; i < 32; i++) dr32_fxbus_send(fx, 0, i, 0.7f, 0.7f);
+            dr32_fxbus_process(fx, blk, 128);
+            for (int i = 0; i < 128; i++) {
+                float a = fabsf(blk[2 * i]);
+                if (a > peak) peak = a;
+            }
+        }
+        printf("  delay 30 s at max feedback: peak %.3f\n", peak);
+        CHECK(isfinite(peak) && peak < 8.0f,
+              "delay ran away at max feedback (peak %.3f) — the cap is not holding", peak);
+        dr32_fxbus_destroy(fx);
+    }
+
+    // ---- Delay: the tone filter is in the FEEDBACK path, not on the output.
+    //      On the output it would darken the first tap and leave the repeats
+    //      accumulating; in the loop each pass is filtered again, so late
+    //      repeats darken progressively while the first is barely touched.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        float first[2], late[2];
+        for (int k = 0; k < 2; k++) {
+            memset(imp, 0, sizeof(imp));
+            imp[0] = 1.0f; imp[1] = 1.0f;
+            /* tone 1.0 = wide open, 0.35 = a dark loop; 1 sixteenth = 125 ms */
+            run_wet5(DR32_EFX_DELAY, 1.0f, 1.0f, 0.9f, k ? 0.35f : 1.0f, 0.0f,
+                     imp, out, ND, 120.0f);
+            /* HF energy of the first repeat vs the fourth */
+            float z = 0.0f;
+            const float a = expf(-2.0f * (float)M_PI * 5000.0f / SR);
+            double e1 = 0, e4 = 0;
+            for (int i = 0; i < ND; i++) {
+                float x = out[2 * i];
+                z = x * (1.0f - a) + z * a;
+                float hf = x - z;
+                if (i > (int)(0.120f * SR) && i < (int)(0.140f * SR)) e1 += (double)hf * hf;
+                if (i > (int)(0.495f * SR) && i < (int)(0.515f * SR)) e4 += (double)hf * hf;
+            }
+            first[k] = (float)e1;
+            late[k]  = (float)e4;
+        }
+        /* the dark setting must cost the FOURTH repeat far more HF than the first */
+        float dFirst = 10.0f * log10f((first[1] + 1e-20f) / (first[0] + 1e-20f));
+        float dLate  = 10.0f * log10f((late[1]  + 1e-20f) / (late[0]  + 1e-20f));
+        printf("  delay tone: HF change  first repeat %+.1f dB   fourth %+.1f dB\n",
+               dFirst, dLate);
+        CHECK(dLate < dFirst - 6.0f,
+              "tone hit the first repeat as hard as the fourth (%+.1f vs %+.1f dB) — "
+              "the filter is on the output, not in the loop", dFirst, dLate);
+    }
+
+    // ---- Delay: the idle-skip must not cut the repeats off.
+    //      The bus stops processing a slot after ~4 s of silence at its INPUT,
+    //      which is fine for a reverb and wrong for a delay: silence between
+    //      hits is the state a delay is for, and at 16 sixteenths (2 s at 120
+    //      BPM) with high feedback it is still repeating long after that.
+    {
+        dr32_fxbus *fx = dr32_fxbus_create(SR);
+        dr32_fxbus_set_send_type(fx, 0, DR32_EFX_DELAY);
+        dr32_fxbus_set_bpm(fx, 120.0f);
+        /* 16 sixteenths = 2 s per repeat, feedback high, tone wide open */
+        { const float pd8[DR32_SEND_PARAMS] = { 16.0f, 16.0f, 0.9f, 1.0f, 0.0f, 1.0f, 125.0f, 500.0f };
+          dr32_fxbus_set_send_params(fx, 0, pd8, DR32_SEND_PARAMS); }
+        dr32_fxbus_set_send_return(fx, 0, 1.0f);
+
+        float blk[2 * 128];
+        for (int i = 0; i < 128; i++) dr32_fxbus_send(fx, 0, i, 0.6f, 0.6f);
+        memset(blk, 0, sizeof(blk));
+        dr32_fxbus_process(fx, blk, 128);
+
+        /* nothing more goes in, ever — run out to 9 s and watch the repeat at 8 s */
+        float late = 0.0f;
+        const int upto = SR * 9 / 128;
+        for (int b = 1; b < upto; b++) {
+            memset(blk, 0, sizeof(blk));
+            dr32_fxbus_process(fx, blk, 128);
+            if (b * 128 > SR * 15 / 2) {                 /* past 7.5 s */
+                for (int i = 0; i < 128; i++) {
+                    float a = fabsf(blk[2 * i]);
+                    if (a > late) late = a;
+                }
+            }
+        }
+        printf("  delay still repeating at 7.5-9 s: peak %.4f\n", late);
+        CHECK(late > 1e-3f,
+              "the idle-skip silenced the delay after 4 s of quiet (peak %.6f) — "
+              "a delay's input IS silent between hits", late);
+        dr32_fxbus_destroy(fx);
+    }
+
+    // ---- Delay: an absurdly slow tempo must clamp, not read out of bounds.
+    {
+        static float imp[2 * ND], out[2 * ND];
+        memset(imp, 0, sizeof(imp));
+        imp[0] = 1.0f; imp[1] = 1.0f;
+        /* 16 sixteenths at 40 BPM would be 6 s, past the 4 s line */
+        run_wet5(DR32_EFX_DELAY, 16.0f, 16.0f, 0.3f, 1.0f, 0.0f, imp, out, ND, 40.0f);
+        int bad = 0;
+        for (int i = 0; i < 2 * ND; i++) if (!isfinite(out[i])) bad++;
+        CHECK(bad == 0, "delay produced %d non-finite samples past its buffer limit", bad);
     }
 
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);

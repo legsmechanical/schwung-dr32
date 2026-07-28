@@ -292,7 +292,8 @@
               "options": [
                 "Off",
                 "Plate",
-                "Spaces"
+                "Spaces",
+                "Delay"
               ]
             },
             {
@@ -301,7 +302,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Verb"
+              }
             },
             {
               "key": "send1_damp",
@@ -310,7 +315,11 @@
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.3
+              "default": 0.3,
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Verb"
+              }
             },
             {
               "key": "send1_decay",
@@ -318,7 +327,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Verb"
+              }
             },
             {
               "key": "send1_predelay",
@@ -327,7 +340,110 @@
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.0
+              "default": 0.0,
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Verb"
+              }
+            },
+            {
+              "key": "send1_sync",
+              "name": "Time Mode",
+              "type": "enum",
+              "options": [
+                "Sync",
+                "Free"
+              ],
+              "visible_if": {
+                "param": "send1_mode",
+                "not_equals": "Verb"
+              }
+            },
+            {
+              "key": "send1_time_l",
+              "name": "Time L",
+              "type": "int",
+              "min": 1,
+              "max": 16,
+              "unit": "/16",
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Sync"
+              }
+            },
+            {
+              "key": "send1_time_r",
+              "name": "Time R",
+              "type": "int",
+              "min": 1,
+              "max": 16,
+              "unit": "/16",
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Sync"
+              }
+            },
+            {
+              "key": "send1_ms_l",
+              "name": "Time L",
+              "type": "float",
+              "min": 10.0,
+              "max": 2000.0,
+              "step": 1.0,
+              "unit": "ms",
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Free"
+              }
+            },
+            {
+              "key": "send1_ms_r",
+              "name": "Time R",
+              "type": "float",
+              "min": 10.0,
+              "max": 2000.0,
+              "step": 1.0,
+              "unit": "ms",
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Free"
+              }
+            },
+            {
+              "key": "send1_feedback",
+              "name": "Feedback",
+              "type": "float",
+              "min": 0.0,
+              "max": 0.95,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send1_mode",
+                "not_equals": "Verb"
+              }
+            },
+            {
+              "key": "send1_tone",
+              "name": "Tone",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send1_mode",
+                "not_equals": "Verb"
+              }
+            },
+            {
+              "key": "send1_pingpong",
+              "name": "Ping-Pong",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send1_mode",
+                "not_equals": "Verb"
+              }
             },
             {
               "key": "send1_return",
@@ -343,7 +459,15 @@
             "send1_size",
             "send1_damp",
             "send1_decay",
-            "send1_predelay"
+            "send1_predelay",
+            "send1_sync",
+            "send1_time_l",
+            "send1_time_r",
+            "send1_ms_l",
+            "send1_ms_r",
+            "send1_feedback",
+            "send1_tone",
+            "send1_pingpong"
           ]
         },
         "send2": {
@@ -356,7 +480,8 @@
               "options": [
                 "Off",
                 "Plate",
-                "Spaces"
+                "Spaces",
+                "Delay"
               ]
             },
             {
@@ -365,7 +490,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Verb"
+              }
             },
             {
               "key": "send2_damp",
@@ -374,7 +503,11 @@
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.3
+              "default": 0.3,
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Verb"
+              }
             },
             {
               "key": "send2_decay",
@@ -382,7 +515,11 @@
               "type": "float",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Verb"
+              }
             },
             {
               "key": "send2_predelay",
@@ -391,7 +528,110 @@
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.0
+              "default": 0.0,
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Verb"
+              }
+            },
+            {
+              "key": "send2_sync",
+              "name": "Time Mode",
+              "type": "enum",
+              "options": [
+                "Sync",
+                "Free"
+              ],
+              "visible_if": {
+                "param": "send2_mode",
+                "not_equals": "Verb"
+              }
+            },
+            {
+              "key": "send2_time_l",
+              "name": "Time L",
+              "type": "int",
+              "min": 1,
+              "max": 16,
+              "unit": "/16",
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Sync"
+              }
+            },
+            {
+              "key": "send2_time_r",
+              "name": "Time R",
+              "type": "int",
+              "min": 1,
+              "max": 16,
+              "unit": "/16",
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Sync"
+              }
+            },
+            {
+              "key": "send2_ms_l",
+              "name": "Time L",
+              "type": "float",
+              "min": 10.0,
+              "max": 2000.0,
+              "step": 1.0,
+              "unit": "ms",
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Free"
+              }
+            },
+            {
+              "key": "send2_ms_r",
+              "name": "Time R",
+              "type": "float",
+              "min": 10.0,
+              "max": 2000.0,
+              "step": 1.0,
+              "unit": "ms",
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Free"
+              }
+            },
+            {
+              "key": "send2_feedback",
+              "name": "Feedback",
+              "type": "float",
+              "min": 0.0,
+              "max": 0.95,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send2_mode",
+                "not_equals": "Verb"
+              }
+            },
+            {
+              "key": "send2_tone",
+              "name": "Tone",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send2_mode",
+                "not_equals": "Verb"
+              }
+            },
+            {
+              "key": "send2_pingpong",
+              "name": "Ping-Pong",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send2_mode",
+                "not_equals": "Verb"
+              }
             },
             {
               "key": "send2_return",
@@ -407,7 +647,15 @@
             "send2_size",
             "send2_damp",
             "send2_decay",
-            "send2_predelay"
+            "send2_predelay",
+            "send2_sync",
+            "send2_time_l",
+            "send2_time_r",
+            "send2_ms_l",
+            "send2_ms_r",
+            "send2_feedback",
+            "send2_tone",
+            "send2_pingpong"
           ]
         },
         "fx": {
@@ -420,6 +668,10 @@
             {
               "level": "send2",
               "label": "Send 2"
+            },
+            {
+              "level": "bus",
+              "label": "Drum Bus"
             }
           ],
           "knobs": []
@@ -589,6 +841,63 @@
                 ]
               }
             }
+          ]
+        },
+        "bus": {
+          "name": "Drum Bus",
+          "params": [
+            {
+              "key": "bus_comp",
+              "name": "Compress",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0
+            },
+            {
+              "key": "bus_crunch",
+              "name": "Crunch",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0
+            },
+            {
+              "key": "bus_attack",
+              "name": "Attack",
+              "type": "float",
+              "min": -1.0,
+              "max": 1.0,
+              "step": 0.02,
+              "default": 0.0
+            },
+            {
+              "key": "bus_sustain",
+              "name": "Sustain",
+              "type": "float",
+              "min": -1.0,
+              "max": 1.0,
+              "step": 0.02,
+              "default": 0.0
+            },
+            {
+              "key": "bus_mix",
+              "name": "Dry/Wet",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 1.0
+            }
+          ],
+          "knobs": [
+            "bus_comp",
+            "bus_crunch",
+            "bus_attack",
+            "bus_sustain",
+            "bus_mix"
           ]
         }
       }

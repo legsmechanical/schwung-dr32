@@ -434,6 +434,247 @@ struct DampLP {
     }
 };
 
+/** Tempo-synced stereo delay.
+ *
+ *  Modelled on the controls of Move's own `delay` device as it is actually used
+ *  in the factory drum kits — all 12 of the 77 kits whose return chain is a
+ *  delay were read off the device and every decision below comes from that
+ *  corpus rather than from the device's full parameter list:
+ *
+ *    - Time is a COUNT OF SIXTEENTHS, 1..16. That is literally what
+ *      DelayLine_SyncedSixteenth holds, and in synced mode the device offers no
+ *      triplet or dotted values at all, so there is no division table to build.
+ *    - L and R are timed INDEPENDENTLY and differ in every one of the twelve
+ *      kits: L is 1-3 sixteenths, R is 4 in ten of them. That asymmetry is the
+ *      sound of these presets, which is why this has two time controls and not
+ *      one — a single shared time reproduces none of them.
+ *    - The feedback filter is on in all twelve (530 Hz - 5.4 kHz centre, ~4
+ *      octaves wide), so it is not optional here either. Filtering INSIDE the
+ *      loop is what stops repeats accumulating into mush; on the output it
+ *      would just darken the first tap.
+ *    - SmoothingMode is "Repitch" in all twelve, so retiming repitches the tail
+ *      tape-style. It is the only mode in the corpus, so it is the only one
+ *      implemented — see the slew in run().
+ *    - Modulation is off in 9 of 12 and incoherent in the rest (amounts 0.03 to
+ *      0.58, rates 0.27 to 23 Hz). Deliberately not implemented.
+ *
+ *  Not a reconstruction: like Plate and Spaces, this is DR32's own effect
+ *  wearing the native device's controls. Move's delay was never reverse
+ *  engineered, and nothing here has been null-tested against it. */
+struct Delay {
+    // 16 sixteenths = 4 beats = 4 s at 60 BPM. Slower than that and the longest
+    // divisions stop tracking tempo, which is the right trade against an
+    // allocation that grows without bound as the tempo falls.
+    static constexpr float kMaxSeconds = 4.0f;
+    static constexpr float kMaxFeedback = 0.95f;
+    // Free-time range. The bottom is short enough for a slapback/comb and the
+    // top sits inside the 4 s line with room to spare.
+    static constexpr float kMinMs = 10.0f;
+    static constexpr float kMaxMs = 2000.0f;
+
+    float  fs = 44100.0f;
+    float *buf[2] = { nullptr, nullptr };
+    int    cap = 0;
+    int    w = 0;
+
+    // Delay length in samples, fractional: `len` chases `target`, it does not
+    // jump to it. See run().
+    float  len[2] = { 0.0f, 0.0f }, target[2] = { 0.0f, 0.0f };
+    // Synced and free times live side by side and BOTH survive a flip of
+    // `synced`, the way the native device carries SyncedSixteenth and its free
+    // time at once. Toggling sync therefore recalls what you last had in that
+    // mode instead of reinterpreting one number in the wrong unit.
+    float  sixteenths[2] = { 1.0f, 4.0f };
+    float  freeMs[2] = { 125.0f, 500.0f };
+    bool   synced = true;
+    float  bpm = 120.0f;
+
+    float  fb = 0.5f, pingpong = 0.0f;
+    // Whether anything has been written into the lines since the last reset.
+    // An empty line has nothing to repitch, so a time change before the first
+    // hit must LAND rather than glide — otherwise the delay spends the first
+    // seconds of its life sliding up from wherever it happened to start, and
+    // the first repeat comes back at the wrong time.
+    bool   primed = false;
+    // Feedback bandpass, one pole each way. lpZ is the lowpass state; hpZ is the
+    // lowpass whose output is SUBTRACTED to make the highpass.
+    float  lpA = 1.0f, hpA = 0.0f;
+    float  lpZ[2] = { 0.0f, 0.0f }, hpZ[2] = { 0.0f, 0.0f };
+
+    ~Delay() { delete[] buf[0]; delete[] buf[1]; }
+
+    void setSampleRate(float sr) {
+        fs = (sr > 1.0f) ? sr : 44100.0f;
+        int want = (int)(kMaxSeconds * fs) + 4;
+        if (want != cap) {
+            delete[] buf[0]; delete[] buf[1];
+            // Host thread only (dr32_fxbus_create). Never from a type change.
+            buf[0] = new (std::nothrow) float[want];
+            buf[1] = new (std::nothrow) float[want];
+            cap = (buf[0] && buf[1]) ? want : 0;
+        }
+        // recalc BEFORE reset: reset lands the lengths on their targets, and a
+        // target that has not been computed yet is zero.
+        recalc();
+        reset();
+    }
+
+    void reset() {
+        if (buf[0]) std::memset(buf[0], 0, sizeof(float) * (size_t)cap);
+        if (buf[1]) std::memset(buf[1], 0, sizeof(float) * (size_t)cap);
+        w = 0;
+        lpZ[0] = lpZ[1] = hpZ[0] = hpZ[1] = 0.0f;
+        primed = false;
+        // Land ON the target rather than sliding up to it from zero — the slew
+        // exists to repitch a change, not to swoop in every time a kit loads.
+        len[0] = target[0];
+        len[1] = target[1];
+    }
+
+    static float clampf(float v, float lo, float hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    /** See dr32_fxbus.h for the slot table: sixteenths, sixteenths, feedback,
+     *  tone, ping-pong, sync, free ms, free ms. */
+    void setParams(const float *p) {
+        sixteenths[0] = clampf(p[0], 1.0f, 16.0f);
+        sixteenths[1] = clampf(p[1], 1.0f, 16.0f);
+        fb = clampf(p[2], 0.0f, 1.0f) * kMaxFeedback;
+        pingpong = clampf(p[4], 0.0f, 1.0f);
+        synced = p[5] >= 0.5f;
+        freeMs[0] = clampf(p[6], kMinMs, kMaxMs);
+        freeMs[1] = clampf(p[7], kMinMs, kMaxMs);
+
+        // Tone: one knob for the native pair (Filter_Frequency + Bandwidth).
+        // Centre sweeps 200 Hz - 6 kHz logarithmically; bandwidth is pinned at
+        // the corpus norm of 4 octaves, i.e. +-2 octaves around the centre.
+        const float centre = 200.0f * powf(30.0f, clampf(p[3], 0.0f, 1.0f));
+        setOnePole(lpA, clampf(centre * 4.0f, 20.0f, fs * 0.45f));
+        setOnePole(hpA, clampf(centre * 0.25f, 20.0f, fs * 0.45f));
+        recalc();
+    }
+
+    void setBpm(float b) {
+        if (b < 20.0f || b > 400.0f) b = 120.0f;   // get_bpm's own fallback range
+        if (b == bpm) return;
+        bpm = b;
+        recalc();
+    }
+
+    void setOnePole(float &a, float f) { a = 1.0f - expf(-2.0f * 3.14159265f * f / fs); }
+
+    void recalc() {
+        const float perSixteenth = (60.0f / bpm) * 0.25f * fs;   // samples
+        for (int c = 0; c < 2; c++) {
+            const float want = synced ? sixteenths[c] * perSixteenth
+                                      : freeMs[c] * 0.001f * fs;
+            target[c] = clampf(want, 1.0f, (float)(cap - 2));
+            if (!primed) len[c] = target[c];    // nothing in the line to repitch
+        }
+    }
+
+    /** Read `d` samples back, `d` fractional.
+     *
+     *  ⚠ The wrap is INTEGER and the write cursor never enters the float maths.
+     *  Doing it the obvious way — `float rp = w - d`, wrap in float, split into
+     *  index and fraction — is wrong twice over, and both bites are silent:
+     *
+     *    - PRECISION. A float has 24 bits of mantissa, so near a wrapped
+     *      position of ~176400 (a 4 s line) one ulp is 1/64 of a SAMPLE. The
+     *      sub-sample fraction of the delay is quantised by how far into the
+     *      buffer the cursor happens to be, which is a moving target.
+     *    - RANGE. `cap - tiny` ROUNDS UP to exactly `cap` in float, so `(int)rp`
+     *      indexes one past the end of the buffer — an out-of-bounds read on the
+     *      audio thread, dressed up as a slightly wrong sample.
+     *
+     *  Caught by a free-time test asking for 300 ms: 300 * 0.001f * 44100 lands
+     *  on 13230 + 1/1024 rather than 13230, and a unit impulse came back as a
+     *  single sample of 1/1024 — the energy did not smear, it VANISHED, because
+     *  one of the two neighbours was read from past the end. The synced tests
+     *  had all landed on exact integers and never touched it. */
+    inline float readAt(int c, float d) const {
+        if (d < 0.0f) d = 0.0f;
+        const int   di = (int)d;
+        const float fr = d - (float)di;      // small, so this stays exact
+        int i0 = w - di;      while (i0 < 0) i0 += cap;   // delay di
+        int i1 = i0 - 1;      if (i1 < 0)    i1 += cap;   // delay di + 1
+        // Linear, like the sampler's reader — which is linear by measurement,
+        // not by preference (CLAUDE.md).
+        return buf[c][i0] + (buf[c][i1] - buf[c][i0]) * fr;
+    }
+
+    /** In place, interleaved. The return is 100% wet, so the input is written
+     *  into the lines and only the taps come out. */
+    void run(float *io, int n) {
+        if (!cap) return;
+        // Repitch: the length moves toward its target at a bounded rate, so a
+        // tempo or knob change drags the read pointer and shifts the pitch of
+        // whatever is still in the line. Move's device has no other smoothing
+        // mode.
+        //
+        // Half a sample per sample: the read pointer runs at 0.5x or 1.5x while
+        // it travels, which is an audible whoosh rather than a click, and the
+        // largest jump on offer (1 to 16 sixteenths at 120 BPM, ~0.75 s of line)
+        // settles in about 1.5 s. An earlier 0.125 took four seconds to cross
+        // that, which reads as a broken control rather than as a glide.
+        const float kSlew = 0.5f;
+
+        for (int i = 0; i < n; i++) {
+            for (int c = 0; c < 2; c++) {
+                float d = target[c] - len[c];
+                if (d >  kSlew) d =  kSlew;
+                if (d < -kSlew) d = -kSlew;
+                len[c] += d;
+            }
+
+            const float outL = readAt(0, len[0]);
+            const float outR = readAt(1, len[1]);
+
+            // Ping-pong as a CONTINUOUS crossfeed: 0 is two independent lines
+            // (the device's PingPong: false), 1 is full alternation (true), and
+            // the middle is a legitimate width control. A float also keeps this
+            // out of the enum-string parsing that the generic slot path has no
+            // room for.
+            //
+            // ⚠ Crossfeeding the FEEDBACK is not enough on its own. With the two
+            // times equal and a centred hit, outL and outR are identical, so
+            // swapping them changes nothing and the control does nothing at all
+            // — which is exactly what it did on the device (Josh, 2026-07-28),
+            // while the L-only test signal that was supposed to cover it happens
+            // to be the one case that works without this. The INPUT has to be
+            // steered too: at full ping-pong the hit is summed to mono and fed
+            // into the LEFT line only, so the first repeat comes back left, the
+            // crossed feedback puts the second one right, and it alternates.
+            float fbL = outL + (outR - outL) * pingpong;
+            float fbR = outR + (outL - outR) * pingpong;
+
+            float f[2] = { fbL, fbR };
+            for (int c = 0; c < 2; c++) {
+                lpZ[c] += lpA * (f[c] - lpZ[c]);        // lowpass
+                float x = lpZ[c];
+                hpZ[c] += hpA * (x - hpZ[c]);           // its own lowpass...
+                f[c] = x - hpZ[c];                      // ...subtracted = highpass
+            }
+
+            const float inL = io[2 * i], inR = io[2 * i + 1];
+            if (inL != 0.0f || inR != 0.0f) primed = true;
+            // See the note above: the input collapses toward "mono into L only"
+            // as ping-pong opens, which is what makes the taps alternate for a
+            // centred source.
+            const float mono = 0.5f * (inL + inR);
+            const float injL = inL + (mono - inL) * pingpong;
+            const float injR = inR - inR * pingpong;
+            buf[0][w] = injL + f[0] * fb;
+            buf[1][w] = injR + f[1] * fb;
+            w++; if (w >= cap) w = 0;
+
+            io[2 * i]     = outL;
+            io[2 * i + 1] = outR;
+        }
+    }
+};
+
 /** One effect instance. Only the algorithm the current type needs is run; all
  *  of them are resident because allocating on a type change would have to
  *  happen on the audio thread. */
@@ -442,9 +683,11 @@ struct DampLP {
 
 struct Slot {
     dr32_efx_type type = DR32_EFX_NONE;
-    float p1 = 0.5f, p2 = 0.5f, p3 = 0.5f, mix = 1.0f;
-    float pd = 0.0f;                       // pre-delay 0..1 -> 0..200 ms
-                                           // (Drum Bus reuses this as Sustain)
+    // The generic control slots, see dr32_fxbus.h for what each means per type.
+    // Named p[] rather than p1/p2/pd/... because two of them have now changed
+    // meaning as types were added, and a positional name that lies is worse
+    // than no name.
+    float p[DR32_SEND_PARAMS] = { 0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 125.0f, 500.0f };
 
     // Pre-delay line, applied before the reverb. The plate has its own internal
     // pre-delay (its third parameter!) but the k-reverbs have none, so one line
@@ -458,7 +701,7 @@ struct Slot {
     DampLP     plateLP;                    // transducer rolloff, swept by Damp
     DampLP     spacesLP;                   // extends Spaces' dark end only
     awk_verbity2::Verbity2 spaces;         // the flexible room-to-hall model
-    DrumBuss   buss;
+    Delay      delay;                      // tempo-synced, filtered feedback
 
     void setSampleRate(float fs) {
         fs_ = fs;
@@ -466,7 +709,7 @@ struct Slot {
         tank.setType(SpaceExtra::Plate);
         diff.setSampleRate(fs);
         spaces.setSampleRate(fs);
-        buss.setSampleRate(fs);
+        delay.setSampleRate(fs);
         apply();
     }
 
@@ -485,7 +728,7 @@ struct Slot {
         // The exponent spreads that range over the knob instead of the top
         // corner. 0 still means "no damping" — a bright plate is a legitimate
         // thing to want, it just should not be the default.
-        const float pd2 = p2 < 0.0f ? 0.0f : (p2 > 1.0f ? 1.0f : p2);
+        const float pd2 = p[1] < 0.0f ? 0.0f : (p[1] > 1.0f ? 1.0f : p[1]);
         const float tankDamp = powf(pd2, 0.40f);
 
         // A fixed HF rolloff on the plate's wet path. The damping curve above
@@ -509,7 +752,7 @@ struct Slot {
         // 5.5 kHz it has been voiced at, with 0 meaning genuinely undamped
         // (12.5 kHz) and 1.0 genuinely dark (1.2 kHz).
         plateLP.set(12486.0f * powf(0.0961f, pd2), fs_);
-        tank.setParams(p1, tankDamp, /*internal predelay*/ 0.0f, /*feed = decay*/ p3 * 0.75f, 1.0f);
+        tank.setParams(p[0], tankDamp, /*internal predelay*/ 0.0f, /*feed = decay*/ p[2] * 0.75f, 1.0f);
 
         // --- Spaces (Verbity2) mapping ------------------------------------
         //   A RmSize  <- size   0.11-4.75 s at size .30, 0.37-16.1 s at .75,
@@ -523,9 +766,9 @@ struct Slot {
         //                      -0.26 to -14.69 dB/Hz while RT60 holds at
         //                      2.48-2.51 s, i.e. colour without length.
         //   D          = dry/wet, always 1; DR32 mixes outside.
-        spaces.A = 0.20f + p1 * 0.55f;
-        spaces.B = p3 * 0.45f;
-        spaces.C = p2;
+        spaces.A = 0.20f + p[0] * 0.55f;
+        spaces.B = p[2] * 0.45f;
+        spaces.C = p[1];
         // Verbity2's Mulch alone spans -0.4 to -12.5 dB/Hz, which is a usable
         // range, so this only extends the DARK end: bypassed below 0.4 so the
         // part of the knob that already worked is untouched.
@@ -535,10 +778,10 @@ struct Slot {
         }
         spaces.D = 1.0f;
 
-        // The Drum Bus has no use for pre-delay, so that knob is its Sustain.
-        buss.setParams(p1, p2, p3, pd);
+        // The Delay reads the whole array (its own units — see the header).
+        delay.setParams(p);
 
-        int n = (int)(pd * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
+        int n = (int)(p[3] * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
         if (n < 0) n = 0;
         if (n > DR32_PREDELAY_MAX - 1) n = DR32_PREDELAY_MAX - 1;
         preLen = n;
@@ -554,12 +797,15 @@ struct Slot {
         plateLP.reset();
         spacesLP.reset();
         spaces.reset();
-        buss.reset();
+        delay.reset();
     }
 
     /** Run `n` interleaved stereo frames in place. `sl`/`sr` are scratch. */
     void processBlock(float *io, int n, float *sl, float *sr) {
-        if (type == DR32_EFX_DRUMBUSS) { buss.processBlock(io, n, sl, sr); return; }
+        // The Delay does its own timing and has no use for the reverbs'
+        // pre-delay line — a pre-delay in front of a delay is just a longer
+        // delay, and it would desync the first tap from the grid.
+        if (type == DR32_EFX_DELAY) { delay.run(io, n); return; }
 
         // Pre-delay ahead of the reverb.
         if (preLen > 0) {
@@ -618,6 +864,12 @@ struct dr32_fxbus {
     float sample_rate = 44100.0f;
     Slot  sends[DR32_SEND_SLOTS];
     float send_return[DR32_SEND_SLOTS] = { 1.0f, 1.0f };
+    // The always-on Drum Bus over the summed mix. Neutral by default, and
+    // BYPASSED while neutral — see bus_neutral.
+    DrumBuss bus;
+    bool  bus_neutral = true;
+    float bus_mix = 1.0f;                  // dry/wet blend = parallel compression
+    float bus_dry[2 * DR32_MAX_BLOCK];     // pre-bus copy, only filled when mix < 1
     // Per-block accumulation of what the pads sent to each bus.
     float send_buf[DR32_SEND_SLOTS][2 * DR32_MAX_BLOCK];
     // Blocks since anything was fed to each bus. A loaded-but-unused reverb
@@ -636,6 +888,10 @@ dr32_fxbus *dr32_fxbus_create(float sample_rate) {
     if (!fx) return nullptr;
     fx->sample_rate = (sample_rate > 1.0f) ? sample_rate : 44100.0f;
     for (int i = 0; i < DR32_SEND_SLOTS; i++) fx->sends[i].setSampleRate(fx->sample_rate);
+    fx->bus.setSampleRate(fx->sample_rate);
+    // Neutral: Attack and Sustain are bipolar about 0 on this side of the API,
+    // 0.5 inside DrumBuss. Fully wet, so Mix only ever takes the stage AWAY.
+    dr32_fxbus_set_bus_params(fx, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f);
     std::memset(fx->send_buf, 0, sizeof(fx->send_buf));
     return fx;
 }
@@ -649,13 +905,35 @@ void dr32_fxbus_set_send_type(dr32_fxbus *fx, int slot, dr32_efx_type type) {
     fx->sends[slot].reset();
 }
 
-void dr32_fxbus_set_send_params(dr32_fxbus *fx, int slot,
-                                float p1, float p2, float p3, float predelay) {
-    if (!fx || slot < 0 || slot >= DR32_SEND_SLOTS) return;
+void dr32_fxbus_set_send_params(dr32_fxbus *fx, int slot, const float *p, int n) {
+    if (!fx || !p || slot < 0 || slot >= DR32_SEND_SLOTS) return;
     Slot &s = fx->sends[slot];
-    s.p1 = p1; s.p2 = p2; s.p3 = p3; s.pd = predelay;
-    s.mix = 1.0f;                 // a send return is ALWAYS 100% wet
-    s.apply();
+    if (n > DR32_SEND_PARAMS) n = DR32_SEND_PARAMS;
+    for (int i = 0; i < n; i++) s.p[i] = p[i];
+    s.apply();                    // a send return is ALWAYS 100% wet
+}
+
+void dr32_fxbus_set_bpm(dr32_fxbus *fx, float bpm) {
+    if (!fx) return;
+    // setBpm early-outs on an unchanged value, so this is a float compare per
+    // block in the common case — cheap enough to call from render_block.
+    for (int i = 0; i < DR32_SEND_SLOTS; i++) fx->sends[i].delay.setBpm(bpm);
+}
+
+void dr32_fxbus_set_bus_params(dr32_fxbus *fx, float compress, float crunch,
+                               float attack, float sustain, float mix) {
+    if (!fx) return;
+    // Bipolar -1..+1 on the way in, 0..1 about 0.5 inside DrumBuss. This is the
+    // ONE place that conversion lives.
+    fx->bus.setParams(compress, crunch, 0.5f + 0.5f * attack, 0.5f + 0.5f * sustain);
+    fx->bus_mix = mix < 0.0f ? 0.0f : (mix > 1.0f ? 1.0f : mix);
+    // The bypass test, and the whole reason an always-on stage is acceptable.
+    // The tolerances match DrumBuss's own atkOn/susOn gates (which are ±0.005 in
+    // the 0..1 domain, so ±0.01 here) — the two must not disagree about what
+    // neutral means. Deliberately NOT keyed on mix: at neutral the stage passes
+    // its input through, so blending it against the dry is still the dry.
+    fx->bus_neutral = (compress <= 0.001f) && (crunch <= 0.001f) &&
+                      (fabsf(attack) <= 0.01f) && (fabsf(sustain) <= 0.01f);
 }
 
 void dr32_fxbus_set_send_return(dr32_fxbus *fx, int slot, float gain) {
@@ -688,12 +966,40 @@ void dr32_fxbus_process(dr32_fxbus *fx, float *out, int n) {
         if (slot.active() && fx->idle_blocks[s] <= idle_limit) {
             const float g = fx->send_return[s];   // return is fully wet by design
             slot.processBlock(buf, n, fx->scratch_l, fx->scratch_r);
+            // The idle counter is armed by the INPUT, but held open by the
+            // OUTPUT. A reverb dies well inside four seconds, so input alone was
+            // enough; a Delay at 16 sixteenths with high feedback rings far
+            // longer than that and would have been cut off mid-repeat — silence
+            // between hits is exactly the state a delay is FOR. Anything still
+            // making sound keeps its slot alive, whatever the algorithm.
+            float outPeak = 0.0f;
             for (int i = 0; i < n; i++) {
-                out[2 * i]     += buf[2 * i] * g;
-                out[2 * i + 1] += buf[2 * i + 1] * g;
+                float l = buf[2 * i], r = buf[2 * i + 1];
+                float a = fabsf(l) > fabsf(r) ? fabsf(l) : fabsf(r);
+                if (a > outPeak) outPeak = a;
+                out[2 * i]     += l * g;
+                out[2 * i + 1] += r * g;
             }
+            if (outPeak > 1e-6f) fx->idle_blocks[s] = 0;
         }
         std::memset(buf, 0, sizeof(float) * 2 * (size_t)n);
+    }
+
+    // --- the always-on Drum Bus, over the summed mix (dry + both returns).
+    // Bypassed entirely while neutral: not "runs and does nothing", actually
+    // skipped, so the stage is bit-transparent and costs one bool test per
+    // block for anyone who never opens the page.
+    if (!fx->bus_neutral) {
+        const float mix = fx->bus_mix;
+        // Parallel path: keep the unprocessed mix only when it is actually
+        // going to be blended back in. At mix = 1 this is a plain in-place run
+        // and the copy never happens.
+        if (mix < 0.999f) std::memcpy(fx->bus_dry, out, sizeof(float) * 2 * (size_t)n);
+        fx->bus.processBlock(out, n, fx->scratch_l, fx->scratch_r);
+        if (mix < 0.999f) {
+            for (int i = 0; i < 2 * n; i++)
+                out[i] = fx->bus_dry[i] + (out[i] - fx->bus_dry[i]) * mix;
+        }
     }
 }
 
@@ -703,50 +1009,50 @@ void dr32_fxbus_reset(dr32_fxbus *fx) {
         fx->sends[i].reset();
         std::memset(fx->send_buf[i], 0, sizeof(fx->send_buf[i]));
     }
+    // The bus holds envelope followers, a compressor and a DC blocker; a kit
+    // change must not leave any of that pointing at the previous kit's level.
+    fx->bus.reset();
 }
 
 void dr32_efx_defaults(dr32_efx_type type, float *o) {
     if (!o) return;
-    // [size, damp, decay, predelay, mix]. Pre-delay is in 0..200 ms.
+    // Slot table is in dr32_fxbus.h. Reverbs use 0-3; the Delay uses all eight.
+    for (int i = 0; i < DR32_SEND_PARAMS; i++) o[i] = 0.0f;
     switch (type) {
-        // NOTE on o[4] (mix): vestigial. It mattered when these could be kit
-        // inserts, where a reverb defaulting to fully wet would have replaced
-        // the kit with its own ambience. Sends ignore it entirely — a send
-        // return is always 100% wet by design — so nothing reads it today. The
-        // measured values are left in place rather than zeroed.
         case DR32_EFX_PLATE:
             // Snare/clap plate: medium tank, a little damping so it is not
             // brittle, short-ish tail, ~10 ms pre-delay to keep the hit clear.
-            o[0] = 0.45f; o[1] = 0.35f; o[2] = 0.45f; o[3] = 0.05f; o[4] = 0.28f; break;
+            o[0] = 0.45f; o[1] = 0.35f; o[2] = 0.45f; o[3] = 0.05f; break;
         case DR32_EFX_SPACES:
             // Lands as a natural mid-size room rather than at either extreme:
             // Spaces is the one control set for everything from a tight room to
             // a hall, so it should open somewhere you would actually start.
-            o[0] = 0.35f; o[1] = 0.40f; o[2] = 0.45f; o[3] = 0.02f; o[4] = 0.25f; break;
-        case DR32_EFX_DRUMBUSS:
-            // Every control lands at NEUTRAL, so selecting the Drum Bus changes
-            // nothing until you turn something. Unlike a reverb, which has to
-            // arrive sounding like a reverb to be worth selecting, this is a
-            // processor: it should start out of the way.
+            o[0] = 0.35f; o[1] = 0.40f; o[2] = 0.45f; o[3] = 0.02f; break;
+        case DR32_EFX_DELAY:
+            // The factory corpus's dominant configuration, not a guess: L = 1
+            // sixteenth and R = 4 is what ten of the twelve native delay returns
+            // use, feedback is their median (0.50 against a 0.12-0.73 spread),
+            // and tone 0.55 puts the feedback bandpass at ~1.3 kHz, their median
+            // centre. Ping-pong starts off — the library is split 7/5 on it, and
+            // the L/R asymmetry already gives a stereo pattern without it.
             //
-            // Neutral is 0 for Compress and Crunch and 0.5 for Attack and
-            // Sustain, which are bipolar. o[3] is the slot the reverbs use for
-            // pre-delay, so leaving it at 0.0 would ship with the tail pulled
-            // down 8 dB. Fully wet, because with everything neutral the stage
-            // is already transparent and a dry blend would only weaken it once
-            // the knobs move.
-            o[0] = 0.0f; o[1] = 0.0f; o[2] = 0.5f; o[3] = 0.5f; o[4] = 1.0f; break;
+            // Synced by default (11 of the 12 native delay returns are), and the
+            // free times are seeded with what the synced pair produces at
+            // 120 BPM — so flipping Sync off does not move the delay, it just
+            // stops it following the tempo.
+            o[0] = 1.0f; o[1] = 4.0f; o[2] = 0.50f; o[3] = 0.55f; o[4] = 0.0f;
+            o[5] = 1.0f; o[6] = 125.0f; o[7] = 500.0f; break;
         default:
-            o[0] = 0.5f; o[1] = 0.3f; o[2] = 0.5f; o[3] = 0.0f; o[4] = 1.0f; break;
+            o[0] = 0.5f; o[1] = 0.3f; o[2] = 0.5f; o[3] = 0.0f; break;
     }
 }
 
 const char *dr32_efx_name(dr32_efx_type type) {
     switch (type) {
-        case DR32_EFX_PLATE: return "Plate";
+        case DR32_EFX_PLATE:  return "Plate";
         case DR32_EFX_SPACES: return "Spaces";
-        case DR32_EFX_DRUMBUSS: return "Drum Bus";
-        default:             return "Off";
+        case DR32_EFX_DELAY:  return "Delay";
+        default:              return "Off";
     }
 }
 
@@ -754,7 +1060,9 @@ dr32_efx_type dr32_efx_from_name(const char *name) {
     if (!name || !*name) return DR32_EFX_NONE;
     if (!std::strcmp(name, "Plate")) return DR32_EFX_PLATE;
     if (!std::strcmp(name, "Spaces")) return DR32_EFX_SPACES;
-    if (!std::strcmp(name, "Drum Bus")) return DR32_EFX_DRUMBUSS;
+    if (!std::strcmp(name, "Delay")) return DR32_EFX_DELAY;
+    // Anything else, including a saved state naming the old "Drum Bus" send
+    // type, falls through to Off.
     return DR32_EFX_NONE;
 }
 
