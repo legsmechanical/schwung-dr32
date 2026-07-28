@@ -1,6 +1,7 @@
 # Modelling Move's own reverb (SuperEco) — feasibility
 
-Investigation only, 2026-07-28, at Josh's request. **No captures were run.**
+Investigation, 2026-07-28, at Josh's request. **Go/no-go capture run the same
+day — result at the end: GO.**
 This reports the method and the cost so the decision to commit can be made with
 numbers rather than optimism.
 
@@ -108,3 +109,41 @@ duration** — it cannot happen while Josh is playing, and it needs his go-ahead
 
 Run the go/no-go A/B render first, alone, and stop there if the return does not
 appear in the offline graph. It is one capture and it decides everything.
+
+---
+
+## GO/NO-GO RESULT — 2026-07-28: **GO**
+
+One capture batch, stack down once (`fx_suite.sh` pattern), four renders, stack
+back up clean.
+
+The benchmark song's track 0 already carries a `reverb` / `RoomType: SuperEco`
+on its rack's single return chain, with every pad's send **enabled at −70 dB** —
+so the fixture needed only the new `--send=` flag (now in `make_fixture.mjs`).
+
+| render | rms |
+|---|---:|
+| send −70 dB (dry) | 0.049486 |
+| send 0 dB (wet) | 0.051842 |
+| **difference** | **0.014333** (−10.8 dB vs dry) |
+
+**The return chain IS rendered in the offline graph**, and subtraction isolates
+it exactly. The isolated signal is unmistakably a reverb tail:
+
+```
+   0-100 ms  0.022334      500- 600 ms  0.006509
+ 100-200 ms  0.048516      700- 800 ms  0.003206
+ 200-300 ms  0.029322      900-1000 ms  0.001236
+ 300-400 ms  0.012256     1100-1200 ms  0.000612
+```
+
+Peak at 100-200 ms, smooth decay past 1.2 s. Nothing about it looks like a
+rendering artefact.
+
+So the method in this document is confirmed end to end: **the campaign is
+viable**, it needs no audio rig, and the next step is the IR capture (point a
+pad at a click) plus the parameter grid.
+
+Remaining before the fit: `make_fixture.mjs` still needs the RETURN-DEVICE
+parameter overrides (RoomSize / DecayTime / PreDelay / the shelves). The send
+half is done.

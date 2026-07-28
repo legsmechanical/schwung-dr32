@@ -140,3 +140,62 @@ A custom shaper had no home in the file format: its settings would live in slot
 state and follow the slot rather than the kit. Punch is a native parameter that
 DR32 **already parses and preserves** — so a kit shaped with it round-trips
 byte-exact and still opens on native Move. Same musical goal, no format debt.
+
+---
+
+## FIRST CAPTURE — 2026-07-28: the extraction works, and the old model was inverted
+
+Two renders (`--effect=Standard` vs `--effect=Punch`, `Effect_PunchAmount=0.8`,
+`Effect_PunchTime=0.3`), gain recovered by division as planned.
+
+### The falsifiable check passes exactly
+
+```
+predicted peak gain, 1 + amount^3 = 1.5120
+measured gain range               = 0.3106 .. 1.5120
+```
+
+Four decimal places. The extraction method is sound and the trace's setter is
+confirmed.
+
+### ⚠ The measured curve is nothing like what was implemented
+
+```
+   1 ms  1.512   <- starts AT punch_gain
+  10 ms  1.139
+  20 ms  0.648
+  30 ms  0.459
+ ~65 ms  0.311   <- minimum
+ 200 ms  0.555
+ 300 ms  1.329
+ 340 ms  1.506
+ 380 ms  1.512   <- settles at punch_gain, ~= punch_time
+ 580 ms  1.512
+```
+
+The real Punch **starts at full `punch_gain`, ducks the body to ~0.31, and
+recovers to `punch_gain` by `punch_time`**. It is a scoop, not a spike: the
+attack passes at full gain, what follows it is pushed down, and the sound comes
+back over the punch time. That is exactly how it earns the name — contrast
+between attack and body.
+
+The old implementation ramped *up* from zero over the first 25% and settled at
+**1.0**. It was structurally inverted at the start and wrong at the end, which
+fully explains its **+1.1 dB** — it was not a near miss needing a tuned
+exponent.
+
+Note also that the steady state is `punch_gain`, **not unity**: switching Punch
+on raises the pad's level by `1 + amount^3` as well as scooping it. Any level
+matching in the acceptance test has to expect that.
+
+### What the grid still has to pin
+
+- **minimum gain vs amount** (0.311 at amount 0.8; the trace's hard floor of
+  0.15 was not reached here)
+- **boundary vs amount** — the dip bottoms at ~65 ms of a 300 ms punch time,
+  i.e. ~0.22, which is close to the old hard-coded 0.25 and is the one thing it
+  nearly had right
+- **recovery exponent vs `cbrt(u)`** — the polynomial the trace does not spell
+  out
+
+The 5x5 grid is unchanged, and now has a known-good extraction to run through.

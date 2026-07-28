@@ -13,7 +13,7 @@
 //     are separable in the residual.
 //
 // Usage: node tools/make_fixture.mjs <16drums.abl> <out.abl> [--effect=Stretch]
-//                                    [--notes=36,37] [--filter=Peak] ...
+//                                    [--notes=36,37] [--filter=Peak] [--send=0] ...
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
@@ -109,6 +109,17 @@ for (const chain of rack.chains) {
     if ('pan' in opt) chain.mixer.pan = Number(opt.pan);
     if ('volume' in opt) chain.mixer.volume = Number(opt.volume);
     if ('choke' in opt) chain.drumZoneSettings.chokeGroup = Number(opt.choke) || null;
+    // --send=<dB> drives the RETURN path, which the stock fixture deliberately
+    // silences at -70. Rendering the same fixture at -70 and at 0 dB and
+    // subtracting isolates the return exactly, because the engine is
+    // deterministic — sends are post-fader, so there is no way to mute the dry
+    // and keep the send instead.
+    if ('send' in opt && chain.mixer && Array.isArray(chain.mixer.sends)) {
+        for (const s of chain.mixer.sends) {
+            s.amount = Number(opt.send);
+            s.isEnabled = true;
+        }
+    }
 }
 
 writeFileSync(out, JSON.stringify(song, null, 2) + '\n');
