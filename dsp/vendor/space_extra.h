@@ -45,6 +45,18 @@ struct SpaceExtra {
     void setBpm(float bpm) { if (bpm >= 20.0f && bpm <= 999.0f) bpm_ = bpm; }
     void setSync(int s) { sync_ = s ? 1 : 0; }
     void setShim(float s01) { shim_ = clamp01(s01); }
+    /** DR32: gate release as a TIME. The one-pole reaches ~63% in tau, so the
+     *  audible close is a few tau; the coefficient is 1/(tau*fs). */
+    /** DR32: the gated tank's decay, 0..1 mapped by the caller. */
+    void setGateDecay(float d) {
+        d = clamp01(d);
+        if (d != gateDecay_) { gateDecay_ = d; recompute(); }
+    }
+    void setGateRelease(float seconds) {
+        if (seconds < 0.0002f) seconds = 0.0002f;
+        gateRel_ = 1.0f / (seconds * fs_);
+        if (gateRel_ > 1.0f) gateRel_ = 1.0f;
+    }
     void setParams(float p1, float p2, float p3, float feed, float mix) {
         p1_ = clamp01(p1); p2_ = clamp01(p2); p3_ = clamp01(p3);
         feed_ = clamp01(feed); mix_ = clamp01(mix);
@@ -84,6 +96,7 @@ struct SpaceExtra {
         for (int i = 0; i < 4; i++) fdnDampZ_[i] = 0.0f;
         fdnW_ = 0; fdnHold_ = 0; fdnModPh_ = 0.0f;
         fdnOutL_ = fdnOutR_ = inZ_ = fdnHpZ_ = 0.0f;
+        fdnNzEnv_ = 0.0f;
         galactic_.reset(); chamber_.reset(); infinity_.reset();
         preW_ = difW_[0] = difW_[1] = difW_[2] = difW_[3] = 0;
         ap1W_ = ap2W_ = ap3W_ = ap4W_ = 0;
@@ -171,7 +184,13 @@ private:
             damp_ = 0.05f + 0.9f * p2_;
             switch (type_) {
                 case SpaceRev: decay_ = 0.85f + 0.147f * feed_; modHz_ = 0.35f; modDepth_ = 22.0f; break;
-                case GatedRev: decay_ = 0.72f;                 modHz_ = 0.9f;  modDepth_ = 8.0f;  break;
+                /* DR32: the gated tank's decay is a CONTROL, not a constant.
+                 * Fixed at 0.72 it did not fall inside a 250 ms hold — measured
+                 * +6 dB across the window, i.e. still building density — so the
+                 * "gate" was chopping something that behaved like a flat window
+                 * and was barely distinguishable from the NonLin type next to
+                 * it in the picker. A gate needs something to gate. */
+                case GatedRev: decay_ = gateDecay_;            modHz_ = 0.9f;  modDepth_ = 8.0f;  break;
                 /* DR32: widened from 0.30+0.65*feed. The old floor gave a
                  * 1.3 s minimum RT60 — far too long for a drum plate, and it
                  * left most of the knob above 3 s. */
@@ -299,6 +318,34 @@ private:
                          + ringRead(d2_, kD2Max - 1, d2W_, len_d2_ * 0.28f)
                          - ringRead(d3_, kD3Max - 1, d3W_, len_d3_ * 0.51f)
                          - ringRead(ap4_, kAp4Max - 1, ap4W_, len_ap4_ * 0.73f));
+        /* DR32: EARLY REFLECTIONS.
+         *
+         * Every output tap above reads a TANK line, and the shortest of them
+         * sits at 0.19 of len_d1 — about 28 ms at default size, and 44 ms as
+         * measured end to end. So the plate was silent for its first 40 ms:
+         * you hit a drum and the reverb arrived a beat later at 90 BPM. It
+         * read as a pre-delay nobody had asked for, and it was there in the
+         * shipped module (Josh: "that was actually bugging me").
+         *
+         * The energy to fix it is already in the box and simply never tapped:
+         * the four INPUT diffusers are 3.6 / 5 / 9 / 12.7 ms at 44.1 kHz. Those
+         * are exactly the times a real plate's first reflections arrive, so
+         * they are read here as early taps rather than inventing a delay line.
+         *
+         * ⚠ These taps are on the OUTPUT ONLY — they do not feed the tank, so
+         * there is no feedback path and the tank's own state is untouched.
+         * Measured against the previous build: the first 50 ms changes (that is
+         * the point), 200-500 ms differs by -23.4 dB and past 500 ms by
+         * -83.0 dB. So the tail is NOT bit-identical — the input allpasses ring
+         * on for a few hundred ms and those rings are now audible — but the
+         * late field is the same tank it always was.
+         *
+         * Different lines per channel, so the two sides stay decorrelated. */
+        yl += 0.42f * (ringRead(dif_[0], kDifMax - 1, difW_[0], len_dif_[0] * 0.90f)
+                     - 0.7f * ringRead(dif_[2], kDifMax - 1, difW_[2], len_dif_[2] * 0.80f));
+        yr += 0.42f * (ringRead(dif_[1], kDifMax - 1, difW_[1], len_dif_[1] * 0.90f)
+                     - 0.7f * ringRead(dif_[3], kDifMax - 1, difW_[3], len_dif_[3] * 0.80f));
+
         yl = ech::flushDenorm(yl);
         yr = ech::flushDenorm(yr);
 
@@ -311,7 +358,10 @@ private:
             env_ += (aIn > env_ ? 0.02f : 0.0005f) * (aIn - env_);
             if (env_ > 0.02f) gateHold_ = gateHoldSamps_;
             if (gateHold_ > 0) { gateHold_--; gateGain_ += 0.02f * (1.0f - gateGain_); }
-            else               gateGain_ += 0.004f * (0.0f - gateGain_);
+            /* DR32: the release is a control now. gateRel_ defaults to 0.004,
+             * the fixed value this always used (~5.7 ms), so an untouched gate
+             * closes exactly as it did. */
+            else               gateGain_ += gateRel_ * (0.0f - gateGain_);
             yl *= gateGain_; yr *= gateGain_;
         }
         l = yl; r = yr;
@@ -430,13 +480,30 @@ private:
             fdnOutL_ = s[0] - s[2];        /* held across the downsample window */
             fdnOutR_ = s[1] - s[3];
         }
-        float nz = 0.0f;
+        /* DR32: the LoFi hiss floor is GATED by the tail's own envelope and
+         * drawn PER CHANNEL. Upstream it was one unconditional mono draw added
+         * to both outputs, which is a fine lo-fi character on an insert with a
+         * dry/wet blend and wrong on a send return, where it measured:
+         *   - a permanent -53 dBFS hiss whenever the type was merely ARMED,
+         *     since a send return is 100% wet and has no dry to hide behind;
+         *   - L/R correlation 0.97 and a mono-fold of -0.03 dB, i.e. the
+         *     "stereo" reverb was dominated by a mono noise source;
+         *   - an RT60 that never ended (8 s at every decay setting), which also
+         *     defeats the bus's idle-skip: the slot never falls silent, so it
+         *     never stops costing CPU.
+         * The envelope keeps the grit for as long as there is a tail. */
+        float nz[2] = { 0.0f, 0.0f };
         if (fdnNoise_ > 0.0f) {
-            rnd_ = rnd_ * 1664525u + 1013904223u;
-            nz = (float)(int32_t)rnd_ * (1.0f / 2147483648.0f) * fdnNoise_;
+            float amp = fabsf(fdnOutL_) + fabsf(fdnOutR_);
+            fdnNzEnv_ += 0.001f * (amp - fdnNzEnv_);
+            const float g = fdnNzEnv_ / (fdnNzEnv_ + 0.02f);
+            for (int c = 0; c < 2; c++) {
+                rnd_ = rnd_ * 1664525u + 1013904223u;
+                nz[c] = (float)(int32_t)rnd_ * (1.0f / 2147483648.0f) * fdnNoise_ * g;
+            }
         }
-        l = fdnOutL_ + nz;
-        r = fdnOutR_ + nz;
+        l = fdnOutL_ + nz[0];
+        r = fdnOutR_ + nz[1];
     }
 
     /* bipolar damp one-pole (0.5 = neutral, low = dark, high = thin) */
@@ -468,6 +535,8 @@ private:
     int   len_d1_ = 6000, len_d2_ = 5000, len_d3_ = 5800, len_d4_ = 4300;
     float damp_ = 0.5f, decay_ = 0.6f, modHz_ = 0.7f, modDepth_ = 9.0f;
     int   gateHoldSamps_ = 8820;
+    float gateRel_ = 0.004f;      /* DR32: one-pole release coefficient */
+    float gateDecay_ = 0.72f;     /* DR32: the gated tank's own decay */
 
     /* delay config */
     float dlyL_ = 22050.0f, dlyR_ = 22050.0f, fb_ = 0.4f, dampBip_ = 0.5f;
@@ -477,6 +546,7 @@ private:
     int   fdnDown_ = 2, fdnPre_ = 1;
     float fdnDecay_ = 0.7f, fdnDamp_ = 0.3f, fdnBits_ = 12.0f;
     float fdnModHz_ = 0.9f, fdnModDepth_ = 6.0f, fdnInLp_ = 0.8f, fdnNoise_ = 0.0f, fdnHp_ = 0.0f;
+    float fdnNzEnv_ = 0.0f;   /* DR32: gates the LoFi hiss — see fdnTick */
     float fdnDampZ_[4] = {}, fdnModPh_ = 0.0f, fdnOutL_ = 0.0f, fdnOutR_ = 0.0f, inZ_ = 0.0f, fdnHpZ_ = 0.0f;
     int   fdnW_ = 0, fdnHold_ = 0;
 

@@ -50,9 +50,21 @@ static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) 
 static int send_slot_index(const char *name) {
     if (!strcmp(name, "size")     || !strcmp(name, "time_l") || !strcmp(name, "p1")) return 0;
     if (!strcmp(name, "damp")     || !strcmp(name, "time_r") || !strcmp(name, "p2")) return 1;
-    if (!strcmp(name, "decay")    || !strcmp(name, "feedback") || !strcmp(name, "p3")) return 2;
+    /* `hold` is the GATED reverb's name for slot 2: SpaceExtra maps it to the
+     * gate's hold time (50..500 ms), not to a decay. Same slot, honest name. */
+    if (!strcmp(name, "decay")    || !strcmp(name, "feedback")
+        || !strcmp(name, "hold")  || !strcmp(name, "p3")) return 2;
     if (!strcmp(name, "predelay") || !strcmp(name, "tone")   || !strcmp(name, "p4")) return 3;
-    if (!strcmp(name, "pingpong") || !strcmp(name, "p5")) return 4;
+    /* `length` is NonLin's name for slot 2 and `shape` its name for slot 4 —
+     * that type has no decay at all, which is the point of it. */
+    if (!strcmp(name, "length")) return 2;
+    /* Slot 4 is ping-pong on a Delay, Shape on NonLin and the TANK's decay on
+     * the gate — where slot 2 is the gate's hold, so "decay" would have been
+     * ambiguous and `tail` is used instead. */
+    if (!strcmp(name, "pingpong") || !strcmp(name, "shape")
+        || !strcmp(name, "tail") || !strcmp(name, "p5")) return 4;
+    /* Slot 5 is sync on a Delay and the RELEASE on the two envelope types. */
+    if (!strcmp(name, "release")) return 5;
     if (!strcmp(name, "sync")     || !strcmp(name, "p6")) return 5;
     if (!strcmp(name, "ms_l")     || !strcmp(name, "p7")) return 6;
     if (!strcmp(name, "ms_r")     || !strcmp(name, "p8")) return 7;
@@ -254,15 +266,39 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
              * written directly. Publishing the page's mode as its own read-only
              * param makes every row a single equality again. */
             if (!strcmp(f2, "mode")) {
-                if (kit->send_type[slot] != DR32_EFX_DELAY)
-                    return snprintf(buf, buf_len, "%s", "Verb");
+                /* Three values, one comparison each, and they PARTITION the
+                 * page — that is the whole point. "Gate" is separate from
+                 * "Verb" because the gated reverb reads slot 2 as a HOLD time
+                 * rather than a decay, so those two rows must swap. */
+                switch (kit->send_type[slot]) {
+                    case DR32_EFX_DELAY:  return snprintf(buf, buf_len, "%s", "Delay");
+                    case DR32_EFX_GATED:  return snprintf(buf, buf_len, "%s", "Gate");
+                    case DR32_EFX_NONLIN: return snprintf(buf, buf_len, "%s", "NonLin");
+                    default:              return snprintf(buf, buf_len, "%s", "Verb");
+                }
+            }
+            /* Does this type have an envelope with a release? Gated and NonLin
+             * do; the plain reverbs and the delay do not. One more derived
+             * value, for the same reason as `mode`: visible_if takes a single
+             * condition, so "Gate OR NonLin" needs a param that is already the
+             * answer. */
+            if (!strcmp(f2, "env")) {
+                const dr32_efx_type t = kit->send_type[slot];
                 return snprintf(buf, buf_len, "%s",
-                                cache[5] >= 0.5f ? "Sync" : "Free");
+                                (t == DR32_EFX_GATED || t == DR32_EFX_NONLIN) ? "Env" : "-");
             }
             /* Sync reads back as a NAME so the enum round-trips through the
-             * menu the same way the type does. */
-            if (!strcmp(f2, "sync"))
+             * menu the same way the type does — and as "-" when the armed type
+             * is not a delay at all. That sentinel is what lets the two time
+             * pages hang off a SINGLE equality: visible_if cannot say "type is
+             * Delay AND sync is Free", but it can say "sync is Free", which is
+             * only ever true for a delay. The row itself is hidden then, so the
+             * sentinel is never user-visible. */
+            if (!strcmp(f2, "sync")) {
+                if (kit->send_type[slot] != DR32_EFX_DELAY)
+                    return snprintf(buf, buf_len, "%s", "-");
                 return snprintf(buf, buf_len, "%s", cache[5] >= 0.5f ? "Sync" : "Free");
+            }
             int idx = send_slot_index(f2);
             if (idx >= 0) return snprintf(buf, buf_len, "%g", (double)cache[idx]);
             if (!strcmp(f2, "return"))

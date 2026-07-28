@@ -49,8 +49,15 @@ typedef enum {
     DR32_EFX_PLATE,        // Dattorro figure-eight plate tank + input diffusion
     DR32_EFX_SPACES,       // Airwindows Verbity2 — one flexible room-to-hall model
     DR32_EFX_DELAY,        // tempo-synced stereo delay, filtered feedback
+    DR32_EFX_GATED,        // the plate tank, hard-gated by the INPUT envelope
+    DR32_EFX_DIGITAL,      // 4-line FDN at fs/2, 12-bit loop grain — 80s rack
+    DR32_EFX_HALL,         // Airwindows Chamber, golden-ratio Householder
+    DR32_EFX_NONLIN,       // RMX16-style: flat (or rising) window, then a cliff
     DR32_EFX_COUNT
 } dr32_efx_type;
+
+/** True for the types that run through the shared SpaceExtra tank. */
+int dr32_efx_is_tank(dr32_efx_type t);
 
 typedef struct dr32_fxbus dr32_fxbus;
 

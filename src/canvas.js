@@ -1093,8 +1093,8 @@ function drawWave(ctx, g, cells, s) {
 
 /* ---------- send FX ------------------------------------------------------ */
 
-const kSendTypes   = ["Off", "Plate", "Spaces", "Delay"];
-const kSendSq      = ["OFF", "PLT", "SPC", "DLY"];
+const kSendTypes   = ["Off", "Plate", "Spaces", "Delay", "Gated", "Digital", "Hall", "NonLin"];
+const kSendSq      = ["OFF", "PLT", "SPC", "DLY", "GAT", "DIG", "HAL", "NLN"];
 /* Tempo-synced or free-running, for the Delay. Both times are stored either
  * way, so flipping this recalls what you last had in that mode rather than
  * reinterpreting one number in the wrong unit — which is what the native
@@ -1121,6 +1121,36 @@ function sendBank(n) {
     plin(p + "predelay", "Pre", "Pre-delay", 0, 1),
     ret
   ];
+  /* The gated reverb reads the decay slot as the gate's HOLD time (50..500 ms
+   * inside SpaceExtra), so the cell says so. Same underlying param — the DSP
+   * takes `hold` as an alias for slot 2 — but a cell labelled "Dcy" on a gate
+   * would be describing the wrong control. */
+  const gate = [
+    type,
+    plin(p + "size", "Size", "Size", 0, 1),
+    plin(p + "damp", "Damp", "Damping", 0, 1),
+    plin(p + "hold", "Hold", "Gate Hold", 0, 1),
+    /* The TANK's own decay. Slot 2 is the gate's hold, so this cannot also be
+     * called Decay — a gated reverb has two lengths and conflating them is what
+     * made this type sound like NonLin. */
+    plin(p + "tail", "Tail", "Tail Decay", 0, 1),
+    plin(p + "release", "Rel", "Release", 0, 1),
+    plin(p + "predelay", "Pre", "Pre-delay", 0, 1),
+    ret
+  ];
+  /* NonLin has no decay at all — slot 2 is the window LENGTH and slot 4 its
+   * SHAPE (falling / flat / rising), which no other type uses. */
+  const nonlin = [
+    type,
+    plin(p + "size", "Size", "Size", 0, 1),
+    plin(p + "damp", "Damp", "Damping", 0, 1),
+    plin(p + "length", "Len", "Length", 0, 1),
+    plin(p + "shape", "Shape", "Shape", 0, 1),
+    plin(p + "release", "Rel", "Release", 0, 1),
+    plin(p + "predelay", "Pre", "Pre-delay", 0, 1),
+    ret
+  ];
+
   /* Sync vs free is a THIRD page, not a variant of the delay page: the two time
    * controls change unit with it, and one cell cannot honestly be both a count
    * of sixteenths and a millisecond value.
@@ -1163,7 +1193,10 @@ function sendBank(n) {
   ].concat(tail);
 
   const cellsFor = (ctx) => {
-    if (ctx.getParam(p + "type") !== "Delay") return verb;
+    const t = ctx.getParam(p + "type");
+    if (t === "Gated") return gate;
+    if (t === "NonLin") return nonlin;
+    if (t !== "Delay") return verb;
     return ctx.getParam(p + "sync") === "Free" ? dlyFree : dlySync;
   };
 
@@ -1174,9 +1207,11 @@ function sendBank(n) {
     /* Every key any of the three pages can address, so the defaults table
      * covers them all — a cell whose key is missing from DEFAULTS reads as 0 on
      * first paint. */
-    dynamicKeys: [p + "type", p + "size", p + "damp", p + "decay", p + "predelay",
-                  p + "sync", p + "time_l", p + "time_r", p + "ms_l", p + "ms_r",
-                  p + "feedback", p + "tone", p + "pingpong", p + "return"],
+    dynamicKeys: [p + "type", p + "size", p + "damp", p + "decay", p + "hold",
+                  p + "length", p + "shape", p + "tail", p + "release",
+                  p + "predelay", p + "sync", p + "time_l", p + "time_r",
+                  p + "ms_l", p + "ms_r", p + "feedback", p + "tone",
+                  p + "pingpong", p + "return"],
     header: (ctx) => "Send " + n + ": " + (ctx.getParam(p + "type") || "Off")
   };
 }

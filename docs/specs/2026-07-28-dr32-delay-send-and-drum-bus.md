@@ -567,3 +567,295 @@ empty/filled bar — fine for on/off, useless for a mode, because "filled" does
 not say whether it means Sync or Free. `widget: "enumsq"` gives the labelled
 square (SYN / FRE). The kit's own comment on `widgetFor()` calls out exactly
 this case; it is a kit FEATURE, not a kit change.
+
+---
+
+## 12. Three more reverb models — Gated, Digital, Hall (2026-07-28)
+
+Josh: "let's just stick with reverb... maybe we should investigate a few more
+models to add." Built, tests green at **104 checks**, ARM build packaged. **Not
+deployed.**
+
+### The models were already in the tree
+
+`dsp/vendor/space_extra.h` implements TEN types behind the exact interface the
+Plate already uses, and every `Slot` already constructs and resets the whole
+struct — **2.44 MB per slot, 4.9 MB per instance, nine tenths of it
+unreachable**. Adding a type is wiring, voicing and tests; no new vendoring, no
+new memory, and the licence position is unchanged (`SOURCES.md`). The
+`5.5e-36l` long-double dither trap is already de-fanged in all four Airwindows
+headers — worth confirming, since it costs ~1.2% of a Move core per stage.
+
+Shipping: **Gated** (the plate tank chopped by the input envelope, `Decay` reads
+as gate HOLD), **Digital** (4-line FDN at fs/2, 12-bit loop grain, the 80s rack
+sound), **Hall** (Airwindows Chamber).
+
+### Hall: the defect that got it pulled, fixed properly
+
+Room and Hall were removed in `cef30f4` because **Chamber runs as two
+independent mono reverbs** — an L-only impulse put −107 dB in the right channel.
+Feeding it through the per-channel diffuser (the fix that saved Spaces) was NOT
+enough: the diffuser is per-channel, so an L-only hit still left the right side
+empty. Re-measured at **−112 dB**, i.e. the original defect exactly. Hall now
+takes the **mono SUM** into both diffuser sides — different prime lengths keep
+the two tails decorrelated — and measures **−0.0 dB** L-only→R, corr +0.04,
+mono-fold −2.85 dB. Only Hall does this: the plate's figure-eight tank and the
+FDN couple their channels internally (+0.1 and −0.4 dB) and forcing a mono sum
+on the plate would change a voicing that has already been measured and tuned.
+
+`07ca02c` also recorded the hall as cathedral-sized. Measured: decay scaled at
+0.62 still gave **5.83 s at half knob**. Scaled to **0.20** it spans 0.37→2.60 s
+with the default at 1.17 s.
+
+### ⚠ Lo-Fi was measured and DROPPED
+
+SpaceExtra's LoFi type (the same FDN at fs/3, 7-bit) is not offered. Two
+findings, one fixed and one fatal:
+
+- **Fixed:** its hiss floor was an unconditional MONO draw added to both
+  outputs. On an insert with a dry/wet blend that is lo-fi character; on a
+  100%-wet send return it measured a permanent −53 dBFS hiss whenever the type
+  was merely *armed*, L/R correlation **0.97**, mono-fold −0.03 dB, and an RT60
+  that never ended — which also defeats the bus's idle-skip, so the slot never
+  stops costing CPU. The noise is now per-channel and gated by the tail's own
+  envelope (a DR32-marked change in the vendored header, which already carried
+  precedent for one).
+- **Fatal:** with the hiss gone its decay knob is **dead** — RT60 spans 0.19 s
+  to 0.26 s across the whole control. Raising the bit depth 7→11 only reached
+  0.41 s, so the short tail is structural to that voicing rather than a
+  quantisation floor. The effect is usable; the control is not. Dropped rather
+  than shipped with a dead knob, and the finding is recorded next to Digital.
+
+### The test that generalises it
+
+Every reverb now loops over one `kVerbs` table for tails, stereo correlation,
+mono-fold, default RT60 **and a new decay-range check** — `RT60(decay=1)` must
+exceed `1.5 × RT60(decay=0)`. That is the Lo-Fi defect turned into a gate every
+future model has to pass. Plus a gate-specific test: the hold must lengthen the
+tail AND the tail must actually CHOP (measured −111 dB past the gate, where a
+plate would merely fade).
+
+Measured at defaults:
+
+| type | RT60 | decay knob | corr | L-only → R | mono-fold |
+|---|---:|---|---:|---:|---:|
+| Plate | 1.53 s | 0.90 → 4.28 s | +0.00 | +0.1 dB | −2.98 dB |
+| Spaces | 0.88 s | 0.28 → 2.91 s | +0.05 | −9.0 dB | −2.72 dB |
+| Gated | 0.42 s | 0.22 → 0.67 s | −0.00 | +0.2 dB | −2.95 dB |
+| Digital | 0.86 s | 0.52 → 2.67 s | −0.06 | −0.4 dB | −3.25 dB |
+| Hall | 1.17 s | 0.36 → 2.89 s | +0.04 | −0.0 dB | −2.85 dB |
+
+### UI
+
+`mode` now partitions **three** ways — `Verb` / `Gate` / `Delay` — so the gated
+page can swap its Decay row for Gate Hold while every row stays a single
+equality (visible_if takes one condition on one param). The canvas gets a third
+cell set with HOLD in place of DCY.
+
+---
+
+## 13. NonLin — the RMX16 trick (2026-07-28)
+
+Josh, after asking whether Digital was the LX/AMS sound: "lets do a non linear
+model." Built, **118 checks green**, ARM build packaged. Not deployed.
+
+### What makes it not-a-gate
+
+The picker already has Gated, and the distinction is the whole point. A gate
+follows the input and chops an exponential decay — the level is always falling
+underneath, and you hear a reverb being cut off. **NonLin overrides the decay
+itself**: the window holds a roughly constant level (or deliberately RISES,
+which no natural space does, and which is most of the character) and then stops
+dead. That is what "nonlinear" names — the envelope is not an exponential.
+
+Built from the plate tank with feedback pinned near maximum, so its natural fall
+across the window is a couple of dB and the synthetic envelope does the rest.
+The period units used a dense FIR; here that would be ~13k taps per channel for
+a 300 ms window, hopeless per-sample on a Move core.
+
+Controls: Size, Damping, **Length** (50..600 ms), **Shape** (falling / flat /
+rising, ±9 dB across the window, normalised so a rising window is not also a
+louder one), Pre-delay. Length and Shape are slots 2 and 4 — the same slots the
+reverbs use for decay and nothing.
+
+### ⚠ The tank arrives 19-53 ms late, and it always has
+
+Measured: the shared tank's FIRST ARRIVAL is 19 ms at minimum size and 53 ms at
+maximum. **This is true of the shipped Plate too** — measured identically, 0.0000
+rms for the first 40 ms at its defaults. On a plate that reads as a pre-delay
+you can dial around. For NonLin it is a hole exactly where the effect lives,
+since these programs are a dense burst that starts WITH the hit.
+
+Fixed by adding the diffuser's own output — already dense, already decorrelated,
+arriving inside a millisecond — at 0.5 gain, for this type only. First arrival
+is now **0.3-0.4 ms at every size**.
+
+The Plate's own 40 ms onset is left alone: it is a voicing that has been
+measured, tuned and heard, and this spec is not the place to change it. Recorded
+here because it is worth knowing and nobody had measured it before.
+
+### Measured
+
+| shape | 20 ms | 100 ms | 180 ms | 260 ms | past the window |
+|---|---:|---:|---:|---:|---:|
+| falling | 0.0 | −1.9 | −3.8 | −14.6 | **−240 dB** |
+| flat | 0.0 | −0.2 | +0.3 | −7.6 | **−240 dB** |
+| rising | 0.0 | +2.8 | +5.6 | −0.6 | **−240 dB** |
+
+Length knob: 50 → 599 ms. Window flatness at Shape 0.5: **−0.3 dB** across
+40→200 ms, against the plate's **+4.1 dB** over the same span.
+
+### Two test traps paid for here
+
+- **The comparison source has to be a BURST.** The first version used the
+  suite's `hit()`, which keeps feeding the reverb for hundreds of ms — so a
+  plate's level tracks the input instead of decaying, and the flatness
+  comparison measured nothing. A 64-sample windowed burst: long enough to
+  trigger (a bare impulse is not a transient to a 0.5 ms follower), short enough
+  that everything after it is tail.
+- **Flatness is the ABSOLUTE deviation, not a signed drop.** The plate does not
+  fall across 40→200 ms, it RISES ~4 dB, because its first arrival is ~40 ms and
+  it is still building density at 80 ms. A signed comparison called a rising
+  plate "flatter" than a flat window.
+- ⚠ And one plain bug: the cliff was measured out to 700 ms in a 500 ms buffer,
+  reading off the end of `wet` into the next static array — which reported a
+  healthy signal past a window that had actually closed.
+
+---
+
+## 14. The Plate's 44 ms onset — FIXED (Josh, 2026-07-28)
+
+Reported in §13 as a finding and left alone; Josh: "that was actually bugging me
+and I was going to deal with it later, but may as well since we're here."
+
+### Cause
+
+**Every output tap in `plateTick` reads a TANK line.** The shortest is
+`len_d1_ * 0.19`, about 28 ms at default size and 44 ms measured end to end. So
+the plate produced literally nothing for its first 40 ms — at 90 BPM that is a
+third of a beat after the drum — and it read as a pre-delay nobody asked for, on
+top of the pre-delay control that already exists.
+
+Meanwhile the **four input diffusers are 3.6 / 5 / 9 / 12.7 ms** at 44.1 kHz and
+were never tapped for output at all. Those are exactly the times a real plate's
+first reflections arrive, so the energy was already in the box.
+
+### Fix
+
+Two early taps per channel off the input diffusers, different lines per side so
+they stay decorrelated, at 0.42 gain. **Output only** — they do not feed the
+tank, so there is no new feedback path and the tank's own state is untouched.
+
+| region | difference vs the previous build |
+|---|---:|
+| 0-50 ms (the point) | **+13.7 dB** |
+| 200-500 ms | −23.4 dB |
+| past 500 ms | −83.0 dB |
+
+So the late field is the same tank it always was, but the tail is **not**
+bit-identical: the input allpasses ring on for a few hundred ms and those rings
+are now audible. An earlier draft of the comment claimed bit-identity — the
+measurement says otherwise and the comment now says what was measured.
+
+### Result
+
+| type | onset before | onset after |
+|---|---:|---:|
+| Plate | 44.2 ms | **4.4 ms** |
+| Gated | ~44 ms | **4.4 ms** |
+| NonLin | (n/a) | **0.3 ms** |
+| Spaces | 13.2 ms | 13.2 ms (untouched) |
+| Digital | 27.9 ms | 27.9 ms (untouched) |
+| Hall | 46.3 ms | 46.3 ms (untouched) |
+
+Hall and Digital are deliberately left long: a hall with a 40 ms build is a
+hall, not a defect, and both are different algorithms that never went through
+the plate tank. The new onset test allows them 60 ms and holds everything else
+under 20 ms.
+
+NonLin's own early blend was re-measured now that the tank has early taps of its
+own: without it NonLin arrives at 4.3 ms with its first 5 ms at 19% of the
+window level, which for a burst effect is a soft front. Kept, reduced 0.5 → 0.35
+as a top-up rather than the whole early field.
+
+---
+
+## 15. Release control, and "is there any real difference between Gated and NonLin?"
+
+Josh asked for a Release on both envelope types, then asked the better question.
+The honest answer was **no, barely** — measured, not argued.
+
+### The measurement that made the case
+
+Equal window lengths (~250 ms), same burst, level across the window in dB:
+
+```
+          40ms   80ms  120ms  160ms  200ms  240ms  280ms
+Gated     -0.0   +6.0   +6.2   +6.1   +5.6   +4.1   +4.8
+NonLin    -0.0   +3.9   +1.3   +3.1   -0.6   -4.5   -240
+```
+
+§13 claimed a gate "chops a falling decay while NonLin holds flat". Wrong for
+this implementation: `GatedRev` pinned its tank decay at 0.72, and the tank's
+density build dominates the first ~180 ms, so the gated window **rose +6 dB and
+stayed there**. It was a flat window with a chop — which is NonLin.
+
+### Option 1, as chosen: make the gate genuinely gate-like
+
+Two changes, both measured:
+
+- **The tank's own decay is now a control** (slot 4, `tail`; the gate's hold
+  already owns slot 2, so calling it "decay" would have been ambiguous). Spread
+  is 18 dB by 530 ms at a long hold.
+- **Default size 0.70 -> 0.20.** This was the real error, and it was mine: a
+  gate needs something to gate, and at 0.70 the tank is still building density
+  through the entire hold. At 0.20 it peaks around 65 ms and falls cleanly
+  (+6.9 -> -10.4 dB by 240 ms) — quick dense build, audible decay, then the
+  chop.
+
+After: Gated moves 12 dB across its window against NonLin's 4.5 dB.
+
+### ⚠ But envelope shape is the WRONG thing to assert
+
+With the gate's decay exposed and NonLin's Shape control, their ranges
+legitimately overlap — a gate at full tail measures **-2.8 dB** peak-to-end, a
+rising NonLin **-2.7 dB**. Tuning one to differ from the other would be true
+only until someone turned a knob.
+
+What separates them is structural and survives any setting. On a **sustained**
+source (no transients after the start):
+
+```
+              0   100   200   300   400   500   600   700   800  (ms)
+Gated        -0    +7    +8    +9    +8    +8    +8    +8    +9
+NonLin       -0    +4    +4  -240  -240  -240  -240  -240  -240
+```
+
+The gate's hold **re-arms** for as long as the input is above threshold, so it
+stays open; NonLin runs a **fixed window from a transient** and cuts, and a
+continuous source never gives it a new transient to fire on. That is now the
+test, at ±40 dB of separation rather than a tuned 1.8x on an envelope span.
+
+### The lesson, which is the test and not the tuning
+
+**A new type has to be measured against its NEIGHBOUR.** NonLin passed a
+flatness test against the *plate* and shipped anyway, because the plate was
+never the thing it could be confused with. Sitting next to Gated in the same
+picker, it was nearly the same effect and nothing in the suite objected.
+
+### Release
+
+Both envelope types take a Release, 1 ms .. 500 ms logarithmic (the useful half
+is the short end, where it decides chop vs thump). Defaults reproduce what each
+had fixed before: Gated ~6 ms (its `gateGain_` one-pole was 0.004), NonLin
+~1.5 ms (its fixed linear cliff). NonLin's release runs **after** the window
+rather than eating the end of it, so lengthening it does not shorten what you
+set.
+
+Menu visibility needed one more derived param — `sendN_env`, "Env" for the two
+envelope types and "-" otherwise — since Release must show for Gate OR NonLin
+and `visible_if` takes a single condition.
+
+Pages are now exactly at the kit's 8-cell limit:
+`Gated: Type Size Damp Hold | Tail Rel Pre Ret`,
+`NonLin: Type Size Damp Len | Shape Rel Pre Ret`.

@@ -126,6 +126,35 @@ static void run_bus(float comp, float crunch, float attack, float sustain,
     run_bus5(comp, crunch, attack, sustain, 1.0f, in, out, n);
 }
 
+/* RT60-ish: time for the tail to fall 60 dB below its own early peak. Used by
+ * the default-length, decay-range and gate tests, so they cannot disagree. */
+static float rt60_default(dr32_efx_type t, const float *p) {
+    static float imp[2 * (SR * 8)], out[2 * (SR * 8)];
+    const int NR = SR * 8;
+    memset(imp, 0, sizeof(float) * 2 * (size_t)NR);
+    for (int i = 0; i < 32; i++) { imp[2 * i] = 0.7f; imp[2 * i + 1] = 0.7f; }
+    run_wet_p(t, p, imp, out, NR, 120.0f);
+    float peak = 0.0f;
+    int last = 0;
+    for (int i = 0; i < SR / 4; i++) { float a = fabsf(out[2 * i]); if (a > peak) peak = a; }
+    for (int i = 0; i < NR; i++) if (fabsf(out[2 * i]) > peak * 0.001f) last = i;
+    return (float)last / (float)SR;
+}
+
+/* EVERY reverb-ish type, in one place. The stereo, mono-fold, decay-range and
+ * default-RT60 tests all loop over this, so adding a type to the picker without
+ * adding it here is the one way to get an untested effect — and each of those
+ * properties has been a real defect in this module at least once. */
+static const struct { dr32_efx_type t; const char *n; } kVerbs[] = {
+    { DR32_EFX_PLATE,   "Plate"   },
+    { DR32_EFX_SPACES,  "Spaces"  },
+    { DR32_EFX_GATED,   "Gated"   },
+    { DR32_EFX_DIGITAL, "Digital" },
+    { DR32_EFX_HALL,    "Hall"    },
+    { DR32_EFX_NONLIN,  "NonLin"  },
+};
+#define NVERBS ((int)(sizeof(kVerbs) / sizeof(kVerbs[0])))
+
 int main(void) {
     printf("fx bus\n");
     static float dry[2 * N], wet[2 * N], wet2[2 * N];
@@ -188,14 +217,11 @@ int main(void) {
         memset(imp, 0, sizeof(imp));
         for (int i = 0; i < 64; i++) { imp[2 * i] = 0.6f; imp[2 * i + 1] = 0.6f; }
 
-        struct { dr32_efx_type t; const char *n; } types[] = {
-            { DR32_EFX_PLATE, "Plate" }, { DR32_EFX_SPACES, "Spaces" },
-        };
-        for (size_t k = 0; k < sizeof(types) / sizeof(types[0]); k++) {
-            run_wet(types[k].t, 0.5f, 0.3f, 0.6f, imp, wet, N);
+        for (int k = 0; k < NVERBS; k++) {
+            run_wet(kVerbs[k].t, 0.5f, 0.3f, 0.6f, imp, wet, N);
             float tail = rms_range(wet, SR / 20, SR / 4);   // 50-250 ms after the hit
-            printf("  %-5s tail rms %.6f\n", types[k].n, tail);
-            CHECK(tail > 1e-5f, "%s produced no tail (rms %.8f) — silent reverb", types[k].n, tail);
+            printf("  %-7s tail rms %.6f\n", kVerbs[k].n, tail);
+            CHECK(tail > 1e-5f, "%s produced no tail (rms %.8f) — silent reverb", kVerbs[k].n, tail);
         }
     }
 
@@ -307,48 +333,241 @@ int main(void) {
         CHECK(dl[2] > 0.0f && dl[2] < 1.0f, "delay feedback default %.2f out of range", dl[2]);
     }
 
-    // ---- at their DEFAULT settings, the three reverbs must actually differ in
-    //      decay time, and none may be enormous. This is the check that matters
-    //      (Hall once measured >6 s at its defaults and swamped the kit).
+    // ---- RT60 at the defaults: audible, and never enormous.
+    //      Hall once measured >6 s at its defaults and swamped the kit (07ca02c),
+    //      which is why it was pulled from the module entirely; it is back now
+    //      with its decay scaled, and this is the check that keeps it honest.
     {
-        struct { dr32_efx_type t; const char *n; } T[] = {
-            { DR32_EFX_SPACES, "Spaces" }, { DR32_EFX_PLATE, "Plate" },
-        };
-        float rt[2];
-        for (int k = 0; k < 2; k++) {
+        for (int k = 0; k < NVERBS; k++) {
             float d[DR32_SEND_PARAMS];
-            dr32_efx_defaults(T[k].t, d);
-            dr32_fxbus *fx = dr32_fxbus_create(SR);
-            dr32_fxbus_set_send_type(fx, 0, T[k].t);
-            dr32_fxbus_set_send_params(fx, 0, d, DR32_SEND_PARAMS);
-            dr32_fxbus_set_send_return(fx, 0, 1.0f);
-            float peak = 0.0f;
-            int last = 0;
-            const int blocks = SR * 8 / 128;
-            for (int b = 0; b < blocks; b++) {
-                float blk[2 * 128];
-                memset(blk, 0, sizeof(blk));
-                /* Feed the bus, not the block. process() ADDS the return into
-                 * blk; an insert used to consume what was already there. */
-                if (b == 0) for (int i = 0; i < 32; i++) dr32_fxbus_send(fx, 0, i, 0.7f, 0.7f);
-                dr32_fxbus_process(fx, blk, 128);
-                float m = 0.0f;
-                for (int i = 0; i < 128; i++) { float a = fabsf(blk[2 * i]); if (a > m) m = a; }
-                if (b < 40 && m > peak) peak = m;
-                if (m > peak * 0.001f) last = b;
-            }
-            rt[k] = (float)last * 128.0f / SR;
-            dr32_fxbus_destroy(fx);
+            dr32_efx_defaults(kVerbs[k].t, d);
+            float rt = rt60_default(kVerbs[k].t, d);
+            printf("  %-7s default RT60 %.2f s\n", kVerbs[k].n, rt);
+            CHECK(rt > 0.1f, "%s default decay %.2f s is inaudibly short", kVerbs[k].n, rt);
+            CHECK(rt < 3.0f, "%s default decay %.2f s is too big for a drum kit",
+                  kVerbs[k].n, rt);
         }
-        printf("  default RT60: Spaces %.2fs  Plate %.2fs\n", rt[0], rt[1]);
-        /* Room and Hall are gone -- Spaces is one flexible model covering both,
-         * so there is no longer a "hall must be longer than room" relationship
-         * to assert. What still matters: both open at a usable length and
-         * neither swamps the kit (Hall once measured >6 s at its defaults). */
-        for (int k = 0; k < 2; k++) {
-            CHECK(rt[k] > 0.1f, "%s default decay %.2f s is inaudibly short", T[k].n, rt[k]);
-            CHECK(rt[k] < 3.0f, "%s default decay %.2f s is too big for a drum kit", T[k].n, rt[k]);
+    }
+
+    // ---- ONSET: the reverb must arrive with the hit, not a beat later.
+    //
+    //      The plate was silent for its first 44 ms — at 90 BPM that is a third
+    //      of a beat after the drum, and it read as a pre-delay nobody asked
+    //      for. Every output tap read a TANK line, the shortest at 0.19 of
+    //      len_d1, while the four input diffusers (3.6-12.7 ms) were never
+    //      tapped at all. They are now, and this is the check that keeps them.
+    //
+    //      Hall and Digital are deliberately allowed more room: a hall with a
+    //      40 ms build is a hall, not a defect. The bar here is "not absurd".
+    {
+        static float src[2 * N];
+        memset(src, 0, sizeof(src));
+        for (int i = 0; i < 64; i++) {
+            float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / 63.0f));
+            src[2 * i] = 0.8f * w; src[2 * i + 1] = 0.8f * w;
         }
+        for (int k = 0; k < NVERBS; k++) {
+            float d[DR32_SEND_PARAMS];
+            dr32_efx_defaults(kVerbs[k].t, d);
+            d[3] = 0.0f;                       /* pre-delay off — measure the ALGORITHM */
+            run_wet_p(kVerbs[k].t, d, src, wet, N, 120.0f);
+            float pk = 0.0f;
+            for (int i = 0; i < N; i++) { float a = fabsf(wet[2 * i]); if (a > pk) pk = a; }
+            int first = -1;
+            for (int i = 0; i < N; i++) if (fabsf(wet[2 * i]) > pk * 0.02f) { first = i; break; }
+            float ms = (first < 0) ? 9999.0f : 1000.0f * (float)first / (float)SR;
+            printf("  %-7s first arrival %5.1f ms\n", kVerbs[k].n, ms);
+            const float limit = (kVerbs[k].t == DR32_EFX_HALL ||
+                                 kVerbs[k].t == DR32_EFX_DIGITAL) ? 60.0f : 20.0f;
+            CHECK(ms < limit,
+                  "%s does not arrive until %.1f ms — that is a pre-delay, not a reverb",
+                  kVerbs[k].n, ms);
+        }
+    }
+
+    // ---- the DECAY KNOB must actually travel.
+    //
+    //      This is the general form of a defect found while adding these models:
+    //      SpaceExtra's LoFi type has an RT60 of 0.19 s at decay 0 and 0.26 s at
+    //      decay 1 — the effect works, the control does not, and raising its bit
+    //      depth 7 -> 11 only reached 0.41 s, so the ceiling is structural. It
+    //      was dropped from the picker rather than shipped with a dead knob.
+    //      Anything offered has to answer this.
+    {
+        for (int k = 0; k < NVERBS; k++) {
+            float d[DR32_SEND_PARAMS];
+            dr32_efx_defaults(kVerbs[k].t, d);
+            d[2] = 0.0f;  float lo = rt60_default(kVerbs[k].t, d);
+            d[2] = 1.0f;  float hi = rt60_default(kVerbs[k].t, d);
+            printf("  %-7s decay knob: %.2f s -> %.2f s (x%.1f)\n",
+                   kVerbs[k].n, lo, hi, hi / (lo + 1e-6f));
+            CHECK(hi > lo * 1.5f,
+                  "%s decay knob is dead: %.2f s at 0 vs %.2f s at 1", kVerbs[k].n, lo, hi);
+        }
+    }
+
+    // ---- NONLIN must be NONLINEAR: a flat window, not a decay.
+    //
+    //      This is the whole difference between it and the Gated type sitting
+    //      next to it in the picker. A gate chops an exponential decay, so the
+    //      level is always falling underneath it. NonLin overrides the decay:
+    //      the window holds a roughly constant level and then stops dead. If
+    //      this test ever passes for the plate as well, the type is not earning
+    //      its slot.
+    {
+        /* ⚠ A SHORT burst, not hit(). hit() keeps feeding the reverb for
+         * hundreds of ms, so a plate's level tracks the input instead of
+         * decaying and the comparison below measures nothing. The burst has to
+         * be long enough to trigger (a bare impulse is not a transient to a
+         * 0.5 ms follower) and short enough that everything after it is tail. */
+        static float src[2 * N];
+        memset(src, 0, sizeof(src));
+        for (int i = 0; i < 64; i++) {
+            float w = 0.5f * (1.0f - cosf(2.0f * (float)M_PI * i / 63.0f));
+            src[2 * i] = 0.8f * w; src[2 * i + 1] = 0.8f * w;
+        }
+
+        float d[DR32_SEND_PARAMS];
+        dr32_efx_defaults(DR32_EFX_NONLIN, d);
+        d[2] = 0.45f;  d[4] = 0.5f;               /* ~300 ms, dead flat */
+        run_wet_p(DR32_EFX_NONLIN, d, src, wet, N, 120.0f);
+
+        /* compare the same two slices well inside the window */
+        const int e0 = SR * 40 / 1000, e1 = SR * 80 / 1000;     /*  40- 80 ms */
+        const int l0 = SR * 180 / 1000, l1 = SR * 220 / 1000;   /* 180-220 ms */
+        float nlEarly = rms_range(wet, e0, e1), nlLate = rms_range(wet, l0, l1);
+        float nlDrop = 20.0f * log10f(nlLate / (nlEarly + 1e-12f) + 1e-12f);
+
+        float pd[DR32_SEND_PARAMS];
+        dr32_efx_defaults(DR32_EFX_PLATE, pd);
+        run_wet_p(DR32_EFX_PLATE, pd, src, wet2, N, 120.0f);
+        float plEarly = rms_range(wet2, e0, e1), plLate = rms_range(wet2, l0, l1);
+        float plDrop = 20.0f * log10f(plLate / (plEarly + 1e-12f) + 1e-12f);
+
+        printf("  nonlin window %+.1f dB over 40->200 ms   (plate %+.1f dB)\n",
+               nlDrop, plDrop);
+        CHECK(nlEarly > 1e-5f, "nonlin produced nothing inside its window");
+        CHECK(fabsf(nlDrop) < 6.0f,
+              "nonlin window fell %+.1f dB — it is decaying, not holding", nlDrop);
+        /* Flatness is the ABSOLUTE deviation, not a signed drop. The plate
+         * does not fall across this span — it RISES about 4 dB, because its
+         * first arrival is ~40 ms and it is still building density at 80 ms.
+         * Comparing signed values would have called a rising plate "flatter"
+         * than a flat window. */
+        CHECK(fabsf(nlDrop) < fabsf(plDrop) - 2.0f,
+              "nonlin deviates %+.1f dB across its window against the plate's "
+              "%+.1f dB — it is not holding a level the way a plate does not",
+              nlDrop, plDrop);
+
+        /* The cliff. ⚠ Stay inside the buffer: N is 500 ms, and reading to
+         * 700 ms ran off the end of `wet` into the next static array — which
+         * reported a healthy signal past a window that had actually closed. */
+        float after = rms_range(wet, SR * 350 / 1000, N);
+        float cliff = 20.0f * log10f(after / (nlEarly + 1e-12f) + 1e-12f);
+        printf("  nonlin cliff %.1f dB\n", cliff);
+        CHECK(cliff < -60.0f, "nonlin does not stop dead (%.1f dB)", cliff);
+
+        /* it must START with the hit — the tank alone arrives 19-53 ms late,
+         * which is a hole exactly where this effect lives */
+        float first = rms_range(wet, 0, SR * 5 / 1000);        /* first 5 ms */
+        CHECK(first > nlEarly * 0.2f,
+              "nonlin is silent for the first 5 ms (%.6f vs %.6f in the window) — "
+              "the early energy is missing", first, nlEarly);
+
+        /* shape: rising must end higher than falling */
+        d[4] = 1.0f; run_wet_p(DR32_EFX_NONLIN, d, src, wet, N, 120.0f);
+        float up = 20.0f * log10f(rms_range(wet, l0, l1) / (rms_range(wet, e0, e1) + 1e-12f) + 1e-12f);
+        d[4] = 0.0f; run_wet_p(DR32_EFX_NONLIN, d, src, wet, N, 120.0f);
+        float dn = 20.0f * log10f(rms_range(wet, l0, l1) / (rms_range(wet, e0, e1) + 1e-12f) + 1e-12f);
+        printf("  nonlin shape: falling %+.1f dB, rising %+.1f dB\n", dn, up);
+        CHECK(up > dn + 6.0f, "shape knob did nothing (%+.1f vs %+.1f dB)", dn, up);
+    }
+
+    // ---- GATED and NONLIN must not be the same effect.
+    //
+    //      They sit next to each other in the picker and both end a window, so
+    //      "is there any real difference?" is the right question — and the first
+    //      answer was NO. At equal window lengths the gated type ROSE +6 dB
+    //      across its whole hold and stayed there, because its tank decay was
+    //      pinned at 0.72 and the tank's density build dominates the first
+    //      ~180 ms. It was a flat window with a chop, i.e. NonLin.
+    //
+    //      Envelope SHAPE turned out to be the wrong thing to assert: with the
+    //      gate's decay exposed (slot 4) and NonLin's Shape control, their
+    //      ranges legitimately overlap — a gate at full tail measures -2.8 dB
+    //      peak-to-end and a rising NonLin -2.7 dB. Tuning one to differ from
+    //      the other would only be true until someone turned a knob.
+    //
+    //      What separates them is STRUCTURAL and survives any setting: the
+    //      gate's hold RE-ARMS for as long as the input stays above threshold,
+    //      so on sustained material it simply stays open; NonLin runs a fixed
+    //      window from a TRANSIENT and then cuts, and a continuous source never
+    //      gives it a new transient to fire on.
+    //
+    //      ⚠ The lesson is the test, not the tuning: a new type has to be
+    //      measured against its NEIGHBOUR. NonLin passed a flatness test against
+    //      the PLATE and shipped anyway, because the plate was never the thing
+    //      it could be confused with.
+    {
+        static float sus[2 * N];
+        unsigned rr = 12345u;
+        for (int i = 0; i < N; i++) {                 /* sustained, no transients */
+            rr = rr * 1664525u + 1013904223u;
+            float v = 0.25f * ((float)(int)rr / 2147483648.0f);
+            sus[2 * i] = v; sus[2 * i + 1] = v;
+        }
+        float gp[DR32_SEND_PARAMS], np[DR32_SEND_PARAMS];
+        dr32_efx_defaults(DR32_EFX_GATED, gp);  gp[2] = 0.45f;
+        dr32_efx_defaults(DR32_EFX_NONLIN, np); np[2] = 0.36f;
+
+        run_wet_p(DR32_EFX_GATED, gp, sus, wet, N, 120.0f);
+        float gEarly = rms_range(wet, 0, SR / 10);
+        float gLate  = rms_range(wet, SR * 4 / 10, N);
+        run_wet_p(DR32_EFX_NONLIN, np, sus, wet2, N, 120.0f);
+        float nEarly = rms_range(wet2, 0, SR / 10);
+        float nLate  = rms_range(wet2, SR * 4 / 10, N);
+
+        float gDb = 20.0f * log10f(gLate / (gEarly + 1e-12f) + 1e-12f);
+        float nDb = 20.0f * log10f(nLate / (nEarly + 1e-12f) + 1e-12f);
+        printf("  sustained input, late vs early:  Gated %+.1f dB   NonLin %+.1f dB\n",
+               gDb, nDb);
+        CHECK(gDb > -6.0f,
+              "Gated shut on sustained input (%+.1f dB) — its hold must re-arm "
+              "while the source is above threshold", gDb);
+        CHECK(nDb < -40.0f,
+              "NonLin stayed open on sustained input (%+.1f dB) — its window is "
+              "a fixed length from a transient, not a gate that follows the "
+              "material", nDb);
+    }
+
+    // ---- the GATE must actually gate.
+    //      Its hold knob sets how long the tail survives before it is chopped,
+    //      so the tail has to END, and end EARLIER at a shorter hold. A plate
+    //      with a decay knob would pass "shorter is shorter" too, which is why
+    //      the second check looks for the chop: past the hold there must be
+    //      essentially nothing left, not a fade.
+    {
+        static float imp[2 * N];
+        memset(imp, 0, sizeof(imp));
+        for (int i = 0; i < 64; i++) { imp[2 * i] = 0.6f; imp[2 * i + 1] = 0.6f; }
+
+        float d[DR32_SEND_PARAMS];
+        dr32_efx_defaults(DR32_EFX_GATED, d);
+        d[2] = 0.15f;  float shortHold = rt60_default(DR32_EFX_GATED, d);
+        d[2] = 0.90f;  float longHold  = rt60_default(DR32_EFX_GATED, d);
+        printf("  gate hold: %.2f s -> %.2f s\n", shortHold, longHold);
+        CHECK(longHold > shortHold * 1.5f,
+              "gate hold did not lengthen the tail (%.2f -> %.2f s)", shortHold, longHold);
+
+        /* the chop: energy well past the hold must be far below the tail's own */
+        d[2] = 0.15f;
+        run_wet_p(DR32_EFX_GATED, d, imp, wet, N, 120.0f);
+        float inside = rms_range(wet, SR / 50, SR / 12);       /* 20-83 ms */
+        float after  = rms_range(wet, SR / 3, N);              /* past 333 ms */
+        float drop = 20.0f * log10f(after / (inside + 1e-12f) + 1e-12f);
+        printf("  gate chop: %.1f dB from inside the gate to past it\n", drop);
+        CHECK(drop < -40.0f,
+              "the gated reverb does not close (%.1f dB) — it is just a reverb", drop);
     }
 
     // ---- an idle send bus must stop costing CPU, but only after its tail
@@ -451,13 +670,14 @@ int main(void) {
     //      mono reverbs: an L-only impulse put -107 dB in the right channel, so
     //      centre-panned pads collapsed the whole send to mono.
     {
-        const dr32_efx_type types[2] = { DR32_EFX_PLATE, DR32_EFX_SPACES };
-        const char *names[2] = { "Plate", "Spaces" };
-        for (int t = 0; t < 2; t++) {
+        for (int t = 0; t < NVERBS; t++) {
+            const dr32_efx_type *types = &kVerbs[t].t;
+            const char *names[1] = { kVerbs[t].n };
+            (void)types;
             static float imp[2 * N];
             memset(imp, 0, sizeof(imp));
             imp[0] = 1.0f;                                  // LEFT only
-            run_wet4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, imp, wet, N);
+            run_wet4(kVerbs[t].t, 0.5f, 0.3f, 0.5f, 0.0f, imp, wet, N);
             double el = 0, er = 0;
             for (int i = 0; i < N; i++) {
                 el += (double)wet[2 * i] * wet[2 * i];
@@ -469,14 +689,14 @@ int main(void) {
             static float imp2[2 * N];
             memset(imp2, 0, sizeof(imp2));
             imp2[0] = 1.0f; imp2[1] = 1.0f;
-            run_wet4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, imp2, wet2, N);
+            run_wet4(kVerbs[t].t, 0.5f, 0.3f, 0.5f, 0.0f, imp2, wet2, N);
             double sxy = 0, sxx = 0, syy = 0;
             for (int i = SR / 10; i < N; i++) {
                 double x = wet2[2 * i], y = wet2[2 * i + 1];
                 sxy += x * y; sxx += x * x; syy += y * y;
             }
             float corr = (sxx > 0 && syy > 0) ? (float)(sxy / sqrt(sxx * syy)) : 1.0f;
-            printf("  %-5s corr %+.2f   L-only -> R/L %+.1f dB\n", names[t], corr, rl);
+            printf("  %-7s corr %+.2f   L-only -> R/L %+.1f dB\n", names[0], corr, rl);
             /* BOTH must be decorrelated. The Plate always was. Spaces
              * (Verbity2) is symmetric internally and on its own produced
              * bit-identical L and R (corr +1.00); it is fed through the same
@@ -484,10 +704,10 @@ int main(void) {
              * prime lengths, which takes it to about +0.05. */
             CHECK(corr < 0.50f,
                   "%s produced correlated L/R (corr %+.2f) — it is running mono",
-                  names[t], corr);
+                  names[0], corr);
             CHECK(rl > -50.0f,
                   "%s put only %+.1f dB into the right channel from an L-only hit",
-                  names[t], rl);
+                  names[0], rl);
         }
     }
 
@@ -538,23 +758,21 @@ int main(void) {
     //      bus is a trap. Summing two uncorrelated signals loses ~3 dB; summing
     //      two anti-correlated ones loses far more.
     {
-        const dr32_efx_type ty[2] = { DR32_EFX_PLATE, DR32_EFX_SPACES };
-        const char *nm[2] = { "Plate", "Spaces" };
-        for (int t = 0; t < 2; t++) {
+        for (int t = 0; t < NVERBS; t++) {
             static float imp[2 * N];
             memset(imp, 0, sizeof(imp));
             imp[0] = 1.0f; imp[1] = 1.0f;
-            run_wet4(ty[t], 0.5f, 0.3f, 0.5f, 0.0f, imp, wet, N);
+            run_wet4(kVerbs[t].t, 0.5f, 0.3f, 0.5f, 0.0f, imp, wet, N);
             double mono = 0, one = 0;
             for (int i = SR / 10; i < N; i++) {
                 double m = 0.5 * (wet[2 * i] + wet[2 * i + 1]);
                 mono += m * m; one += (double)wet[2 * i] * wet[2 * i];
             }
             float fold = 10.0f * log10f((float)(mono / (one + 1e-30)) + 1e-30f);
-            printf("  %-6s mono-fold %+.2f dB\n", nm[t], fold);
+            printf("  %-7s mono-fold %+.2f dB\n", kVerbs[t].n, fold);
             CHECK(fold > -6.0f,
                   "%s loses %+.2f dB when summed to mono — the width is phase cancellation",
-                  nm[t], fold);
+                  kVerbs[t].n, fold);
         }
     }
 

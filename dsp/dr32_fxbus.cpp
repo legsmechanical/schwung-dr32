@@ -675,6 +675,106 @@ struct Delay {
     }
 };
 
+/** NonLin — the AMS RMX16's trick, and the reason it is called NONLINEAR: the
+ *  tail does not decay at all. It holds a roughly constant level for a set time
+ *  and then stops dead.
+ *
+ *  That is NOT the Gated type with a different knob. A gate follows the input
+ *  and chops an exponential decay, so the level is always falling underneath —
+ *  you hear a reverb being cut off. NonLin overrides the decay itself: the
+ *  window is flat (or deliberately RISING, which no natural space does, and
+ *  which is most of the character), and the end is a cliff rather than a fade.
+ *
+ *  Built from the plate tank rather than a fixed tap pattern. The period units
+ *  used a dense FIR, which would be ~13k taps per channel for a 300 ms window
+ *  here — hopeless per-sample on a Move core. Instead the tank is run with its
+ *  feedback pinned near maximum, so its natural fall across a 300 ms window is
+ *  a couple of dB rather than tens, and the synthetic envelope does the rest.
+ *  Measured flatness is asserted in the tests; "near enough to flat" is a claim
+ *  that has to be checked, not assumed.
+ *
+ *  Retriggers on transients, so a busy pattern re-arms the window per hit
+ *  instead of the first hit owning it. */
+struct NonLin {
+    float fs = 44100.0f;
+    // Transient detector: the same fast-follower-vs-smoothed-follower shape the
+    // Drum Bus's Attack section uses, for the same reason — it reads "how much
+    // of this moment is faster than the local average", which is bounded and
+    // does not explode coming out of silence.
+    float aFast = 0.0f, rFast = 0.0f, aSmooth = 0.0f;
+    float envF = 0.0f, envS = 0.0f;
+
+    int   pos = -1;          // samples since the window opened, -1 = closed
+    int   len = 0;           // window length in samples
+    int   rel = 66;          // release, in samples, AFTER the window
+    int   refractory = 0;    // samples until a retrigger is allowed
+    float tiltA = 1.0f, tiltB = 1.0f;   // gain at the start and end of the window
+
+    void setSampleRate(float sr) {
+        fs = (sr > 1.0f) ? sr : 44100.0f;
+        aFast   = 1.0f - expf(-1.0f / (0.0005f * fs));
+        rFast   = 1.0f - expf(-1.0f / (0.050f * fs));
+        aSmooth = 1.0f - expf(-1.0f / (0.030f * fs));
+    }
+    void reset() { envF = envS = 0.0f; pos = -1; refractory = 0; }
+
+    /** len01 -> 50..600 ms. shape 0.5 = flat, 0 = falling, 1 = rising (+-9 dB
+     *  across the window, normalised so the peak stays at unity — a rising
+     *  window must not also be a louder one). */
+    void setParams(float len01, float shape, float rel01) {
+        if (len01 < 0.0f) len01 = 0.0f; else if (len01 > 1.0f) len01 = 1.0f;
+        if (shape < 0.0f) shape = 0.0f; else if (shape > 1.0f) shape = 1.0f;
+        if (rel01 < 0.0f) rel01 = 0.0f; else if (rel01 > 1.0f) rel01 = 1.0f;
+        len = (int)((0.050f + 0.550f * len01) * fs);
+        // 1 ms .. 500 ms, logarithmic: the useful half of this control is the
+        // short end, where it decides chop vs thump, and a linear knob would
+        // spend nine tenths of its travel above 50 ms.
+        rel = (int)(0.001f * powf(500.0f, rel01) * fs);
+        if (rel < 2) rel = 2;
+        const float db = (shape - 0.5f) * 18.0f;
+        float a = powf(10.0f, -db / 40.0f), b = powf(10.0f, db / 40.0f);
+        const float m = (a > b) ? a : b;
+        tiltA = a / m; tiltB = b / m;
+    }
+
+    /** Call with the INPUT frame (for triggering) and the tank's WET frame. */
+    inline void run(float inL, float inR, float &wl, float &wr) {
+        const float m = fabsf(inL) + fabsf(inR);
+        envF += (m > envF ? aFast : rFast) * (m - envF);
+        envS += aSmooth * (envF - envS);
+        const float t = (envF - envS) / (envF + 1e-6f);
+        if (refractory > 0) refractory--;
+        // 0.35 of "faster than local average", plus a real-signal floor so the
+        // noise between hits cannot arm it. 30 ms refractory: a flam re-arming
+        // the window twice in 5 ms would swallow its own front.
+        if (t > 0.35f && envF > 1e-4f && refractory == 0) {
+            pos = 0;
+            refractory = (int)(0.030f * fs);
+        }
+
+        if (pos < 0) { wl = 0.0f; wr = 0.0f; return; }
+
+        const int fade = (int)(0.0015f * fs);        // 1.5 ms, click-free in
+        if (pos >= len + rel) { pos = -1; wl = 0.0f; wr = 0.0f; return; }
+
+        float g;
+        if (pos < len) {
+            const float frac = (float)pos / (float)(len > 0 ? len : 1);
+            g = tiltA + (tiltB - tiltA) * frac;
+            if (pos < fade) g *= (float)pos / (float)fade;      // no click in
+        } else {
+            // The release runs AFTER the window rather than eating the end of
+            // it, so lengthening it does not shorten what you set. Linear from
+            // wherever the tilt left off — at the short end that is the cliff
+            // this always had, at the long end it is a slope.
+            const float k = (float)(pos - len) / (float)rel;
+            g = tiltB * (1.0f - k);
+        }
+        pos++;
+        wl *= g; wr *= g;
+    }
+};
+
 /** One effect instance. Only the algorithm the current type needs is run; all
  *  of them are resident because allocating on a type change would have to
  *  happen on the audio thread. */
@@ -702,14 +802,34 @@ struct Slot {
     DampLP     spacesLP;                   // extends Spaces' dark end only
     awk_verbity2::Verbity2 spaces;         // the flexible room-to-hall model
     Delay      delay;                      // tempo-synced, filtered feedback
+    NonLin     nonlin;                     // flat-then-cliff envelope over the tank
+
+    /* Which SpaceExtra type a DR32 type arms, -1 for the ones that do not run
+     * through the shared tank. Only ONE type is armed at a time — the struct is
+     * built that way (its two delays share a buffer) — which is fine, since a
+     * slot has exactly one type. */
+    static int spaceType(dr32_efx_type t) {
+        switch (t) {
+            case DR32_EFX_PLATE:   return SpaceExtra::Plate;
+            case DR32_EFX_GATED:   return SpaceExtra::GatedRev;
+            // NonLin runs the PLAIN plate tank — its own envelope replaces the
+            // decay, so arming the gated variant would gate it twice.
+            case DR32_EFX_NONLIN:  return SpaceExtra::Plate;
+            case DR32_EFX_DIGITAL: return SpaceExtra::Digital;
+            case DR32_EFX_HALL:    return SpaceExtra::Hall;
+            default:               return -1;
+        }
+    }
+    bool isTank() const { return spaceType(type) >= 0; }
 
     void setSampleRate(float fs) {
         fs_ = fs;
         tank.setSampleRate(fs);
-        tank.setType(SpaceExtra::Plate);
+        tank.setType(spaceType(type) >= 0 ? spaceType(type) : (int)SpaceExtra::Plate);
         diff.setSampleRate(fs);
         spaces.setSampleRate(fs);
         delay.setSampleRate(fs);
+        nonlin.setSampleRate(fs);
         apply();
     }
 
@@ -728,6 +848,10 @@ struct Slot {
         // The exponent spreads that range over the knob instead of the top
         // corner. 0 still means "no damping" — a bright plate is a legitimate
         // thing to want, it just should not be the default.
+        // Arm the tank for whichever type this slot is. setType() early-outs on
+        // an unchanged value, so this is free on a plain knob move.
+        if (isTank()) tank.setType(spaceType(type));
+
         const float pd2 = p[1] < 0.0f ? 0.0f : (p[1] > 1.0f ? 1.0f : p[1]);
         const float tankDamp = powf(pd2, 0.40f);
 
@@ -752,7 +876,45 @@ struct Slot {
         // 5.5 kHz it has been voiced at, with 0 meaning genuinely undamped
         // (12.5 kHz) and 1.0 genuinely dark (1.2 kHz).
         plateLP.set(12486.0f * powf(0.0961f, pd2), fs_);
-        tank.setParams(p[0], tankDamp, /*internal predelay*/ 0.0f, /*feed = decay*/ p[2] * 0.75f, 1.0f);
+        // Damping is curved for the PLATE (and the gate, which is the plate
+        // tank); the FDN and Chamber have their own damping laws inside
+        // SpaceExtra and want the raw knob.
+        //
+        // The internal pre-delay is pinned at 0 for every type: DR32 runs its
+        // own pre-delay line ahead of the tank, and the two would stack.
+        //
+        // ⚠ Decay is scaled per type rather than shared. 0.75 is the plate's
+        // measured ceiling; Chamber reaches cathedral length at the top of its
+        // range (it was pulled once for exactly that, commit 07ca02c), and the
+        // GATE reads this slot as its HOLD time, where the full range is the
+        // point.
+        switch (type) {
+            case DR32_EFX_GATED:
+                tank.setParams(p[0], tankDamp, 0.0f, /*hold*/ p[2], 1.0f);
+                // Slot 4 is the tank's OWN decay here (NonLin uses the same slot
+                // for Shape). A gated reverb has two lengths — how long the
+                // reverb rings and how long the gate stays open — and collapsing
+                // them into one was what made this type indistinguishable from
+                // NonLin.
+                tank.setGateDecay(0.20f + 0.72f * p[4]);
+                // Same law and same slot as NonLin's release: 1 ms .. 500 ms.
+                tank.setGateRelease(0.001f * powf(500.0f, p[5] < 0.0f ? 0.0f :
+                                                 (p[5] > 1.0f ? 1.0f : p[5])));
+                break;
+            case DR32_EFX_HALL:
+                tank.setParams(p[0], pd2, 0.0f, /*feed*/ p[2] * 0.20f, 1.0f); break;
+            case DR32_EFX_NONLIN:
+                // Feedback pinned near maximum so the tank barely falls across
+                // the window; slot 2 is the window LENGTH, not a decay, and
+                // slot 4 tilts it.
+                tank.setParams(p[0], tankDamp, 0.0f, /*feed*/ 0.95f, 1.0f);
+                nonlin.setParams(p[2], p[4], p[5]);
+                break;
+            case DR32_EFX_DIGITAL:
+                tank.setParams(p[0], pd2, 0.0f, /*feed*/ p[2] * 0.85f, 1.0f); break;
+            default:
+                tank.setParams(p[0], tankDamp, 0.0f, /*feed = decay*/ p[2] * 0.75f, 1.0f); break;
+        }
 
         // --- Spaces (Verbity2) mapping ------------------------------------
         //   A RmSize  <- size   0.11-4.75 s at size .30, 0.37-16.1 s at .75,
@@ -798,6 +960,7 @@ struct Slot {
         spacesLP.reset();
         spaces.reset();
         delay.reset();
+        nonlin.reset();
     }
 
     /** Run `n` interleaved stereo frames in place. `sl`/`sr` are scratch. */
@@ -821,15 +984,61 @@ struct Slot {
             }
         }
 
+        if (isTank()) {
+            // The per-channel diffuser runs in front of EVERY tank type, not
+            // just the plate. Its two sides use different prime lengths, so it
+            // hands the reverb two decorrelated inputs — which is what stops a
+            // symmetric algorithm collapsing to mono. Chamber has exactly that
+            // defect and is why Hall was pulled from DR32 once (cef30f4: an
+            // L-only impulse put -107 dB in the right channel and max|L-R| was
+            // exactly 0). Allpasses are flat by construction, so this costs no
+            // tone. The plate always ran through it, so its sound is unchanged.
+            //
+            // plateLP is the PLATE's transducer rolloff and stays on the plate
+            // and its gated variant only — the FDN and Chamber carry their own
+            // damping, and stacking ours on top would just make them dull.
+            const bool lp = (type == DR32_EFX_PLATE || type == DR32_EFX_GATED
+                             || type == DR32_EFX_NONLIN);
+            // ⚠ Chamber is TWO INDEPENDENT MONO REVERBS — nothing crosses
+            // between its channels. The diffuser alone does not save it: it is
+            // per-channel, so an L-only hit still leaves the right side empty
+            // (measured -112 dB into R, which is the very defect that got Hall
+            // pulled from DR32 in cef30f4, at -107 dB). It needs the mono SUM
+            // fed to both sides; the diffuser's two sides run different prime
+            // lengths, so the two tails still come out decorrelated.
+            //
+            // Only Hall. The plate's figure-eight tank and the FDN both couple
+            // their channels internally and measure fine from an L-only hit
+            // (+0.1 dB and -0.4 dB), and forcing a mono sum on the plate would
+            // change a voicing that has been measured and tuned.
+            const bool monoIn = (type == DR32_EFX_HALL);
+            for (int i = 0; i < n; i++) {
+                const float inL = io[2 * i], inR = io[2 * i + 1];
+                const float a = monoIn ? 0.5f * (inL + inR) : inL;
+                const float b = monoIn ? 0.5f * (inL + inR) : inR;
+                float l = diff.run(0, a), r = diff.run(1, b);
+                // The tank now has its own early reflections (space_extra.h
+                // taps the input diffusers, which fixed the plate's 44 ms
+                // onset), so this is a TOP-UP rather than the whole early
+                // field: without it NonLin arrives at 4.3 ms and its first 5 ms
+                // sits at 19% of the window level, which for a burst effect
+                // reads as a soft front. 0.35 puts the start ON the hit.
+                // Measured both ways; the test asserts the result.
+                const float earlyL = l, earlyR = r;
+                tank.tick(l, r);
+                if (type == DR32_EFX_NONLIN) { l += earlyL * 0.35f; r += earlyR * 0.35f; }
+                if (lp) plateLP.run(l, r);
+                // ⚠ Triggered from the INPUT, not from the tank's output: the
+                // wet signal has already been smeared by the diffuser and the
+                // tank, so its "transient" is whatever is left of one. The hit
+                // that should open the window is the one going IN.
+                if (type == DR32_EFX_NONLIN) nonlin.run(inL, inR, l, r);
+                io[2 * i] = l; io[2 * i + 1] = r;
+            }
+            return;
+        }
+
         switch (type) {
-            case DR32_EFX_PLATE:
-                for (int i = 0; i < n; i++) {
-                    float l = diff.run(0, io[2 * i]), r = diff.run(1, io[2 * i + 1]);
-                    tank.tick(l, r);
-                    plateLP.run(l, r);
-                    io[2 * i] = l; io[2 * i + 1] = r;
-                }
-                break;
             case DR32_EFX_SPACES: {
                 // Verbity2's L and R paths are symmetric, so a centred hit came
                 // out with the two channels bit-identical (correlation +1.00).
@@ -882,6 +1091,10 @@ struct dr32_fxbus {
 };
 
 extern "C" {
+
+int dr32_efx_is_tank(dr32_efx_type t) {
+    return Slot::spaceType(t) >= 0 ? 1 : 0;
+}
 
 dr32_fxbus *dr32_fxbus_create(float sample_rate) {
     dr32_fxbus *fx = new (std::nothrow) dr32_fxbus();
@@ -1028,6 +1241,47 @@ void dr32_efx_defaults(dr32_efx_type type, float *o) {
             // Spaces is the one control set for everything from a tight room to
             // a hall, so it should open somewhere you would actually start.
             o[0] = 0.35f; o[1] = 0.40f; o[2] = 0.45f; o[3] = 0.02f; break;
+        case DR32_EFX_GATED:
+            // ⚠ A TIGHT tank, not a big one — measured, against my own first
+            // guess of 0.70. A gate needs something to gate, and the tank's
+            // density build dominates the first ~180 ms: at size 0.70 the
+            // window still RISES through the whole hold (+6 dB) and the type is
+            // indistinguishable from NonLin sitting next to it. At size 0.20 it
+            // peaks around 65 ms and then falls cleanly (+6.9 -> -10.4 dB by
+            // 240 ms) — quick dense build, audible decay, then the chop, which
+            // is the sound this is for.
+            //
+            // Slot 2 is the gate HOLD (50..500 ms), slot 4 the tank's OWN decay,
+            // slot 5 the release. No pre-delay: the gate is the shape.
+            o[0] = 0.20f; o[1] = 0.20f; o[2] = 0.45f; o[3] = 0.0f;
+            o[4] = 0.30f; o[5] = 0.28f; break;
+        case DR32_EFX_DIGITAL:
+            // 80s rack: mid-size, fairly bright, a medium tail. Its 12-bit loop
+            // grain and chorused modulation are internal and always on — that is
+            // the sound, not a fault.
+            //
+            // ⚠ SpaceExtra's sibling LoFi type (the same FDN at fs/3 and 7 bits)
+            // is deliberately NOT offered. Measured, its decay knob is dead:
+            // RT60 spans 0.19 s to 0.26 s across the whole control, and raising
+            // the bit depth 7 -> 11 only reaches 0.41 s, so the short tail is
+            // structural to that voicing rather than a quantisation floor. The
+            // effect is usable but the control is not, and a dead knob is the
+            // defect this suite exists to catch. Revisit with its own pass.
+            o[0] = 0.50f; o[1] = 0.45f; o[2] = 0.50f; o[3] = 0.03f; break;
+        case DR32_EFX_HALL:
+            // ⚠ Chamber reaches cathedral length at the top of its range and was
+            // pulled from DR32 once for exactly that (07ca02c). Decay is scaled
+            // to 0.62 in apply() and the default sits mid-knob; the RT60 test
+            // holds it under 3 s.
+            o[0] = 0.55f; o[1] = 0.45f; o[2] = 0.45f; o[3] = 0.04f; break;
+        case DR32_EFX_NONLIN:
+            // A dense bright tank — the window is doing the shaping, so the
+            // reverb under it wants density rather than character. Slot 2 is the
+            // window LENGTH (0.45 -> ~300 ms, the classic non-lin), slot 4 its
+            // TILT, defaulting dead flat. No pre-delay: the point is that the
+            // hit and the window start together.
+            o[0] = 0.35f; o[1] = 0.25f; o[2] = 0.45f; o[3] = 0.0f; o[4] = 0.5f;
+            o[5] = 0.07f; break;   // ~1.5 ms, the cliff this always had
         case DR32_EFX_DELAY:
             // The factory corpus's dominant configuration, not a guess: L = 1
             // sixteenth and R = 4 is what ten of the twelve native delay returns
@@ -1052,6 +1306,10 @@ const char *dr32_efx_name(dr32_efx_type type) {
         case DR32_EFX_PLATE:  return "Plate";
         case DR32_EFX_SPACES: return "Spaces";
         case DR32_EFX_DELAY:  return "Delay";
+        case DR32_EFX_GATED:  return "Gated";
+        case DR32_EFX_DIGITAL:return "Digital";
+        case DR32_EFX_HALL:   return "Hall";
+        case DR32_EFX_NONLIN: return "NonLin";
         default:              return "Off";
     }
 }
@@ -1061,6 +1319,10 @@ dr32_efx_type dr32_efx_from_name(const char *name) {
     if (!std::strcmp(name, "Plate")) return DR32_EFX_PLATE;
     if (!std::strcmp(name, "Spaces")) return DR32_EFX_SPACES;
     if (!std::strcmp(name, "Delay")) return DR32_EFX_DELAY;
+    if (!std::strcmp(name, "Gated")) return DR32_EFX_GATED;
+    if (!std::strcmp(name, "Digital")) return DR32_EFX_DIGITAL;
+    if (!std::strcmp(name, "Hall")) return DR32_EFX_HALL;
+    if (!std::strcmp(name, "NonLin")) return DR32_EFX_NONLIN;
     // Anything else, including a saved state naming the old "Drum Bus" send
     // type, falls through to Off.
     return DR32_EFX_NONE;

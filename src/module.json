@@ -293,7 +293,11 @@
                 "Off",
                 "Plate",
                 "Spaces",
-                "Delay"
+                "Delay",
+                "Gated",
+                "Digital",
+                "Hall",
+                "NonLin"
               ]
             },
             {
@@ -305,7 +309,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send1_mode",
-                "equals": "Verb"
+                "not_equals": "Delay"
               }
             },
             {
@@ -318,7 +322,20 @@
               "default": 0.3,
               "visible_if": {
                 "param": "send1_mode",
-                "equals": "Verb"
+                "not_equals": "Delay"
+              }
+            },
+            {
+              "key": "send1_predelay",
+              "name": "Pre-delay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0,
+              "visible_if": {
+                "param": "send1_mode",
+                "not_equals": "Delay"
               }
             },
             {
@@ -334,16 +351,66 @@
               }
             },
             {
-              "key": "send1_predelay",
-              "name": "Pre-delay",
+              "key": "send1_hold",
+              "name": "Gate Hold",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.0,
               "visible_if": {
                 "param": "send1_mode",
-                "equals": "Verb"
+                "equals": "Gate"
+              }
+            },
+            {
+              "key": "send1_tail",
+              "name": "Tail Decay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.3,
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "Gate"
+              }
+            },
+            {
+              "key": "send1_length",
+              "name": "Length",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "NonLin"
+              }
+            },
+            {
+              "key": "send1_shape",
+              "name": "Shape",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.5,
+              "visible_if": {
+                "param": "send1_mode",
+                "equals": "NonLin"
+              }
+            },
+            {
+              "key": "send1_release",
+              "name": "Release",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.28,
+              "visible_if": {
+                "param": "send1_env",
+                "equals": "Env"
               }
             },
             {
@@ -356,7 +423,7 @@
               ],
               "visible_if": {
                 "param": "send1_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -367,7 +434,7 @@
               "max": 16,
               "unit": "/16",
               "visible_if": {
-                "param": "send1_mode",
+                "param": "send1_sync",
                 "equals": "Sync"
               }
             },
@@ -379,7 +446,7 @@
               "max": 16,
               "unit": "/16",
               "visible_if": {
-                "param": "send1_mode",
+                "param": "send1_sync",
                 "equals": "Sync"
               }
             },
@@ -392,7 +459,7 @@
               "step": 1.0,
               "unit": "ms",
               "visible_if": {
-                "param": "send1_mode",
+                "param": "send1_sync",
                 "equals": "Free"
               }
             },
@@ -405,7 +472,7 @@
               "step": 1.0,
               "unit": "ms",
               "visible_if": {
-                "param": "send1_mode",
+                "param": "send1_sync",
                 "equals": "Free"
               }
             },
@@ -418,7 +485,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send1_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -430,7 +497,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send1_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -442,7 +509,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send1_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -459,6 +526,11 @@
             "send1_size",
             "send1_damp",
             "send1_decay",
+            "send1_hold",
+            "send1_tail",
+            "send1_length",
+            "send1_shape",
+            "send1_release",
             "send1_predelay",
             "send1_sync",
             "send1_time_l",
@@ -481,7 +553,11 @@
                 "Off",
                 "Plate",
                 "Spaces",
-                "Delay"
+                "Delay",
+                "Gated",
+                "Digital",
+                "Hall",
+                "NonLin"
               ]
             },
             {
@@ -493,7 +569,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send2_mode",
-                "equals": "Verb"
+                "not_equals": "Delay"
               }
             },
             {
@@ -506,7 +582,20 @@
               "default": 0.3,
               "visible_if": {
                 "param": "send2_mode",
-                "equals": "Verb"
+                "not_equals": "Delay"
+              }
+            },
+            {
+              "key": "send2_predelay",
+              "name": "Pre-delay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0,
+              "visible_if": {
+                "param": "send2_mode",
+                "not_equals": "Delay"
               }
             },
             {
@@ -522,16 +611,66 @@
               }
             },
             {
-              "key": "send2_predelay",
-              "name": "Pre-delay",
+              "key": "send2_hold",
+              "name": "Gate Hold",
               "type": "float",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
-              "default": 0.0,
               "visible_if": {
                 "param": "send2_mode",
-                "equals": "Verb"
+                "equals": "Gate"
+              }
+            },
+            {
+              "key": "send2_tail",
+              "name": "Tail Decay",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.3,
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "Gate"
+              }
+            },
+            {
+              "key": "send2_length",
+              "name": "Length",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "NonLin"
+              }
+            },
+            {
+              "key": "send2_shape",
+              "name": "Shape",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.5,
+              "visible_if": {
+                "param": "send2_mode",
+                "equals": "NonLin"
+              }
+            },
+            {
+              "key": "send2_release",
+              "name": "Release",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.28,
+              "visible_if": {
+                "param": "send2_env",
+                "equals": "Env"
               }
             },
             {
@@ -544,7 +683,7 @@
               ],
               "visible_if": {
                 "param": "send2_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -555,7 +694,7 @@
               "max": 16,
               "unit": "/16",
               "visible_if": {
-                "param": "send2_mode",
+                "param": "send2_sync",
                 "equals": "Sync"
               }
             },
@@ -567,7 +706,7 @@
               "max": 16,
               "unit": "/16",
               "visible_if": {
-                "param": "send2_mode",
+                "param": "send2_sync",
                 "equals": "Sync"
               }
             },
@@ -580,7 +719,7 @@
               "step": 1.0,
               "unit": "ms",
               "visible_if": {
-                "param": "send2_mode",
+                "param": "send2_sync",
                 "equals": "Free"
               }
             },
@@ -593,7 +732,7 @@
               "step": 1.0,
               "unit": "ms",
               "visible_if": {
-                "param": "send2_mode",
+                "param": "send2_sync",
                 "equals": "Free"
               }
             },
@@ -606,7 +745,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send2_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -618,7 +757,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send2_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -630,7 +769,7 @@
               "step": 0.01,
               "visible_if": {
                 "param": "send2_mode",
-                "not_equals": "Verb"
+                "equals": "Delay"
               }
             },
             {
@@ -647,6 +786,11 @@
             "send2_size",
             "send2_damp",
             "send2_decay",
+            "send2_hold",
+            "send2_tail",
+            "send2_length",
+            "send2_shape",
+            "send2_release",
             "send2_predelay",
             "send2_sync",
             "send2_time_l",
