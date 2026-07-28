@@ -1,4 +1,4 @@
-// dr32_fxbus.cpp — implementation of DR32's send/insert buses.
+// dr32_fxbus.cpp — implementation of DR32's send buses.
 //
 // C++ because the vendored reverbs are C++ structs (see dsp/vendor/SOURCES.md);
 // the interface is extern "C" so the rest of the C11 engine is unaffected.
@@ -15,7 +15,6 @@
 #include <new>
 
 #define DR32_SEND_SLOTS   2
-#define DR32_INSERT_SLOTS 2
 #define DR32_MAX_BLOCK    1024
 
 namespace {
@@ -618,7 +617,6 @@ struct Slot {
 struct dr32_fxbus {
     float sample_rate = 44100.0f;
     Slot  sends[DR32_SEND_SLOTS];
-    Slot  inserts[DR32_INSERT_SLOTS];
     float send_return[DR32_SEND_SLOTS] = { 1.0f, 1.0f };
     // Per-block accumulation of what the pads sent to each bus.
     float send_buf[DR32_SEND_SLOTS][2 * DR32_MAX_BLOCK];
@@ -629,8 +627,6 @@ struct dr32_fxbus {
     // block-based with separate L/R pointers. One copy, not one per slot.
     float scratch_l[DR32_MAX_BLOCK];
     float scratch_r[DR32_MAX_BLOCK];
-    // Wet workspace for insert slots, which need the dry signal kept intact.
-    float wet[2 * DR32_MAX_BLOCK];
 };
 
 extern "C" {
@@ -640,7 +636,6 @@ dr32_fxbus *dr32_fxbus_create(float sample_rate) {
     if (!fx) return nullptr;
     fx->sample_rate = (sample_rate > 1.0f) ? sample_rate : 44100.0f;
     for (int i = 0; i < DR32_SEND_SLOTS; i++) fx->sends[i].setSampleRate(fx->sample_rate);
-    for (int i = 0; i < DR32_INSERT_SLOTS; i++) fx->inserts[i].setSampleRate(fx->sample_rate);
     std::memset(fx->send_buf, 0, sizeof(fx->send_buf));
     return fx;
 }
@@ -654,27 +649,12 @@ void dr32_fxbus_set_send_type(dr32_fxbus *fx, int slot, dr32_efx_type type) {
     fx->sends[slot].reset();
 }
 
-void dr32_fxbus_set_insert_type(dr32_fxbus *fx, int slot, dr32_efx_type type) {
-    if (!fx || slot < 0 || slot >= DR32_INSERT_SLOTS) return;
-    if (fx->inserts[slot].type == type) return;
-    fx->inserts[slot].type = type;
-    fx->inserts[slot].reset();
-}
-
 void dr32_fxbus_set_send_params(dr32_fxbus *fx, int slot,
                                 float p1, float p2, float p3, float predelay) {
     if (!fx || slot < 0 || slot >= DR32_SEND_SLOTS) return;
     Slot &s = fx->sends[slot];
     s.p1 = p1; s.p2 = p2; s.p3 = p3; s.pd = predelay;
     s.mix = 1.0f;                 // a send return is ALWAYS 100% wet
-    s.apply();
-}
-
-void dr32_fxbus_set_insert_params(dr32_fxbus *fx, int slot,
-                                  float p1, float p2, float p3, float predelay, float mix) {
-    if (!fx || slot < 0 || slot >= DR32_INSERT_SLOTS) return;
-    Slot &s = fx->inserts[slot];
-    s.p1 = p1; s.p2 = p2; s.p3 = p3; s.pd = predelay; s.mix = mix;
     s.apply();
 }
 
@@ -715,19 +695,6 @@ void dr32_fxbus_process(dr32_fxbus *fx, float *out, int n) {
         }
         std::memset(buf, 0, sizeof(float) * 2 * (size_t)n);
     }
-
-    // --- inserts: serial, wet/dry per slot
-    for (int s = 0; s < DR32_INSERT_SLOTS; s++) {
-        Slot &slot = fx->inserts[s];
-        if (!slot.active()) continue;
-        const float wetg = slot.mix, dry = 1.0f - slot.mix;
-        std::memcpy(fx->wet, out, sizeof(float) * 2 * (size_t)n);
-        slot.processBlock(fx->wet, n, fx->scratch_l, fx->scratch_r);
-        for (int i = 0; i < n; i++) {
-            out[2 * i]     = out[2 * i]     * dry + fx->wet[2 * i]     * wetg;
-            out[2 * i + 1] = out[2 * i + 1] * dry + fx->wet[2 * i + 1] * wetg;
-        }
-    }
 }
 
 void dr32_fxbus_reset(dr32_fxbus *fx) {
@@ -736,17 +703,17 @@ void dr32_fxbus_reset(dr32_fxbus *fx) {
         fx->sends[i].reset();
         std::memset(fx->send_buf[i], 0, sizeof(fx->send_buf[i]));
     }
-    for (int i = 0; i < DR32_INSERT_SLOTS; i++) fx->inserts[i].reset();
 }
 
 void dr32_efx_defaults(dr32_efx_type type, float *o) {
     if (!o) return;
     // [size, damp, decay, predelay, mix]. Pre-delay is in 0..200 ms.
     switch (type) {
-        // NOTE on o[4] (mix): a REVERB as an insert must never default to fully
-        // wet — that replaces the kit with its own ambience. Sends ignore this
-        // value entirely (a send return is always 100% wet by design), so it
-        // only affects insert slots.
+        // NOTE on o[4] (mix): vestigial. It mattered when these could be kit
+        // inserts, where a reverb defaulting to fully wet would have replaced
+        // the kit with its own ambience. Sends ignore it entirely — a send
+        // return is always 100% wet by design — so nothing reads it today. The
+        // measured values are left in place rather than zeroed.
         case DR32_EFX_PLATE:
             // Snare/clap plate: medium tank, a little damping so it is not
             // brittle, short-ish tail, ~10 ms pre-delay to keep the hit clear.

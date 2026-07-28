@@ -27,15 +27,7 @@ void dr32_kit_init(dr32_kit *k) {
         k->send_p[i][2] = 0.5f;   // decay
         k->send_p[i][3] = 0.0f;   // pre-delay OFF by default (it was 125 ms)
         k->send_p[i][4] = 1.0f;
-        // Insert defaults: Compress/Crunch off, Transients CENTRED (0.5 is
-        // neutral for a bipolar control), fully wet.
-        k->insert_p[i][0] = 0.0f;   // compress / size
-        k->insert_p[i][1] = 0.0f;   // crunch / damping
-        k->insert_p[i][2] = 0.5f;   // transients (0.5 neutral) / decay
-        k->insert_p[i][3] = 0.0f;   // pre-delay
-        k->insert_p[i][4] = 1.0f;   // dry/wet
         k->send_type[i] = DR32_EFX_NONE;
-        k->insert_type[i] = DR32_EFX_NONE;
         k->send_return_ui[i] = 1.0f;
     }
 

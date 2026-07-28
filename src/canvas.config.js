@@ -31,7 +31,6 @@ KIT_PARAM_MAX = 255;
 KIT_PICK_SENS = 6;
 
 const PAD_COUNT = 32;
-const PAD_BANK_COUNT = 3;      /* banks 0..2 are the pad pages */
 /* ⚠ Move's PADS send notes 68..99 on the control-surface path — NOT the 36..67
  * a drum rack uses musically. (Host: clearLedBatch() reserves knob touch 0-7,
  * steps 16-31, pads 68-99; docs/MIDI_INJECTION.md says the same.) Matching on
@@ -128,7 +127,7 @@ function penum(key, label, name, options, sq) {
     return Number.isFinite(n) ? Math.max(0, Math.min(options.length - 1, n)) : 0;
   };
   /* Write the LABEL, not the index. dr32_efx_from_name() resolves names ONLY,
-   * so an index write always resolved to Off and the send/insert type pickers
+   * so an index write always resolved to Off and the send type pickers
    * appeared stuck. filter_type and env_mode accept either, so labels are the
    * one rule that works for all three — and they round-trip exactly, since
    * that is what get_param returns. */
@@ -287,12 +286,10 @@ function drawWave(ctx, g, cells, s) {
   ctx.fillRect(Math.max(g.x, x1 - 1), g.y, 1, g.h, 1);
 }
 
-/* ---------- send / insert FX ------------------------------------------- */
+/* ---------- send FX ------------------------------------------------------ */
 
 const kSendTypes   = ["Off", "Plate", "Spaces"];
 const kSendSq      = ["OFF", "PLT", "SPC"];
-const kInsertTypes = ["Off", "Drum Bus", "Plate", "Spaces"];
-const kInsertSq    = ["OFF", "BUS", "PLT", "SPC"];
 
 function sendBank(n) {
   const p = "send" + n + "_";
@@ -310,37 +307,12 @@ function sendBank(n) {
   };
 }
 
-/* The middle four cells depend on the armed type: the reverbs expose
- * Size/Damp/Decay/Pre-delay, the Drum Bus exposes Compress/Crunch/Attack/
- * Sustain. Relabelling them here beats the hierarchy's visible_if, which
- * makes rows appear and vanish under the cursor. */
-function insertBank(n) {
-  const p = "insert" + n + "_";
-  const typeCell = penum(p + "type", "Type", "Insert " + n + " Type", kInsertTypes, kInsertSq);
-  const mixCell  = plin(p + "mix", "Mix", "Dry/Wet", 0, 1, (x) => Math.round(x * 100) + "%");
-  const verbCells = [
-    plin(p + "size", "Size", "Size", 0, 1),
-    plin(p + "damp", "Damp", "Damping", 0, 1),
-    plin(p + "decay", "Dcy", "Decay", 0, 1),
-    plin(p + "predelay", "Pre", "Pre-delay", 0, 1)
-  ];
-  const busCells = [
-    plin(p + "comp", "Comp", "Compress", 0, 1),
-    plin(p + "crunch", "Crch", "Crunch", 0, 1),
-    plin(p + "attack", "Atk", "Attack", 0, 1),
-    plin(p + "sustain", "Sus", "Sustain", 0, 1)
-  ];
-  const isBus = (ctx) => String(ctx.getParam(p + "type") || "") === "Drum Bus";
-  return {
-    label: "Insert " + n,
-    knobs: [typeCell].concat(verbCells, [mixCell]),
-    dynamicCells: (ctx) => [typeCell].concat(isBus(ctx) ? busCells : verbCells, [mixCell]),
-    dynamicKeys: busCells.map((c) => c.key),
-    header: (ctx) => "Insert " + n + ": " + (ctx.getParam(p + "type") || "Off")
-  };
-}
-
-const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), insertBank(1), insertBank(2)]);
+/* No insert banks. DR32's kit-level inserts were removed (Josh, 2026-07-27): a
+ * Schwung chain slot already carries its own insert FX in front of the output,
+ * so a kit insert duplicated a facility the host provides — and only DR32 could
+ * reach or persist it. Drum Bus, which only ever made sense as an insert, is
+ * moving to its own audio_fx module. */
+const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2)]);
 
 /* There is deliberately NO pad-map overlay. A 4x8 map of the kit used to be
  * drawn over the parameters whenever focus moved, because focus could move
@@ -362,10 +334,9 @@ const CONFIG = {
     { name: "Pad Smpl", bank: 0 },
     { name: "Pad Amp", bank: 1 },
     { name: "Pad Filt", bank: 2 },
-    { name: "SendFX", bank: 3 },
-    { name: "InsertFX", bank: 5 }
+    { name: "SendFX", bank: 3 }
   ],
-  icons: ["pulse", "enva", "lp", "sine", "sine", "routes", "routes"],
+  icons: ["pulse", "enva", "lp", "sine", "sine"],
 
   /* Edit focus follows the pad you physically hit.
    *
@@ -393,7 +364,7 @@ const CONFIG = {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
-    if (d[1] < 68 || d[1] > 99) return false;
+    if (d[1] < PAD_NOTE_LO || d[1] > PAD_NOTE_HI) return false;
     /* Flush BEFORE arming: every cell addresses "pad_*", which is about to mean
      * a different pad, and the cache must not outlive the change. */
     if (ctx._pcache) ctx._pcache = {};
@@ -407,7 +378,7 @@ const CONFIG = {
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;
     if (/_sample$/.test(key)) return true;
-    if (/^(send|insert)\d_type$/.test(key)) return true;
+    if (/^send\d_type$/.test(key)) return true;
     return null;
   },
 
@@ -420,5 +391,5 @@ const CONFIG = {
     return d;
   })(),
 
-  testExports: { kFilterTypes, kEnvModes, kInsertTypes, kSendTypes, PAD_COUNT, padOf }
+  testExports: { kFilterTypes, kEnvModes, kSendTypes, PAD_COUNT, padOf }
 };

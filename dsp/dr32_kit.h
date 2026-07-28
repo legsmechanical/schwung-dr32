@@ -37,17 +37,17 @@ typedef struct {
     signed char   note_to_pad[128];   // -1 = unmapped
     float         master_gain;        // linear
     unsigned      block;              // render-block counter (choke simultaneity)
-    dr32_fxbus   *fx;                 // 2 sends + 2 kit inserts (may be NULL)
+    dr32_fxbus   *fx;                 // 2 sends (may be NULL)
     // Per-pad render buffer, used only when a pad actually feeds a send.
     float         scratch[2 * DR32_KIT_MAX_BLOCK];
-    // Slot params are cached so the UI can set one at a time (the bus API takes
-    // them together). [p1,p2,p3,mix].
-    // [size, damp, decay, predelay, mix]
+    // Send params are cached so the UI can set one at a time (the bus API takes
+    // them together).
+    // [size, damp, decay, predelay, mix]. mix is vestigial — a send return is
+    // always 100% wet — but dr32_efx_defaults() fills all five, so the width
+    // stays 5 rather than making every per-type default table a special case.
     float         send_p[2][5];
-    float         insert_p[2][5];
     // Mirrors of slot state the UI reads back (the bus itself is write-only).
     dr32_efx_type send_type[2];
-    dr32_efx_type insert_type[2];
     float         send_return_ui[2];
     // Which pad the UI is editing, and whether playing a pad moves that focus.
     int           ui_current_pad;

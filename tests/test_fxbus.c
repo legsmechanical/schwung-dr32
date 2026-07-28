@@ -1,4 +1,4 @@
-// FX bus tests — sends, inserts, and the Drum Bus stages.
+// FX bus tests — the send buses and the effect algorithms they run.
 //
 // These exist because "it isn't doing anything" and "it thins the low end" are
 // both measurable, and were both true of the first Drum Bus: Transients used a
@@ -45,25 +45,32 @@ static float rms_range(const float *x, int from, int to) {
     return n ? (float)sqrt(s / n) : 0.0f;
 }
 
-/** Run a block through an insert slot and return the processed buffer. */
+/** Run a signal through an effect and return the 100% WET result.
+ *
+ *  Routed through a send bus with return 1.0, which IS fully wet by design, so
+ *  this measures the algorithm itself. (It used to run through an insert slot at
+ *  mix=1.0 — sample-equivalent, but kit inserts are gone.) */
 // p4 is pre-delay for the reverbs and SUSTAIN for the Drum Bus. Drum Bus
 // callers must pass 0.5 for neutral -- 0.0 pulls the tail down 8 dB.
-static void run_insert4(dr32_efx_type type, float p1, float p2, float p3, float p4,
-                        float mix, const float *in, float *out, int n) {
+static void run_wet4(dr32_efx_type type, float p1, float p2, float p3, float p4,
+                     const float *in, float *out, int n) {
     dr32_fxbus *fx = dr32_fxbus_create(SR);
-    dr32_fxbus_set_insert_type(fx, 0, type);
-    dr32_fxbus_set_insert_params(fx, 0, p1, p2, p3, p4, mix);
-    memcpy(out, in, sizeof(float) * 2 * (size_t)n);
+    dr32_fxbus_set_send_type(fx, 0, type);
+    dr32_fxbus_set_send_params(fx, 0, p1, p2, p3, p4);
+    dr32_fxbus_set_send_return(fx, 0, 1.0f);
+    memset(out, 0, sizeof(float) * 2 * (size_t)n);
     for (int p = 0; p < n; p += 128) {
         int m = (p + 128 <= n) ? 128 : (n - p);
+        for (int i = 0; i < m; i++)
+            dr32_fxbus_send(fx, 0, i, in[2 * (p + i)], in[2 * (p + i) + 1]);
         dr32_fxbus_process(fx, out + 2 * p, m);
     }
     dr32_fxbus_destroy(fx);
 }
 
-static void run_insert(dr32_efx_type type, float p1, float p2, float p3, float mix,
-                       const float *in, float *out, int n) {
-    run_insert4(type, p1, p2, p3, type == DR32_EFX_DRUMBUSS ? 0.5f : 0.0f, mix, in, out, n);
+static void run_wet(dr32_efx_type type, float p1, float p2, float p3,
+                    const float *in, float *out, int n) {
+    run_wet4(type, p1, p2, p3, type == DR32_EFX_DRUMBUSS ? 0.5f : 0.0f, in, out, n);
 }
 
 int main(void) {
@@ -76,16 +83,16 @@ int main(void) {
         const int atk_from = 0, atk_to = SR / 200;          // first 5 ms
         const int tail_from = SR / 20, tail_to = SR / 5;    // 50-200 ms
 
-        run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, dry, wet, N);
+        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, dry, wet, N);
         float n_atk = rms_range(wet, atk_from, atk_to), n_tail = rms_range(wet, tail_from, tail_to);
         CHECK(n_tail > 1e-6f, "neutral attack produced no tail");
         float neutral = n_atk / (n_tail + 1e-9f);
 
-        run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 1.0f, 1.0f, dry, wet, N);
+        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 1.0f, dry, wet, N);
         float s_atk = rms_range(wet, atk_from, atk_to), s_tail = rms_range(wet, tail_from, tail_to);
         float sharp = s_atk / (s_tail + 1e-9f);
 
-        run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.0f, 1.0f, dry, wet, N);
+        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.0f, dry, wet, N);
         float f_atk = rms_range(wet, atk_from, atk_to), f_tail = rms_range(wet, tail_from, tail_to);
         float soft = f_atk / (f_tail + 1e-9f);
 
@@ -101,14 +108,14 @@ int main(void) {
         hit(low, N, 80.0f, 0.4f);
         hit(high, N, 4000.0f, 0.4f);
 
-        run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, low, wet, N);
+        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, low, wet, N);
         float low_dry = rms_range(wet, 0, SR / 10);
-        run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.8f, 0.5f, 1.0f, low, wet, N);
+        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.8f, 0.5f, low, wet, N);
         float low_crunch = rms_range(wet, 0, SR / 10);
 
-        run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, high, wet2, N);
+        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, high, wet2, N);
         float high_dry = rms_range(wet2, 0, SR / 10);
-        run_insert(DR32_EFX_DRUMBUSS, 0.0f, 0.8f, 0.5f, 1.0f, high, wet2, N);
+        run_wet(DR32_EFX_DRUMBUSS, 0.0f, 0.8f, 0.5f, high, wet2, N);
         float high_crunch = rms_range(wet2, 0, SR / 10);
 
         float low_ratio = low_crunch / (low_dry + 1e-9f);
@@ -132,7 +139,7 @@ int main(void) {
             { DR32_EFX_PLATE, "Plate" }, { DR32_EFX_SPACES, "Spaces" },
         };
         for (size_t k = 0; k < sizeof(types) / sizeof(types[0]); k++) {
-            run_insert(types[k].t, 0.5f, 0.3f, 0.6f, 1.0f, imp, wet, N);
+            run_wet(types[k].t, 0.5f, 0.3f, 0.6f, imp, wet, N);
             float tail = rms_range(wet, SR / 20, SR / 4);   // 50-250 ms after the hit
             printf("  %-5s tail rms %.6f\n", types[k].n, tail);
             CHECK(tail > 1e-5f, "%s produced no tail (rms %.8f) — silent reverb", types[k].n, tail);
@@ -161,40 +168,51 @@ int main(void) {
         dr32_fxbus_destroy(fx);
     }
 
-    // ---- a send bus must be SAMPLE-EQUIVALENT to the same effect as a fully
-    //      wet insert. This is the decisive test: any corruption of when things
-    //      land inside the block shows up immediately.
+    // ---- a send write must land on its OWN frame within the block.
     //
-    //      The bug this catches: send writes were all landing on frame 0, so a
-    //      send became an impulse train at the block rate (~344 Hz) and rang
-    //      metallically, while inserts stayed clean. A weaker test that merely
-    //      asserted "the send returns something" passed the whole time.
+    //      The bug this catches: every send write landed on frame 0, so the bus
+    //      saw one impulse per block — an impulse train at the block rate
+    //      (~344 Hz) that rang metallically. A weaker test that merely asserted
+    //      "the send returns something" passed the whole time.
+    //
+    //      This used to be checked by comparing against a fully wet INSERT,
+    //      which was sample-equivalent. Inserts are gone, and comparing the send
+    //      path against itself would prove nothing — so instead reproduce the
+    //      bug deliberately (collapse every write onto frame 0) and require the
+    //      correct path to differ MATERIALLY from it. If these two ever agree,
+    //      frame placement is being ignored again.
     {
-        static float sig[2 * N], as_insert[2 * N], as_send[2 * N];
+        static float sig[2 * N], correct[2 * N], collapsed[2 * N];
         hit(sig, N, 200.0f, 0.5f);
 
-        run_insert(DR32_EFX_PLATE, 0.5f, 0.3f, 0.5f, 1.0f, sig, as_insert, N);
-
-        dr32_fxbus *fx = dr32_fxbus_create(SR);
-        dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
-        dr32_fxbus_set_send_params(fx, 0, 0.5f, 0.3f, 0.5f, 0.0f);
-        dr32_fxbus_set_send_return(fx, 0, 1.0f);
-        memset(as_send, 0, sizeof(as_send));
-        for (int p = 0; p + 128 <= N; p += 128) {
-            for (int i = 0; i < 128; i++) dr32_fxbus_send(fx, 0, i, sig[2 * (p + i)], sig[2 * (p + i) + 1]);
-            dr32_fxbus_process(fx, as_send + 2 * p, 128);
+        for (int mode = 0; mode < 2; mode++) {
+            float *out = mode ? collapsed : correct;
+            dr32_fxbus *fx = dr32_fxbus_create(SR);
+            dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
+            dr32_fxbus_set_send_params(fx, 0, 0.5f, 0.3f, 0.5f, 0.0f);
+            dr32_fxbus_set_send_return(fx, 0, 1.0f);
+            memset(out, 0, sizeof(float) * 2 * N);
+            for (int p = 0; p + 128 <= N; p += 128) {
+                for (int i = 0; i < 128; i++)
+                    dr32_fxbus_send(fx, 0, mode ? 0 : i,
+                                    sig[2 * (p + i)], sig[2 * (p + i) + 1]);
+                dr32_fxbus_process(fx, out + 2 * p, 128);
+            }
+            dr32_fxbus_destroy(fx);
         }
-        dr32_fxbus_destroy(fx);
 
         double num = 0.0, den = 0.0;
         for (int i = 0; i < 2 * (N - 128); i++) {
-            double d = (double)as_send[i] - as_insert[i];
+            double d = (double)correct[i] - collapsed[i];
             num += d * d;
-            den += (double)as_insert[i] * as_insert[i];
+            den += (double)correct[i] * correct[i];
         }
-        double err_db = (den > 0) ? 10.0 * log10((num + 1e-30) / den) : 0.0;
-        printf("  send vs wet insert: %.1f dB error\n", err_db);
-        CHECK(err_db < -60.0, "send path does not match a fully wet insert (%.1f dB error)", err_db);
+        double diff_db = (den > 0) ? 10.0 * log10((num + 1e-30) / den) : -300.0;
+        printf("  frame placement vs collapsed-to-frame-0: %.1f dB\n", diff_db);
+        CHECK(den > 0.0, "send bus produced nothing to compare");
+        CHECK(diff_db > -6.0,
+              "collapsing sends onto frame 0 barely changed the output (%.1f dB) "
+              "— frame placement is being ignored", diff_db);
     }
 
     // ---- per-type defaults are musical AND distinct from each other
@@ -228,11 +246,8 @@ int main(void) {
         CHECK(db[2] == 0.5f, "drum bus attack default %.2f should be neutral (0.5)", db[2]);
         CHECK(db[3] == 0.5f, "drum bus sustain default %.2f should be neutral (0.5)", db[3]);
 
-        // A REVERB as an insert must never arrive fully wet — that replaces the
-        // kit with its own ambience. A processor like Drum Bus should be wet.
-        CHECK(pl[4] < 0.5f, "plate insert default mix %.2f is too wet", pl[4]);
-        CHECK(rm[4] < 0.5f, "spaces insert default mix %.2f is too wet", rm[4]);
-        CHECK(db[4] > 0.9f, "drum bus should be fully wet (%.2f)", db[4]);
+        // No assertion on d[4] (mix). It mattered when a type could be a kit
+        // insert; a send return is always 100% wet, so nothing reads it now.
     }
 
     // ---- at their DEFAULT settings, the three reverbs must actually differ in
@@ -247,15 +262,18 @@ int main(void) {
             float d[5];
             dr32_efx_defaults(T[k].t, d);
             dr32_fxbus *fx = dr32_fxbus_create(SR);
-            dr32_fxbus_set_insert_type(fx, 0, T[k].t);
-            dr32_fxbus_set_insert_params(fx, 0, d[0], d[1], d[2], d[3], 1.0f);
+            dr32_fxbus_set_send_type(fx, 0, T[k].t);
+            dr32_fxbus_set_send_params(fx, 0, d[0], d[1], d[2], d[3]);
+            dr32_fxbus_set_send_return(fx, 0, 1.0f);
             float peak = 0.0f;
             int last = 0;
             const int blocks = SR * 8 / 128;
             for (int b = 0; b < blocks; b++) {
                 float blk[2 * 128];
                 memset(blk, 0, sizeof(blk));
-                if (b == 0) for (int i = 0; i < 32; i++) { blk[2 * i] = 0.7f; blk[2 * i + 1] = 0.7f; }
+                /* Feed the bus, not the block. process() ADDS the return into
+                 * blk; an insert used to consume what was already there. */
+                if (b == 0) for (int i = 0; i < 32; i++) dr32_fxbus_send(fx, 0, i, 0.7f, 0.7f);
                 dr32_fxbus_process(fx, blk, 128);
                 float m = 0.0f;
                 for (int i = 0; i < 128; i++) { float a = fabsf(blk[2 * i]); if (a > m) m = a; }
@@ -331,7 +349,7 @@ int main(void) {
         float in_rms = rms_range(quiet, N / 2, N);
         float worst = 0.0f;
         for (int k = 0; k <= 4; k++) {
-            run_insert4(DR32_EFX_DRUMBUSS, k * 0.25f, 0.0f, 0.5f, 0.5f, 1.0f, quiet, wet, N);
+            run_wet4(DR32_EFX_DRUMBUSS, k * 0.25f, 0.0f, 0.5f, 0.5f, quiet, wet, N);
             float lift = 20.0f * log10f(rms_range(wet, N / 2, N) / (in_rms + 1e-12f) + 1e-12f);
             if (fabsf(lift) > fabsf(worst)) worst = lift;
         }
@@ -349,12 +367,12 @@ int main(void) {
         const int atk_to = SR / 125;                       // first 8 ms
         const int t_from = SR * 8 / 100, t_to = SR / 4;     // 80-250 ms
 
-        run_insert4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.5f, 1.0f, dry, wet, N);
+        run_wet4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.5f, dry, wet, N);
         float n_atk = peak_range(wet, 0, atk_to), n_tail = rms_range(wet, t_from, t_to);
 
-        run_insert4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, 1.0f, dry, wet, N);
+        run_wet4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 1.0f, dry, wet, N);
         float up_atk = peak_range(wet, 0, atk_to), up_tail = rms_range(wet, t_from, t_to);
-        run_insert4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.0f, 1.0f, dry, wet, N);
+        run_wet4(DR32_EFX_DRUMBUSS, 0.0f, 0.0f, 0.5f, 0.0f, dry, wet, N);
         float dn_atk = peak_range(wet, 0, atk_to), dn_tail = rms_range(wet, t_from, t_to);
 
         float up_t = 20.0f * log10f(up_tail / (n_tail + 1e-12f) + 1e-12f);
@@ -381,7 +399,7 @@ int main(void) {
             static float imp[2 * N];
             memset(imp, 0, sizeof(imp));
             imp[0] = 1.0f;                                  // LEFT only
-            run_insert4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, 1.0f, imp, wet, N);
+            run_wet4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, imp, wet, N);
             double el = 0, er = 0;
             for (int i = 0; i < N; i++) {
                 el += (double)wet[2 * i] * wet[2 * i];
@@ -393,7 +411,7 @@ int main(void) {
             static float imp2[2 * N];
             memset(imp2, 0, sizeof(imp2));
             imp2[0] = 1.0f; imp2[1] = 1.0f;
-            run_insert4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, 1.0f, imp2, wet2, N);
+            run_wet4(types[t], 0.5f, 0.3f, 0.5f, 0.0f, imp2, wet2, N);
             double sxy = 0, sxx = 0, syy = 0;
             for (int i = SR / 10; i < N; i++) {
                 double x = wet2[2 * i], y = wet2[2 * i + 1];
@@ -426,7 +444,7 @@ int main(void) {
         static float imp[2 * N];
         memset(imp, 0, sizeof(imp));
         imp[0] = 1.0f; imp[1] = 1.0f;
-        run_insert4(DR32_EFX_PLATE, 0.45f, 0.35f, 0.45f, 0.0f, 1.0f, imp, wet, N);
+        run_wet4(DR32_EFX_PLATE, 0.45f, 0.35f, 0.45f, 0.0f, imp, wet, N);
 
         /* one-pole band energies are enough here: compare how much of the tail
          * survives at 6 kHz against 500 Hz, early window vs late window. */
@@ -468,7 +486,7 @@ int main(void) {
             static float imp[2 * N];
             memset(imp, 0, sizeof(imp));
             imp[0] = 1.0f; imp[1] = 1.0f;
-            run_insert4(ty[t], 0.5f, 0.3f, 0.5f, 0.0f, 1.0f, imp, wet, N);
+            run_wet4(ty[t], 0.5f, 0.3f, 0.5f, 0.0f, imp, wet, N);
             double mono = 0, one = 0;
             for (int i = SR / 10; i < N; i++) {
                 double m = 0.5 * (wet[2 * i] + wet[2 * i + 1]);
@@ -509,7 +527,7 @@ int main(void) {
         float d[5];
         dr32_efx_defaults(DR32_EFX_DRUMBUSS, d);
         hit(dry, N, 90.0f, 0.5f);
-        run_insert4(DR32_EFX_DRUMBUSS, d[0], d[1], d[2], d[3], d[4], dry, wet, N);
+        run_wet4(DR32_EFX_DRUMBUSS, d[0], d[1], d[2], d[3], dry, wet, N);
         double diff = 0, ref = 0;
         for (int i = 0; i < N; i++) {
             double e = (double)wet[2 * i] - dry[2 * i];

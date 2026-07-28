@@ -164,13 +164,12 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         return 0;
     }
 
-    if (!strncmp(key, "send", 4) || !strncmp(key, "insert", 6)) {
-        int is_send = (key[0] == 's');
-        const char *q = key + (is_send ? 4 : 6);
+    if (!strncmp(key, "send", 4)) {
+        const char *q = key + 4;
         int slot = (*q >= '1' && *q <= '2') ? (*q - '1') : -1;
         if (slot >= 0 && q[1] == '_') {
             const char *f2 = q + 2;
-            const float *cache = is_send ? kit->send_p[slot] : kit->insert_p[slot];
+            const float *cache = kit->send_p[slot];
             int idx = -1;
             if      (!strcmp(f2, "size")  || !strcmp(f2, "comp")   || !strcmp(f2, "p1")) idx = 0;
             else if (!strcmp(f2, "damp")  || !strcmp(f2, "crunch") || !strcmp(f2, "p2")) idx = 1;
@@ -179,13 +178,11 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
             // one, so it reuses that slot as Sustain rather than growing the
             // fxbus API a sixth parameter.
             else if (!strcmp(f2, "predelay") || !strcmp(f2, "sustain")) idx = 3;
-            else if (!strcmp(f2, "mix"))      idx = 4;
             if (idx >= 0) return snprintf(buf, buf_len, "%g", (double)cache[idx]);
-            if (!strcmp(f2, "return") && is_send)
+            if (!strcmp(f2, "return"))
                 return snprintf(buf, buf_len, "%g", (double)kit->send_return_ui[slot]);
             if (!strcmp(f2, "type"))
-                return snprintf(buf, buf_len, "%s",
-                                dr32_efx_name(is_send ? kit->send_type[slot] : kit->insert_type[slot]));
+                return snprintf(buf, buf_len, "%s", dr32_efx_name(kit->send_type[slot]));
         }
     }
 
@@ -251,35 +248,28 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         return 1;
     }
 
-    // --- FX buses: send1_*/send2_* and insert1_*/insert2_*
-    if (!strncmp(key, "send", 4) || !strncmp(key, "insert", 6)) {
-        int is_send = (key[0] == 's');
-        const char *p = key + (is_send ? 4 : 6);
+    // --- FX buses: send1_*/send2_*
+    if (!strncmp(key, "send", 4)) {
+        const char *p = key + 4;
         int slot = (*p >= '1' && *p <= '2') ? (*p - '1') : -1;
         if (slot >= 0 && p[1] == '_' && kit->fx) {
             const char *f2 = p + 2;
             float v = (float)atof(val);
             dr32_fxbus *fx = kit->fx;
             // Params are stored per slot so any one of them can be set alone.
-            float *cache = is_send ? kit->send_p[slot] : kit->insert_p[slot];
+            float *cache = kit->send_p[slot];
             if (!strcmp(f2, "type")) {
                 dr32_efx_type t = dr32_efx_from_name(val);
                 // Load that type's musical starting point. Selecting an effect
                 // should sound like something immediately, not inherit the
                 // previous effect's knob positions.
                 if (t != DR32_EFX_NONE) dr32_efx_defaults(t, cache);
-                if (is_send) {
-                    dr32_fxbus_set_send_type(fx, slot, t);
-                    kit->send_type[slot] = t;
-                    dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
-                } else {
-                    dr32_fxbus_set_insert_type(fx, slot, t);
-                    kit->insert_type[slot] = t;
-                    dr32_fxbus_set_insert_params(fx, slot, cache[0], cache[1], cache[2], cache[3], cache[4]);
-                }
+                dr32_fxbus_set_send_type(fx, slot, t);
+                kit->send_type[slot] = t;
+                dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
                 return 1;
             }
-            if (!strcmp(f2, "return") && is_send) {
+            if (!strcmp(f2, "return")) {
                 dr32_fxbus_set_send_return(fx, slot, v);
                 kit->send_return_ui[slot] = v;
                 return 1;
@@ -295,11 +285,9 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
             // one, so it reuses that slot as Sustain rather than growing the
             // fxbus API a sixth parameter.
             else if (!strcmp(f2, "predelay") || !strcmp(f2, "sustain")) idx = 3;
-            else if (!strcmp(f2, "mix"))      idx = 4;
             if (idx >= 0) {
                 cache[idx] = v;
-                if (is_send) dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
-                else         dr32_fxbus_set_insert_params(fx, slot, cache[0], cache[1], cache[2], cache[3], cache[4]);
+                dr32_fxbus_set_send_params(fx, slot, cache[0], cache[1], cache[2], cache[3]);
                 return 1;
             }
         }
