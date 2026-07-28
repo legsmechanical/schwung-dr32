@@ -97,6 +97,16 @@ static void logmsg(const char *s) {
 
 // ------------------------------------------------------------------ helpers
 
+/* Kit loaded on a fresh instance, so the module arrives making a sound rather
+ * than as 32 empty pads. Core Library, not the user library — it ships with
+ * every Move, so this resolves on any device.
+ *
+ * Missing file = silently skipped, not an error: a user may have pruned the
+ * Core Library, and an empty rack is a perfectly valid state to open in. A slot
+ * restoring saved state overwrites this a moment later, which is only the cost
+ * of one kit load. */
+#define DR32_DEFAULT_KIT "/data/CoreLibrary/Track Presets/Drums/Electronic/707 Kit.json"
+
 // ------------------------------------------------------------------ v2 API
 
 static void *create_instance(const char *module_dir, const char *json_defaults) {
@@ -112,6 +122,15 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         logmsg(msg);
     } else {
         logmsg("dr32: instance created (NO ui_hierarchy — UI will be empty)");
+    }
+
+    dr32_preset_report rep;
+    if (dr32_preset_load(&in->kit, DR32_DEFAULT_KIT, &rep)) {
+        snprintf(in->kit_path, sizeof(in->kit_path), "%s", DR32_DEFAULT_KIT);
+        char msg[DR32_MAX_PATH + 120];
+        snprintf(msg, sizeof(msg), "dr32: default kit loaded — %d pads, %d samples",
+                 rep.pads, rep.loaded);
+        logmsg(msg);
     }
     return in;
 }
@@ -133,13 +152,13 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     uint8_t status = msg[0] & 0xF0;
 
     if (status == 0x90 && msg[2] > 0) {
-        /* No focus-follow here. MEASURED on device: a live pad hit and a
-         * sequenced note reach on_midi with identical status, channel, note
-         * and source (both report EXTERNAL, not INTERNAL — an earlier version
-         * gated on INTERNAL and silently killed focus-follow entirely). The
-         * distinction survives only in the raw pad note, which the host
-         * forwards to the CANVAS while the Pad Editor is open; the canvas owns
-         * `ui_current_pad`, so the sequencer can never steal the edit focus. */
+        /* Focus-follow is decided inside dr32_kit_note_on, and only for a note
+         * the canvas has vouched for. MEASURED on device: a live pad hit and a
+         * sequenced note reach on_midi with identical status, channel, note and
+         * source (both report EXTERNAL, not INTERNAL — an earlier version gated
+         * on INTERNAL and silently killed focus-follow entirely). The canvas
+         * supplies the one missing bit via ui_live_press; the note supplies the
+         * pad. Neither alone is enough, which is why it is not decided here. */
         dr32_kit_note_on(&in->kit, msg[1], msg[2]);
     } else if (status == 0x80 || (status == 0x90 && msg[2] == 0)) {
         dr32_kit_note_off(&in->kit, msg[1]);
