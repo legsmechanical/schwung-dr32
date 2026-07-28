@@ -1,9 +1,11 @@
 #include "dr32_kit.h"
 
+#include <dirent.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
+#include <strings.h>      /* strcasecmp */
 
 void dr32_kit_init(dr32_kit *k) {
     memset(k, 0, sizeof(*k));
@@ -45,7 +47,120 @@ void dr32_kit_init(dr32_kit *k) {
     }
 }
 
+/* ---------- folder browse ------------------------------------------------
+ *
+ * The file browser hands DR32 a finished path and nothing else, so walking the
+ * samples beside the current one means reading the directory here. Host thread
+ * only: this opens directories and dr32_kit_browse_select() loads a WAV, both
+ * of which dr32_kit_load_sample() already does from the same thread.
+ *
+ * One directory is cached at a time. Switching pads inside a kit almost always
+ * stays in one folder, so the scan is rare; a scan on every knob step would be
+ * pointless work, and scanning the whole user tree is out of the question at
+ * ~3.8 GB. */
+
+static void browse_free(dr32_kit *k) {
+    for (int i = 0; i < k->browse_n; i++) free(k->browse[i]);
+    free(k->browse);
+    k->browse = NULL;
+    k->browse_n = 0;
+    k->browse_dir[0] = '\0';
+}
+
+static int is_audio_name(const char *n) {
+    const char *d = strrchr(n, '.');
+    if (!d) return 0;
+    return !strcasecmp(d, ".wav") || !strcasecmp(d, ".aif") || !strcasecmp(d, ".aiff");
+}
+
+static int cmp_name(const void *a, const void *b) {
+    /* Case-insensitive so the order matches what a browser shows. */
+    return strcasecmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+/** Directory part of `path`. Returns 0 when there is none. */
+static int split_dir(const char *path, char *out, size_t cap) {
+    if (!path || !path[0]) return 0;
+    const char *s = strrchr(path, '/');
+    if (!s || s == path) return 0;
+    size_t n = (size_t)(s - path);
+    if (n >= cap) return 0;
+    memcpy(out, path, n);
+    out[n] = '\0';
+    return 1;
+}
+
+static const char *base_name(const char *path) {
+    const char *s = strrchr(path, '/');
+    return s ? s + 1 : path;
+}
+
+/** Point the cache at the folder holding `pad`'s sample. Returns entry count. */
+static int browse_ensure(dr32_kit *k, int pad) {
+    if (pad < 0 || pad >= DR32_PADS) return 0;
+    char dir[DR32_MAX_PATH];
+    if (!split_dir(k->pads[pad].path, dir, sizeof(dir))) { browse_free(k); return 0; }
+    if (k->browse && !strcmp(k->browse_dir, dir)) return k->browse_n;   /* cache hit */
+
+    browse_free(k);
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    char **v = (char **)calloc(DR32_BROWSE_MAX, sizeof(char *));
+    if (!v) { closedir(d); return 0; }
+    int n = 0;
+    struct dirent *e;
+    while (n < DR32_BROWSE_MAX && (e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;          /* dotfiles and . / .. */
+        if (!is_audio_name(e->d_name)) continue;
+        char *dup = (char *)malloc(strlen(e->d_name) + 1);
+        if (!dup) break;
+        strcpy(dup, e->d_name);
+        v[n++] = dup;
+    }
+    closedir(d);
+    qsort(v, (size_t)n, sizeof(char *), cmp_name);
+    k->browse = v;
+    k->browse_n = n;
+    snprintf(k->browse_dir, sizeof(k->browse_dir), "%s", dir);
+    return n;
+}
+
+int dr32_kit_browse_count(dr32_kit *k, int pad) {
+    return k ? browse_ensure(k, pad) : 0;
+}
+
+int dr32_kit_browse_index(dr32_kit *k, int pad) {
+    if (!k) return -1;
+    int n = browse_ensure(k, pad);
+    if (n <= 0) return -1;
+    const char *cur = base_name(k->pads[pad].path);
+    for (int i = 0; i < n; i++) if (!strcmp(k->browse[i], cur)) return i;
+    return -1;
+}
+
+int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {
+    if (!k) return -1;
+    int n = browse_ensure(k, pad);
+    if (n <= 0) return -1;
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    if (idx == dr32_kit_browse_index(k, pad)) return idx;   /* already there */
+
+    /* Build the full path against the CACHED directory, not the pad's current
+     * one: load_sample is about to overwrite that path. */
+    char full[DR32_MAX_PATH];
+    int w = snprintf(full, sizeof(full), "%s/%s", k->browse_dir, k->browse[idx]);
+    if (w <= 0 || (size_t)w >= sizeof(full)) return -1;
+
+    /* The directory string survives the load (load_sample rewrites pad->path,
+     * and browse_dir is a separate buffer), so the cache stays valid and the
+     * next step does not rescan. */
+    dr32_kit_load_sample(k, pad, full);
+    return idx;
+}
+
 void dr32_kit_free(dr32_kit *k) {
+    browse_free(k);
     dr32_fxbus_destroy(k->fx);
     k->fx = NULL;
     for (int i = 0; i < DR32_PADS; i++) {

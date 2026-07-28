@@ -132,6 +132,41 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
             || !strcmp(sub, "sample_user"))  return snprintf(buf, buf_len, "%s", s->path);
         if (!strcmp(sub, "loaded"))      return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);
+        /* Folder browse. The cast is deliberate: the browse cache is a lazily
+         * filled mirror of the filesystem, not part of the kit's value, and
+         * `kit` is never actually a const object. Refreshing on read keeps one
+         * code path instead of a read that can disagree with a write — and it
+         * only touches the disk when the focused pad's FOLDER changes, not per
+         * frame. */
+        if (!strcmp(sub, "browse"))
+            return snprintf(buf, buf_len, "%d",
+                            dr32_kit_browse_index((dr32_kit *)kit, pad));
+        if (!strcmp(sub, "browse_count"))
+            return snprintf(buf, buf_len, "%d",
+                            dr32_kit_browse_count((dr32_kit *)kit, pad));
+        /* The folder's names, newline-separated, for the canvas picker list.
+         * Newline because a comma is legal in a filename and a CSV would split
+         * such a name in half. Extensions are stripped: they are all audio and
+         * the suffix only eats width in a 128 px list. Truncated rather than
+         * failed if the value channel would overflow — a short list beats a
+         * dropped one, and 512 names is far below the 64 KB limit anyway. */
+        if (!strcmp(sub, "browse_names")) {
+            dr32_kit *mk = (dr32_kit *)kit;
+            int n = dr32_kit_browse_count(mk, pad);
+            int off = 0;
+            for (int i = 0; i < n; i++) {
+                const char *nm = mk->browse[i];
+                int len = (int)strlen(nm);
+                const char *dot = strrchr(nm, '.');
+                if (dot && dot != nm) len = (int)(dot - nm);
+                int w = snprintf(buf + off, (size_t)(buf_len - off), "%s%.*s",
+                                 i ? "\n" : "", len, nm);
+                if (w <= 0 || off + w >= buf_len) break;
+                off += w;
+            }
+            if (off == 0 && buf_len > 0) buf[0] = '\0';
+            return off;
+        }
         if (!strcmp(sub, "frames"))      return snprintf(buf, buf_len, "%zu", s->frames);
         if (!strcmp(sub, "note"))        return snprintf(buf, buf_len, "%d", s->note);
         if (!strcmp(sub, "choke"))       return snprintf(buf, buf_len, "%d", p->choke_group);
@@ -213,6 +248,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         // takes one root each, so they are two keys meaning the same thing.
         if      (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
                  || !strcmp(sub, "sample_user"))  dr32_kit_load_sample(kit, pad, val);
+        else if (!strcmp(sub, "browse"))          dr32_kit_browse_select(kit, pad, atoi(val));
         else if (!strcmp(sub, "note"))          dr32_kit_set_note(kit, pad, atoi(val));
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
         else if (!strcmp(sub, "start"))         p->play_start = f;

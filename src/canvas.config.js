@@ -135,6 +135,100 @@ function penum(key, label, name, options, sq) {
   return c;
 }
 
+/* Folder-browse cell: position of this pad's sample among its neighbours.
+ *
+ * A plain count, deliberately NOT an enum. An enum would hand the list to the
+ * kit's own picker overlay, which is sized and fonted for short enum labels —
+ * filenames need a wider box and a proportional font. DR32 draws its own
+ * instead (drawBrowsePicker below), which is also where a module-specific UI
+ * belongs: the kit is a reference to build FROM, not a place to push one
+ * module's needs into. Backport it later if it earns its way in.
+ *
+ * The face shows "3/17" — at ~16 px a name truncates to about three glyphs, so
+ * position is the useful readout here and the picker carries the names. */
+function browseCell() {
+  const c = count(`pad_browse`, "Smpl", 0, 511);
+  c.name = "Browse Folder";
+  c.text = (ctx) => {
+    const n = parseInt(ctx.getParam(`pad_browse_count`), 10) || 0;
+    const i = parseInt(ctx.getParam(`pad_browse`), 10);
+    /* -1 = empty pad, or a sample whose folder no longer lists it. */
+    if (!n || !Number.isFinite(i) || i < 0) return "--";
+    return (i + 1) + "/" + n;
+  };
+  return c;
+}
+
+/* ---------- browse picker overlay --------------------------------------- */
+
+/* DR32's own scrolling list of the folder's samples, drawn while the Browse
+ * knob is the one being touched. CONFIG.overlays runs after the kit's own
+ * overlay pass, and the browse cell carries no `options`, so the kit's enum
+ * picker never fires and there is nothing to draw over.
+ *
+ * Uses mvPrint — the movy font, the SAME one under every widget label, so the
+ * picker reads as part of the page rather than a different control.
+ *
+ * The win is that it is PROPORTIONAL where the kit's 5x5 mcufont is a fixed
+ * 6 px advance. Measured against this box's 112 px of text width:
+ * "MD1_Kick_Sub_02 (alt)" is 96 px in movy and fits whole, but 125 px in
+ * mcufont and gets cut. Typical text runs ~22 chars a row against ~18.
+ *
+ * ⚠ Both fonts are effectively CAPS ONLY — movy's lowercase codepoints map to
+ * the same shapes (verified: "Kick" and "KICK" render identical pixels and
+ * width), which is unavoidable at a 5 px cap height. Names therefore display
+ * uppercase whichever font is used; do not pick one expecting mixed case. */
+const PICK_X = 2, PICK_Y = 10, PICK_W = 124, PICK_H = 54;
+const PICK_ROW_H = 7;                    /* 5px movy glyph + 2px leading */
+
+function drawBrowsePicker(ctx, cells, s) {
+  const k = s.lastKnob;
+  const cell = k >= 0 ? cells[k] : null;
+  if (!cell || cell.key !== `pad_browse`) return;
+
+  const raw = String(ctx.getParam(`pad_browse_names`) || "");
+  if (!raw) return;                                  /* empty pad: nothing to show */
+  const names = raw.split("\n");
+  const n = names.length;
+  const sel = parseInt(ctx.getParam(`pad_browse`), 10);
+  if (!n || !Number.isFinite(sel) || sel < 0) return;
+
+  const X = PICK_X, Y = PICK_Y, W = PICK_W, H = PICK_H;
+  ctx.fillRect(X, Y, W, H, 0);
+  ctx.drawRect(X, Y, W, H, 1);
+
+  const visible = Math.max(1, Math.min(n, Math.floor((H - 4) / PICK_ROW_H)));
+  const hasScroll = n > visible;
+  /* Keep the selection mid-list so there is context either side, clamping at
+   * the ends rather than letting the window run past them. */
+  const start = Math.max(0, Math.min(sel - Math.floor(visible / 2), n - visible));
+  const listTop = Y + Math.floor((H - visible * PICK_ROW_H) / 2);
+  const rowX = X + 2, rowW = W - 4 - (hasScroll ? 4 : 0);
+  const availW = rowW - 4;
+
+  for (let i = 0; i < visible; i++) {
+    const idx = start + i;
+    if (idx >= n) break;
+    const y = listTop + i * PICK_ROW_H;
+    let label = String(names[idx]);
+    while (label.length > 1 && mvWidth(label) > availW) label = label.slice(0, -1);
+    if (idx === sel) {
+      ctx.fillRect(rowX, y, rowW, PICK_ROW_H, 1);
+      mvPrint(ctx, rowX + 2, y + 1, label, 0);
+    } else {
+      mvPrint(ctx, rowX + 2, y + 1, label, 1);
+    }
+  }
+
+  if (hasScroll) {
+    const trackH = visible * PICK_ROW_H;
+    const thumbH = Math.max(3, Math.round(trackH * visible / n));
+    const thumbY = listTop + Math.round((trackH - thumbH) * start / Math.max(1, n - visible));
+    ctx.fillRect(X + W - 2, listTop, 1, trackH, 1);
+    ctx.fillRect(X + W - 3, thumbY, 2, thumbH, 1);
+  }
+}
+
 /* ---------- per-pad cells ---------------------------------------------- */
 
 const kFilterTypes = ["Lowpass 12dB", "Lowpass", "Highpass", "Peak"];
@@ -160,7 +254,23 @@ const PAD_BANK_SPECS = [
     (p) => plin(`pad_length`, "Len", "Length", 0, 1, (x) => Math.round(x * 100) + "%"),
     (p) => pint(`pad_transpose`, "Trsp", "Transpose", -48, 48),
     (p) => plin(`pad_detune`, "Detn", "Detune", -50, 50, (x) => String(Math.round(x))),
-    (p) => pint(`pad_choke`, "Chok", "Choke Group", 0, 16)
+    (p) => pint(`pad_choke`, "Chok", "Choke Group", 0, 16),
+    /* Two placeholders so Browse lands on KNOB 8 (Josh) — the far right, away
+     * from the five editing knobs, which is where a control that swaps the
+     * sample out from under them belongs. blank() is keyless and draws
+     * nothing; it exists to hold a knob position. */
+    (p) => blank(),
+    (p) => blank(),
+    /* Walk the samples sitting NEXT TO this pad's own, without opening the
+     * browser — the fastest way to try a different kick. Loads as you turn, so
+     * it auditions rather than just selects.
+     *
+     * The 0..511 bound is the cell's, not the folder's — the DSP clamps to the
+     * real count (which it alone knows) and reports the position back, so the
+     * knob simply stops at the end of the folder. The readout is "3/17" because
+     * the NAME is already in the bank header; an empty pad has no folder and
+     * shows "--". */
+    (p) => browseCell()
   ] },
   /* The envelope graphic spans attack/hold/decay. Both modes use those same
    * three params — A-H-D is a timed hold, A-S-R holds at full until note-off
@@ -227,11 +337,18 @@ function padHeader() {
  * focus, so nothing here rebinds and there is no per-pad cache to invalidate —
  * the previous version generated 576 keys and flushed the cache on every
  * selection change. */
+/* ⚠ Every field a spec may carry must be forwarded here. The engine reads the
+ * BANK, not the spec, so a field added above and not copied below is silently
+ * ignored — no error, the feature just never happens. dynamicCells was exactly
+ * that: added for the browse picker and dropped on the floor until this list
+ * grew to match. */
 const padBanks = PAD_BANK_SPECS.map((spec) => ({
   label: spec.label,
   env: spec.env,
   filterViz: spec.filterViz,
   cellViz: spec.cellViz,
+  dynamicCells: spec.dynamicCells,
+  dynamicKeys: spec.dynamicKeys,
   knobs: spec.cells.map((f) => f(0)),
   header: padHeader()
 }));
@@ -375,9 +492,17 @@ const CONFIG = {
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the
    * classic display-desync. */
+  overlays: [drawBrowsePicker],
+
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;
     if (/_sample$/.test(key)) return true;
+    /* A browse step loads a new sample, so anything describing the SAMPLE is
+     * stale — but the folder has not changed, so the name list must survive.
+     * Returning true here would flush it and refetch several KB every detent. */
+    if (/^pad\d*_browse$/.test(key))
+      return ["pad_browse", "pad_sample", "pad_waveform", "pad_loaded", "pad_frames",
+              key, "pad_browse_count"];
     if (/^send\d_type$/.test(key)) return true;
     return null;
   },

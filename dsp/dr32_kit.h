@@ -67,7 +67,19 @@ typedef struct {
     unsigned      live_arm_block;  // block it was signalled on
     int           last_hit_pad;    // pad of the most recent note-on, -1 = none
     unsigned      last_hit_block;  // block that note-on landed on
+
+    // Folder browse: the loadable samples sitting NEXT TO the focused pad's
+    // sample, so a knob can walk them without opening the file browser. Only
+    // the host does file I/O, and only one directory is ever held — the user
+    // Samples tree is ~3.8 GB, so nothing scans it wholesale.
+    char          browse_dir[DR32_MAX_PATH];   // "" = nothing cached
+    char        **browse;                      // browse_n entries, owned
+    int           browse_n;
 } dr32_kit;
+
+// A single folder's worth. Move's factory sample folders are far below this;
+// the cap only stops a pathological directory from allocating without bound.
+#define DR32_BROWSE_MAX 512
 
 // How far apart the press signal and its note may land and still be considered
 // the same event. Blocks are 128 frames @ 44.1 kHz = ~2.9 ms, so 20 blocks is
@@ -86,6 +98,16 @@ void dr32_kit_set_note(dr32_kit *k, int pad, int note);
 /** Load `path` into `pad`. Host thread only — does file I/O and allocates.
  *  Returns a dr32_wav_err. Passing NULL/"" clears the pad. */
 int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path);
+
+/** Folder browse. All three are HOST-THREAD ONLY — they read the filesystem,
+ *  and _select() loads a sample. They operate on the directory the pad's
+ *  current sample lives in; an empty pad has no directory and yields 0 / -1.
+ *  The listing is cached and only re-read when that directory changes. */
+int dr32_kit_browse_count(dr32_kit *k, int pad);
+/** Position of the pad's current sample among its neighbours, -1 if unknown. */
+int dr32_kit_browse_index(dr32_kit *k, int pad);
+/** Load the idx'th neighbour into the pad. Clamps. Returns the index used. */
+int dr32_kit_browse_select(dr32_kit *k, int pad, int idx);
 
 void dr32_kit_note_on(dr32_kit *k, int note, int velocity);
 void dr32_kit_note_off(dr32_kit *k, int note);

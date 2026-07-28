@@ -3,6 +3,9 @@
 #include "../dsp/dr32_kit.h"
 #include "../dsp/dr32_params.h"
 
+#include <sys/stat.h>
+#include <unistd.h>      /* rmdir */
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -130,6 +133,56 @@ int main(void) {
           dr32_kit_active_voices(&k));
     float full = peak(&k, 512);
     CHECK(isfinite(full), "32-voice mix went non-finite");
+
+    // ---- folder browse: walk the samples beside the pad's own
+    //
+    // Exercises real filesystem behaviour, which is where this breaks quietly:
+    // sort order, extension filtering, clamping, and the empty-pad case.
+    {
+        const char *dir = "/tmp/dr32_browse";
+        mkdir(dir, 0755);
+        // Created OUT of alphabetical order — the listing must sort, not echo
+        // readdir order, which is arbitrary.
+        make_wav("/tmp/dr32_browse/c.wav", 0.5f);
+        make_wav("/tmp/dr32_browse/a.wav", 0.5f);
+        make_wav("/tmp/dr32_browse/B.wav", 0.5f);      // case-insensitive sort
+        FILE *junk = fopen("/tmp/dr32_browse/notes.txt", "w");
+        if (junk) { fputs("not audio", junk); fclose(junk); }
+
+        dr32_kit b;
+        dr32_kit_init(&b);
+        CHECK(dr32_kit_load_sample(&b, 0, "/tmp/dr32_browse/B.wav") == DR32_WAV_OK,
+              "browse fixture failed to load");
+
+        // notes.txt must not be listed: selecting it would fail to load and the
+        // indices would no longer line up with what the picker shows.
+        CHECK(dr32_kit_browse_count(&b, 0) == 3, "browse counted %d, want 3 (.txt filtered?)",
+              dr32_kit_browse_count(&b, 0));
+        CHECK(dr32_kit_browse_index(&b, 0) == 1, "B.wav should sort to index 1, got %d",
+              dr32_kit_browse_index(&b, 0));
+
+        CHECK(dr32_kit_browse_select(&b, 0, 0) == 0, "select(0) failed");
+        CHECK(dr32_kit_browse_index(&b, 0) == 0, "select(0) did not move focus");
+        CHECK(strstr(b.pads[0].path, "a.wav") != NULL, "select(0) loaded %s, want a.wav",
+              b.pads[0].path);
+
+        // Past either end must CLAMP, not wrap: a knob should stop at the edge
+        // of the folder rather than jumping to the far end.
+        CHECK(dr32_kit_browse_select(&b, 0, 99) == 2, "select past the end did not clamp");
+        CHECK(strstr(b.pads[0].path, "c.wav") != NULL, "clamped select loaded %s, want c.wav",
+              b.pads[0].path);
+        CHECK(dr32_kit_browse_select(&b, 0, -5) == 0, "select below zero did not clamp");
+
+        // An empty pad has no folder at all.
+        CHECK(dr32_kit_browse_count(&b, 7) == 0, "empty pad reported a folder");
+        CHECK(dr32_kit_browse_index(&b, 7) == -1, "empty pad reported an index");
+        CHECK(dr32_kit_browse_select(&b, 7, 0) == -1, "empty pad accepted a selection");
+
+        dr32_kit_free(&b);
+        remove("/tmp/dr32_browse/a.wav"); remove("/tmp/dr32_browse/B.wav");
+        remove("/tmp/dr32_browse/c.wav"); remove("/tmp/dr32_browse/notes.txt");
+        rmdir(dir);
+    }
 
     // ---- live-press correlation: focus follows a VOUCHED note, in either order
     //
