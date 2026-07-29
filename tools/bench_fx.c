@@ -2,9 +2,20 @@
 #define _POSIX_C_SOURCE 200809L
 // bench_fx.c — measure FX cost ON THE DEVICE, as a share of one core.
 //
-// A Mac timing says nothing about a Cortex-A72, so this is built for aarch64
-// and run on the Move. Reports the realtime factor and the percentage of one
-// core each effect costs at 44.1 kHz / 128-frame blocks.
+// A Mac timing says nothing about a Cortex-A72, so this is built for aarch64.
+// Reports the realtime factor and the percentage of one core each effect costs
+// at 44.1 kHz / 128-frame blocks.
+//
+// ⚠ Running it in an aarch64 container on an Apple-silicon host gets the right
+// INSTRUCTION SET but not the right CORE — an M-series core is several times a
+// CM4's Cortex-A72 at a higher clock with more cache. Treat container numbers
+// as a RELATIVE ranking between effects, which is what they are good for, and
+// take the absolute percentage from the device itself.
+//
+// ⚠ This file went stale once and nobody noticed: it still referenced the
+// removed DRUMBUSS send type and the old four-scalar params API, so it had not
+// compiled for some time. It is not built by tests/run.sh — if you touch the
+// fxbus API, build it.
 
 #include "../dsp/dr32_fxbus.h"
 
@@ -29,8 +40,11 @@ static double now_s(void) {
 static void bench(const char *name, dr32_efx_type type) {
     dr32_fxbus *fx = dr32_fxbus_create(SR);
     dr32_fxbus_set_send_type(fx, 0, type);
-    dr32_fxbus_set_send_params(fx, 0, 0.6f, 0.3f, 0.6f,
-                               type == DR32_EFX_DRUMBUSS ? 0.5f : 0.2f);
+    /* Each type at its OWN defaults — benching them all on one arbitrary knob
+     * set measures a configuration none of them ships with. */
+    float p[DR32_SEND_PARAMS];
+    dr32_efx_defaults(type, p);
+    dr32_fxbus_set_send_params(fx, 0, p, DR32_SEND_PARAMS);
     dr32_fxbus_set_send_return(fx, 0, 1.0f);
 
     static float blk[2 * BLOCK];
@@ -65,10 +79,9 @@ static void bench(const char *name, dr32_efx_type type) {
 
 int main(void) {
     printf("DR32 FX cost @ %d Hz, %d-frame blocks, %d s of audio each\n", SR, BLOCK, SECONDS);
-    printf("(one slot active; 4 slots exist, so multiply by what you actually use)\n");
-    bench("bypass",   DR32_EFX_NONE);
-    bench("Plate",    DR32_EFX_PLATE);
-    bench("Spaces",   DR32_EFX_SPACES);
-    bench("Drum Bus", DR32_EFX_DRUMBUSS);
+    printf("(one send active; there are 2, plus the always-on Drum Bus)\n");
+    bench("bypass", DR32_EFX_NONE);
+    for (int t = DR32_EFX_PLATE; t < DR32_EFX_COUNT; t++)
+        bench(dr32_efx_name((dr32_efx_type)t), (dr32_efx_type)t);
     return 0;
 }
