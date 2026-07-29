@@ -788,8 +788,14 @@ struct NonLin {
  *  level against the other types. Measured, not guessed: it is the ratio that
  *  puts Native's tail RMS on the Plate's at each type's own default settings.
  *  ⚠ It is a LEVEL match only — it must not be used to compensate for anything
- *  the port gets wrong, and the null test bypasses it. */
-static const float kNativeTrim = 0.204f;
+ *  the port gets wrong, and the null test bypasses it.
+ *
+ *  ⚠⚠ RE-MEASURE THIS AFTER ANY ENGINE CHANGE. It has silently gone stale twice:
+ *  once when the real mixer replaced the placeholder, and once when the Band
+ *  filter stopped collapsing to a razor-thin band-pass — the second left Native
+ *  16 dB quiet, which reads as "this reverb is broken" rather than as a stale
+ *  constant. It is the last thing to check before a deploy. */
+static const float kNativeTrim = 1.339f;
 
 struct Slot {
     dr32_efx_type type = DR32_EFX_NONE;
