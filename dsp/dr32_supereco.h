@@ -282,6 +282,7 @@ struct SuperEco {
     float allPassSize = 0.77f;      // "Scale"
     float shelfLoFreq = 670.77f, shelfLoGain = 0.6167f;
     float shelfHiFreq = 1469.95f, shelfHiGain = 0.8833f;
+    bool  shelfLowOn = true, shelfHighOn = true;
     bool  freeze      = false;      // decayRate 0 -> every gain unity
     // ⭑ Settled by REVERB_FRONT_END_RECON.md §1: families A/B/C all come from
     // FUN_01b7cec0, which works on the LATE subobject (full_state + 0xa90), and
@@ -349,6 +350,12 @@ struct SuperEco {
     /** Recompute every table. Cheap enough to call on any knob move — this is
      *  what the device's own rebuild functions do. */
     void build() {
+        // A shelf that is switched off is a shelf at unity gain: its Alo/Ahi
+        // become 1, the fourth roots and square roots become 1, and the SVF
+        // collapses to a flat mix. No special case in the per-sample path.
+        const float loG = shelfLowOn  ? shelfLoGain : 1.0f;
+        const float hiG = shelfHighOn ? shelfHiGain : 1.0f;
+
         // Delay lengths. RoomSize enters as a CUBE ROOT, which is the single
         // least guessable thing in the whole reverb and the reason a fitted
         // model never tracked it: doubling the room lengthens the tank by 26%.
@@ -390,8 +397,8 @@ struct SuperEco {
             // long lane is shelved harder than a short one — the shelf is a
             // per-round-trip loss, not a fixed filter.
             const float t = tA + tB + (familyCInLoop ? tC : 0.0f);
-            const float Alo = stockExp(6.0f * t * std::log(clampGain(shelfLoGain)));
-            const float Ahi = stockExp(6.0f * t * std::log(clampGain(shelfHiGain)));
+            const float Alo = stockExp(6.0f * t * std::log(clampGain(loG)));
+            const float Ahi = stockExp(6.0f * t * std::log(clampGain(hiG)));
             const float Tlo = 2.0f * stockTanHalf(2.0f * 3.14159265358979f * shelfLoFreq / fs);
             const float Thi = 2.0f * stockTanHalf(2.0f * 3.14159265358979f * shelfHiFreq / fs);
             const float qlo = std::sqrt(std::sqrt(Alo));      // fourth root
@@ -586,6 +593,73 @@ struct SuperEco {
     /** ShelfLoGain/ShelfHiGain reach 0 in principle and log(0) is not a number.
      *  The device's own range starts at 0.2. */
     static float clampGain(float x) { return x < 1e-4f ? 1e-4f : x; }
+
+    // ── Raw device parameters, by their own names ──────────────────────────
+    //
+    // For the NULL TEST. A stock Reverb carries 33 parameters and DR32's send
+    // has eight generic slots, so the musical knob mapping in dr32_fxbus.cpp
+    // cannot express a stock preset. This takes the `.abl` JSON's own keys and
+    // values directly, with no DR32-side interpretation in between.
+    //
+    // ⚠ It reports THREE outcomes, and the third is the point. A null test
+    // whose renderer silently ignores a parameter it does not implement is a
+    // null test that lies: the number comes out bad and nothing says why. So a
+    // key that this port knowingly does not implement is distinguished from one
+    // it has never heard of, and the caller is expected to print both.
+    enum Applied {
+        kUnknown     = -1,   // not a Reverb parameter at all — caller should fail
+        kNotModelled =  0,   // real, understood, deliberately absent from the port
+        kApplied     =  1,
+    };
+
+    /** Set one parameter by the device's own key name. `build()` is NOT called;
+     *  call it once after the whole block, as the device's own callbacks
+     *  effectively do. */
+    Applied setRaw(const char *key, float v) {
+        if (!key) return kUnknown;
+        auto eq = [&](const char *k) { return std::strcmp(key, k) == 0; };
+
+        if (eq("DecayTime"))     { decayTime = v * 0.001f; return kApplied; }  // ms
+        if (eq("RoomSize"))      { roomSize = v; return kApplied; }
+        if (eq("PreDelay"))      { preDelayMs = v; return kApplied; }          // ms
+        if (eq("DiffuseDelay"))  { diffuseDelay = v; return kApplied; }
+        if (eq("AllPassGain"))   { allPassGain = v; return kApplied; }
+        if (eq("AllPassSize"))   { allPassSize = v; return kApplied; }
+        if (eq("ShelfLoFreq"))   { shelfLoFreq = v; return kApplied; }
+        if (eq("ShelfHiFreq"))   { shelfHiFreq = v; return kApplied; }
+        if (eq("EarlyReflectModFreq"))  { earlyModFreq = v; return kApplied; }
+        if (eq("EarlyReflectModDepth")) { earlyModDepth = v; return kApplied; }
+        if (eq("SpinOn"))        { spinOn = (v >= 0.5f); return kApplied; }
+        if (eq("FreezeOn"))      { freeze = (v >= 0.5f); return kApplied; }
+        if (eq("MixReflect"))    { mixReflect = v; return kApplied; }
+        if (eq("MixDiffuse"))    { mixDiffuse = v; return kApplied; }
+        // The shelf ON switches are real, not ignored: unity gain IS a
+        // bypassed shelf here, because the builder's Alo/Ahi become 1 and the
+        // SVF collapses to a flat mix.
+        if (eq("ShelfLowOn"))    { shelfLowOn = (v >= 0.5f); return kApplied; }
+        if (eq("ShelfHighOn"))   { shelfHighOn = (v >= 0.5f); return kApplied; }
+        if (eq("ShelfLoGain"))   { shelfLoGain = v; return kApplied; }
+        if (eq("ShelfHiGain"))   { shelfHiGain = v; return kApplied; }
+
+        // Real parameters this port does not model yet. Each one is a known
+        // hole with a named owner — see the header and
+        // `_worklogs/NEXT-PROMPT-reverb-nulltest.md`.
+        if (eq("BandFreq") || eq("BandWidth") || eq("BandLowOn") ||
+            eq("BandHighOn") ||                       // input Band filter builder
+            eq("SizeModFreq") || eq("SizeModDepth") ||
+            eq("SizeSmoothing") ||                    // late-lane modulation
+            eq("StereoSeparation") || eq("MixDirect") ||  // final mixer builder
+            eq("ChorusOn") || eq("FlatOn") || eq("CutOn") ||
+            eq("HighFilterType") || eq("Enabled"))
+            return kNotModelled;
+
+        // ⚠ RoomType is not a room shape, it is the quality tier, and this port
+        // is SuperEco only. Anything else means the null test is comparing
+        // against a different algorithm and the number would be meaningless.
+        if (eq("RoomType")) return (v == 0.0f) ? kApplied : kUnknown;
+
+        return kUnknown;
+    }
 };
 
 }  // namespace dr32_supereco

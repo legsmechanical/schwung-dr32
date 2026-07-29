@@ -93,14 +93,22 @@ def _biquad_bp(sig, sr, f0, q):
     al = math.sin(w) / (2.0 * q)
     cw = math.cos(w)
     a0 = 1.0 + al
-    b0, b1, b2 = al / a0, 0.0, -al / a0
-    a1, a2 = -2.0 * cw / a0, (1.0 - al) / a0
+    b = [al / a0, 0.0, -al / a0]
+    a = [1.0, -2.0 * cw / a0, (1.0 - al) / a0]
+    try:
+        # scipy when it is there: this filter is six sections over multi-minute
+        # renders, and the pure-Python loop below turns a suite run into
+        # minutes. Same coefficients, same result.
+        from scipy.signal import lfilter
+        return lfilter(b, a, sig)
+    except ImportError:
+        pass
     z1 = z2 = 0.0
     out = []
     for x in sig:
-        y = b0 * x + z1
-        z1 = b1 * x - a1 * y + z2
-        z2 = b2 * x - a2 * y
+        y = b[0] * x + z1
+        z1 = b[1] * x - a[1] * y + z2
+        z2 = b[2] * x - a[2] * y
         out.append(y)
     return out
 
@@ -116,12 +124,12 @@ def _biquad_bp(sig, sr, f0, q):
 # reads back the mid band's RT60 and the result looks flat.
 #
 # That flatness was read as "every band saturates together, therefore the cause
-# is broadband, therefore the shelves are ruled out". It is an artifact.
-# Re-measured with the cascade below, the ported engine separates 2.57 s at
-# 150 Hz against 7.25 s at 1 kHz — and the shelves are the cause after all.
+# is broadband, therefore the shelves are ruled out". It is an artifact — the
+# shelves ARE the cause. Re-measured with the cascade below, the device's own
+# banked IRs separate: 1.85 s below 671 Hz against 5.90 s in the mid.
 #
-# Six cascaded pole-pairs, ~72 dB/octave. Slower, and the only version whose
-# answer means what it says.
+# Six cascaded pole-pairs, ~72 dB/octave. The only version whose answer means
+# what it says.
 _BAND_SECTIONS = 6
 _BAND_Q = 1.4
 

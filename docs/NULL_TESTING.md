@@ -151,3 +151,68 @@ the amount curve. Do not chase its null depth.
   precision is not yet attributed.
 - Effects (M2): each of the ten paths now has a numeric target instead of a
   prose description. `make_fixture.mjs --effect=<name>` builds the fixture.
+
+---
+
+# The REVERB null test (`tools/verb_suite.sh`)
+
+The Native send is a port of Move's own Reverb, so it gets its own path — much
+shorter than the pad-effect one above, because a reverb reference needs no song.
+The references in `build/ir/` are single-sample impulse renders through a return
+chain, so the tail is already isolated and **no subtraction and no device time**
+are required. They are checked in; re-capture with `tools/oracle.sh` only if the
+fixtures change.
+
+```sh
+tests/run.sh                  # builds dist/tests/render_verb
+tools/verb_suite.sh           # score + render + report over build/ir/*.abl
+tools/verb_suite.sh x.abl     # one preset, ad hoc
+```
+
+## The direct-parameter path, and why it exists
+
+A stock Reverb carries **33 parameters**; a DR32 send has **eight** generic
+control slots. The musical knob mapping in `dr32_fxbus.cpp` therefore cannot
+express a stock preset at all, and driving the port through it would be testing
+a different reverb. So there is a second, test-only path that takes the `.abl`
+JSON's own keys and values with no DR32-side interpretation in between:
+
+```
+build/ir/x.abl  --tools/verb_score.mjs-->  x.verb  --dist/tests/render_verb-->  x-dr32.wav
+```
+
+`dr32_fxbus_native_set_raw()` is that path. It is **not** reachable from the UI,
+the kit format or saved state, and it must stay that way — it is a measurement
+instrument, not a feature. `dr32_fxbus_native_raw_commit()` also switches the
+send into null-test mode, which turns off two things that exist to make Native
+sit politely beside the other send types and would otherwise corrupt the
+measurement: the output level trim, and the idle-skip (whose output gate at
+-120 dB would put a floor under the null depth that has nothing to do with the
+model).
+
+## ⚠ Every unmodelled parameter is REPORTED
+
+`setRaw()` returns three outcomes, and the third is the point:
+
+| | |
+|---:|---|
+| `1` | applied |
+| `0` | a real Reverb parameter the port knowingly does not model yet |
+| `-1` | not a Reverb parameter at all — the renderer refuses to run |
+
+A renderer that silently swallowed the middle case would produce a bad null
+number with nothing to say why, which is worse than no test. `render_verb`
+prints them; `verb_suite.sh` leaves them in `build/fx/<case>.log`.
+`verb_score.mjs` is equally strict on its own side and exits non-zero rather
+than drop a key it cannot represent.
+
+## ⚠ The null column is not yet a measure of the model
+
+Four parts of the device are still unmodelled, and one of them is the **final
+mixer**, which sets the entire output structure — two stereo delays, a fixed
+1.39 crossfeed and a `swapLR` width term, none of which the port's placeholder
+reproduces. Until that lands, a null number mostly measures the placeholder.
+
+So the suite reports **RT60, broadband and per band**, which reads the late
+loop's behaviour rather than the output mix, and is meaningful today. See
+`docs/specs/2026-07-29-supereco-port.md` for what the numbers currently say.

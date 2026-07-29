@@ -26,6 +26,10 @@ node tests/roundtrip.mjs tests/fixtures || fail=1
 # The offline null-test renderer must at least build (running it needs device
 # fixtures + a sample mirror; see docs/NULL_TESTING.md).
 c++ -std=c++17 -O2 -Idsp -c dsp/dr32_fxbus.cpp -o dist/tests/fxbus_rs.o
+
+# The reverb null-test renderer (raw device parameters -> WAV).
+cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/render_verb.o -c tests/render_verb.c
+c++ -o dist/tests/render_verb dist/tests/render_verb.o dist/tests/fxbus_rs.o -lm || fail=1
 cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/render_score.o -c tests/render_score.c
 c++ -o dist/tests/render_score dist/tests/render_score.o dist/tests/fxbus_rs.o \
    dist/tests/dr32_params.o dist/tests/dr32_kit.o dist/tests/dr32_voice.o \

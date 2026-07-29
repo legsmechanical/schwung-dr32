@@ -210,14 +210,56 @@ that moved RT60 by 7% and read as broken. Sweeping both moves it 7.20 s ->
 unity, so a single control at 0.59 lands on **both** — which is the send's
 default.
 
+## The null-test path, and what it says today
+
+`tools/verb_suite.sh` now runs end to end with no device time — the references
+in `build/ir/` are already captured. `tools/verb_score.mjs` pulls a preset's 33
+parameters out of the `.abl`, `dist/tests/render_verb` drives the port with them
+raw through `dr32_fxbus_native_set_raw()`, and the suite reports RT60 rather
+than a null number (see `docs/NULL_TESTING.md` for why the null column would
+currently measure the placeholder mixer rather than the model).
+
+Driven purely from each preset's own numbers, with nothing fitted:
+
+| case | device | ours | | case | device | ours |
+|---|---:|---:|---|---|---:|---:|
+| DecayTime 600 | 0.60 s | 0.38 s | | RoomSize 0.3 | 1.35 s | 1.43 s |
+| DecayTime 1500 | 1.33 s | 0.91 s | | RoomSize 10 | 1.42 s | 1.46 s |
+| DecayTime 4000 | 2.62 s | 2.37 s | | RoomSize 60 | 1.61 s | 1.22 s |
+| DecayTime 10000 | 4.50 s | 4.23 s | | RoomSize 200 | 1.90 s | 1.16 s |
+| DecayTime 19500 | 5.44 s | 5.70 s | | RoomSize 500 | 1.88 s | 1.01 s |
+
+Two specific gaps fall out of this, and both are more useful than a single
+aggregate number would have been:
+
+**1. Long decays track, short ones run short.** Above DecayTime 4 s the model is
+within 6-10%, including the saturation. Below it, the model is 30-37% short. The
+short end is exactly where the early and diffuse fields are the largest share of
+the output — i.e. where the placeholder mixer has the most influence. The
+per-band columns agree: the low-band ceiling, which is a pure late-loop
+property, matches closely (1.27 -> 1.25, 1.69 -> 1.72, 1.85 -> 1.98).
+
+**2. The RoomSize trend is INVERTED.** The device's RT60 *rises* with RoomSize
+(1.35 -> 1.90 s); ours *falls* (1.43 -> 1.01 s). The late network alone is
+RoomSize-independent, as the decay law requires — measured flat at 1.17-1.24 s
+across 0.3..500 before the front end went in — so the dependence is entering
+through the front end, whose pre-diffusion gains and derived diffuser cutoff
+both scale with RoomSize. Every one of those laws is transcribed, so this is
+most likely the missing mixer rebalancing early/diffuse/late rather than a
+transcription error; that is a hypothesis, not a finding, and the mixer builder
+will settle it.
+
+The `MixDirect` sweep is a clean control: the device's broadband RT60 is
+constant at 1.61 s across it and so is ours, which is the documented behaviour
+(`MixDirect` is dry/wet and does not touch the tail).
+
 ## Still open
 
-- A **direct-parameter path** for the null test. The eight generic send slots
-  cannot carry the device's 33 parameters, so `tools/fx_suite.sh` will need a
-  test-only entry point that sets `RoomSize`/`DecayTime`/the shelves raw. This
-  is now the last thing between the port and an actual null number.
-- The two named gaps above — the Band filter builder and the final mixer's
-  form. The mixer is the one that will show up in a null test.
+- ~~A **direct-parameter path** for the null test.~~ **Done** — see above.
+- The four decompile gaps, handed off in
+  `_worklogs/NEXT-PROMPT-reverb-nulltest.md`: the final mixer's coefficient
+  builder (highest value — it explains both findings above), the input Band
+  filter's builder, late-lane size modulation, and the property converters.
 - Device CPU, via `tools/bench_fx.c`.
 - Kit import could now select `Native` automatically when a kit's return chain
   is a native Reverb, and carry its `RoomSize`/`DecayTime` across. Return

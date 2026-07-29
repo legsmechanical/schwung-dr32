@@ -814,6 +814,12 @@ struct Slot {
     Delay      delay;                      // tempo-synced, filtered feedback
     NonLin     nonlin;                     // flat-then-cliff envelope over the tank
     dr32_supereco::SuperEco native;        // the PORTED late network of Move's Reverb
+    // ⚠ NULL-TEST MODE. Set only by dr32_fxbus_native_raw_commit(). It turns
+    // off the two things that exist to make Native sit politely next to the
+    // other send types and would otherwise corrupt a null measurement: the
+    // output level trim, and the idle-skip that stops an unused bus costing
+    // CPU. Never set from the UI or from saved state.
+    bool nativeRawMode = false;
 
     /* Which SpaceExtra type a DR32 type arms, -1 for the ones that do not run
      * through the shared tank. Only ONE type is armed at a time — the struct is
@@ -1138,11 +1144,12 @@ struct Slot {
                 // L+R) with all of its stereo coming from the parity folds.
                 // Adding a per-channel diffuser would have been decorating a
                 // path that the real algorithm does not have.
+                const float trim = nativeRawMode ? 1.0f : kNativeTrim;
                 for (int i = 0; i < n; i++) {
                     float ol, orr;
                     native.tick(io[2 * i], io[2 * i + 1], ol, orr);
-                    io[2 * i] = ol * kNativeTrim;
-                    io[2 * i + 1] = orr * kNativeTrim;
+                    io[2 * i] = ol * trim;
+                    io[2 * i + 1] = orr * trim;
                 }
                 break;
             }
@@ -1262,7 +1269,11 @@ void dr32_fxbus_process(dr32_fxbus *fx, float *out, int n) {
         // ~4 s of silence is well past any tail these reverbs produce.
         const int idle_limit = (int)(4.0f * 44100.0f / (float)(n > 0 ? n : 128));
 
-        if (slot.active() && fx->idle_blocks[s] <= idle_limit) {
+        // ⚠ The idle skip is disabled in null-test mode: its output gate cuts
+        // at 1e-6 (-120 dB), which would otherwise put a floor under the null
+        // depth that has nothing to do with the model.
+        if (slot.active() &&
+            (slot.nativeRawMode || fx->idle_blocks[s] <= idle_limit)) {
             const float g = fx->send_return[s];   // return is fully wet by design
             slot.processBlock(buf, n, fx->scratch_l, fx->scratch_r);
             // The idle counter is armed by the INPUT, but held open by the
@@ -1393,6 +1404,21 @@ void dr32_efx_defaults(dr32_efx_type type, float *o) {
         default:
             o[0] = 0.5f; o[1] = 0.3f; o[2] = 0.5f; o[3] = 0.0f; break;
     }
+}
+
+int dr32_fxbus_native_set_raw(dr32_fxbus *fx, int slot, const char *key, float value) {
+    if (!fx || slot < 0 || slot >= DR32_SEND_SLOTS) return -1;
+    return (int)fx->sends[slot].native.setRaw(key, value);
+}
+
+void dr32_fxbus_native_raw_commit(dr32_fxbus *fx, int slot) {
+    if (!fx || slot < 0 || slot >= DR32_SEND_SLOTS) return;
+    fx->sends[slot].native.build();
+    fx->sends[slot].native.reset();
+    fx->sends[slot].nativeRawMode = true;
+    // The generic pre-delay line must be out of the way: the device's PreDelay
+    // is one of the raw parameters and it is modelled inside the port.
+    fx->sends[slot].preLen = 0;
 }
 
 const char *dr32_efx_name(dr32_efx_type type) {

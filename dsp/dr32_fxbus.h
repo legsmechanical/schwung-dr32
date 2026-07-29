@@ -154,6 +154,30 @@ void dr32_fxbus_reset(dr32_fxbus *fx);
  *  whatever the previous effect's knobs happened to be. */
 void dr32_efx_defaults(dr32_efx_type type, float *out);
 
+/** ── NULL-TEST ONLY: drive the Native reverb from raw device parameters ──
+ *
+ *  A stock Reverb carries 33 parameters; a DR32 send has eight generic slots.
+ *  The musical knob mapping therefore CANNOT express a stock preset, so the
+ *  null test needs a path that takes the `.abl` JSON's own keys and values with
+ *  no DR32-side interpretation in between. This is that path.
+ *
+ *  ⚠ Not reachable from the UI, the kit format, or saved state, and it must
+ *  stay that way — it is a measurement instrument, not a feature. The knob
+ *  mapping is what ships.
+ *
+ *  Return values, and the third one is the point:
+ *     1  applied
+ *     0  a real Reverb parameter this port knowingly does not model yet
+ *    -1  not a Reverb parameter at all
+ *
+ *  A renderer that silently swallowed case 0 would produce a bad null number
+ *  with nothing to say why, so callers are expected to REPORT the zeros.
+ *
+ *  Call dr32_fxbus_native_raw_commit() once after a whole parameter block,
+ *  which is what the device's own property callbacks effectively do. */
+int  dr32_fxbus_native_set_raw(dr32_fxbus *fx, int slot, const char *key, float value);
+void dr32_fxbus_native_raw_commit(dr32_fxbus *fx, int slot);
+
 /** Name for a type, for UI readback. */
 const char *dr32_efx_name(dr32_efx_type type);
 dr32_efx_type dr32_efx_from_name(const char *name);
