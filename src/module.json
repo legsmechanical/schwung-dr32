@@ -316,7 +316,8 @@
                 "Gated",
                 "Digital",
                 "Hall",
-                "NonLin"
+                "NonLin",
+                "Native"
               ]
             },
             {
@@ -355,6 +356,19 @@
               "visible_if": {
                 "param": "send1_mode",
                 "not_equals": "Delay"
+              }
+            },
+            {
+              "key": "send1_diffusion",
+              "name": "Diffusion",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.46,
+              "visible_if": {
+                "param": "send1_type",
+                "equals": "Native"
               }
             },
             {
@@ -576,7 +590,8 @@
                 "Gated",
                 "Digital",
                 "Hall",
-                "NonLin"
+                "NonLin",
+                "Native"
               ]
             },
             {
@@ -615,6 +630,19 @@
               "visible_if": {
                 "param": "send2_mode",
                 "not_equals": "Delay"
+              }
+            },
+            {
+              "key": "send2_diffusion",
+              "name": "Diffusion",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.46,
+              "visible_if": {
+                "param": "send2_type",
+                "equals": "Native"
               }
             },
             {

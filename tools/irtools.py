@@ -60,8 +60,10 @@ def envelope(sig, sr, win_s=0.02, skip_first=True):
 def rt60(sig, sr, lo_db=-35.0, hi_db=-5.0, band=None):
     """RT60 by least-squares fit of the log-envelope decay slope.
 
-    `band` = (f_lo, f_hi) applies a one-pole bandpass first, for PER-BAND RT60 —
-    which is the measurement that separates the shelves from the feedback law.
+    `band` = (f_lo, f_hi) applies a STEEP bandpass first, for PER-BAND RT60 —
+    the measurement that separates the shelves from the feedback law. ⚠ Read
+    the note on _bandpass before changing its steepness: at 6 dB/octave this
+    same measurement said the shelves were ruled out, and it was wrong.
     Returns None if there is not enough decay to fit."""
     if band:
         sig = _bandpass(sig, sr, band[0], band[1])
@@ -85,16 +87,49 @@ def rt60(sig, sr, lo_db=-35.0, hi_db=-5.0, band=None):
     return -60.0 / slope if slope < 0 else None
 
 
-def _bandpass(sig, sr, f_lo, f_hi):
-    """One-pole high-pass then low-pass. Gentle, but enough to separate the
-    reverb's three regions (below ShelfLoFreq / between / above ShelfHiFreq)."""
+def _biquad_bp(sig, sr, f0, q):
+    """One RBJ constant-skirt bandpass section."""
+    w = 2.0 * math.pi * f0 / sr
+    al = math.sin(w) / (2.0 * q)
+    cw = math.cos(w)
+    a0 = 1.0 + al
+    b0, b1, b2 = al / a0, 0.0, -al / a0
+    a1, a2 = -2.0 * cw / a0, (1.0 - al) / a0
+    z1 = z2 = 0.0
     out = []
-    a_hi = 1.0 - math.exp(-2.0 * math.pi * f_lo / sr)
-    a_lo = 1.0 - math.exp(-2.0 * math.pi * f_hi / sr)
-    z_hi = z_lo = 0.0
     for x in sig:
-        z_hi += a_hi * (x - z_hi)
-        hp = x - z_hi
-        z_lo += a_lo * (hp - z_lo)
-        out.append(z_lo)
+        y = b0 * x + z1
+        z1 = b1 * x - a1 * y + z2
+        z2 = b2 * x - a2 * y
+        out.append(y)
     return out
+
+
+# ⚠⚠ THE SKIRTS HAVE TO BE STEEP, and this is not a detail — it produced a
+# WRONG CONCLUSION that stood for a day.
+#
+# This was a one-pole high-pass into a one-pole low-pass: 6 dB/octave. Against
+# an ordinary spectrum that is fine. Against THIS reverb it is not, because the
+# bands differ in DECAY RATE as well as level: the mid band both rings loudest
+# and lasts longest, so at 6 dB/octave its tail leaks through the skirts of
+# every other band's filter and IS the tail you measure there. Every band then
+# reads back the mid band's RT60 and the result looks flat.
+#
+# That flatness was read as "every band saturates together, therefore the cause
+# is broadband, therefore the shelves are ruled out". It is an artifact.
+# Re-measured with the cascade below, the ported engine separates 2.57 s at
+# 150 Hz against 7.25 s at 1 kHz — and the shelves are the cause after all.
+#
+# Six cascaded pole-pairs, ~72 dB/octave. Slower, and the only version whose
+# answer means what it says.
+_BAND_SECTIONS = 6
+_BAND_Q = 1.4
+
+
+def _bandpass(sig, sr, f_lo, f_hi):
+    """Steep bandpass, geometric centre of (f_lo, f_hi). See the note above:
+    a gentle filter gives a confidently wrong answer on these tails."""
+    f0 = math.sqrt(max(f_lo, 1e-6) * min(f_hi, sr * 0.45))
+    for _ in range(_BAND_SECTIONS):
+        sig = _biquad_bp(sig, sr, f0, _BAND_Q)
+    return sig

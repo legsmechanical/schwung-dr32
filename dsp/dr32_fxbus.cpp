@@ -8,6 +8,9 @@
 #include "vendor/airwin_spaces.h"
 #include "vendor/airwin_dyn.h"
 #include "vendor/space_extra.h"
+// Not vendored — ours, but a PORT rather than a design. Read its header before
+// touching anything it does.
+#include "dr32_supereco.h"
 
 #include <cstring>
 #include <cmath>
@@ -781,6 +784,13 @@ struct NonLin {
 #define DR32_PREDELAY_MAX_MS 200
 #define DR32_PREDELAY_MAX ((int)(DR32_PREDELAY_MAX_MS * 48))   // headroom to 48 kHz
 
+/** Output trim on the Native reverb, so selecting it does not jump the send
+ *  level against the other types. Measured, not guessed: it is the ratio that
+ *  puts Native's tail RMS on the Plate's at each type's own default settings.
+ *  ⚠ It is a LEVEL match only — it must not be used to compensate for anything
+ *  the port gets wrong, and the null test bypasses it. */
+static const float kNativeTrim = 0.561f;
+
 struct Slot {
     dr32_efx_type type = DR32_EFX_NONE;
     // The generic control slots, see dr32_fxbus.h for what each means per type.
@@ -803,6 +813,7 @@ struct Slot {
     awk_verbity2::Verbity2 spaces;         // the flexible room-to-hall model
     Delay      delay;                      // tempo-synced, filtered feedback
     NonLin     nonlin;                     // flat-then-cliff envelope over the tank
+    dr32_supereco::SuperEco native;        // the PORTED late network of Move's Reverb
 
     /* Which SpaceExtra type a DR32 type arms, -1 for the ones that do not run
      * through the shared tank. Only ONE type is armed at a time — the struct is
@@ -830,6 +841,7 @@ struct Slot {
         spaces.setSampleRate(fs);
         delay.setSampleRate(fs);
         nonlin.setSampleRate(fs);
+        native.setSampleRate(fs);
         apply();
     }
 
@@ -940,6 +952,53 @@ struct Slot {
         }
         spaces.D = 1.0f;
 
+        // --- Native (the ported SuperEco late network) ---------------------
+        //
+        // These knobs drive the DEVICE'S OWN parameters directly, in the
+        // device's units, rather than through a DR32-flavoured abstraction —
+        // there is no reason to invent a mapping for controls that already
+        // exist. What is chosen here is only the RANGE each knob spans.
+        if (type == DR32_EFX_NATIVE) {
+            const float sz = p[0] < 0.0f ? 0.0f : (p[0] > 1.0f ? 1.0f : p[0]);
+            const float dk = p[2] < 0.0f ? 0.0f : (p[2] > 1.0f ? 1.0f : p[2]);
+            // RoomSize over the full span the 19 stock Reverb presets use,
+            // 0.27..500. Log, because the device takes its CUBE ROOT — a linear
+            // knob would spend its whole top half moving the tank by a few
+            // percent.
+            native.roomSize = 0.27f * powf(500.0f / 0.27f, sz);
+            // DecayTime 0.3..8 s. The stock presets go to 19.5 s, but the
+            // shelves impose a hard ceiling (see below) and everything past
+            // about 8 s lands on it — a knob whose top third does nothing is
+            // the defect this suite exists to catch. The null test drives the
+            // full range directly, not through here.
+            native.decayTime = 0.3f * powf(8.0f / 0.3f, dk);
+            // ⚠ "Damping" is BOTH shelf gains, and they are per-round-trip
+            // losses — so this knob shortens the tail as well as colouring it.
+            // That is not a modelling shortcut, it is the mechanism: it is what
+            // caps this reverb's RT60 near 5-7 s however long DecayTime asks
+            // for. Measured in the port: with both shelves at unity RT60 tracks
+            // 0.900 x DecayTime at every point out to 19.5 s; with the stock
+            // shelves it saturates at 6.6 s, against the device's measured
+            // 5.44 s.
+            //
+            // ⚠ The LOW shelf does most of that. Both shelves CUT — the loop is
+            // a band-pass between ShelfLoFreq and ShelfHiFreq — and since most
+            // of a drum's energy is below 670 Hz, pinning the low shelf open
+            // (as this first did) leaves a knob that moves RT60 by 7% and looks
+            // broken. It is the low shelf that makes the ceiling.
+            //
+            // ⭑ One knob reaches the factory setting exactly: the stock drum
+            // kits' pair (ShelfLoGain 0.6167, ShelfHiGain 0.8833) lies on a
+            // straight line through unity, so damp = 0.59 lands on BOTH.
+            native.shelfLoGain = 1.0f - 0.65f * pd2;
+            native.shelfHiGain = 1.0f - 0.20f * pd2;
+            // Diffusion (AllPassGain). 0.6 is the value every stock DRUM KIT
+            // uses; the audio-effect presets range wider.
+            native.allPassGain = 0.30f + 0.65f * (p[4] < 0.0f ? 0.0f :
+                                                  (p[4] > 1.0f ? 1.0f : p[4]));
+            native.build();
+        }
+
         // The Delay reads the whole array (its own units — see the header).
         delay.setParams(p);
 
@@ -961,6 +1020,7 @@ struct Slot {
         spaces.reset();
         delay.reset();
         nonlin.reset();
+        native.reset();
     }
 
     /** Run `n` interleaved stereo frames in place. `sl`/`sr` are scratch. */
@@ -1057,6 +1117,25 @@ struct Slot {
                     float l = sl[i], r = sr[i];
                     spacesLP.run(l, r);
                     io[2 * i] = l; io[2 * i + 1] = r;
+                }
+                break;
+            }
+            case DR32_EFX_NATIVE: {
+                // ⚠ The diffuser in front is a PLACEHOLDER for the device's own
+                // early-reflection and pre-diffusion stages, which are not
+                // recovered yet (see dr32_supereco.h and
+                // `_worklogs/NEXT-PROMPT-reverb-frontend.md`). It is not a
+                // voicing choice and it should be DELETED, not tuned, when the
+                // real front end lands. Its two sides run different prime
+                // lengths, which is what keeps the two input parities
+                // decorrelated in the meantime.
+                for (int i = 0; i < n; i++) {
+                    const float l = diff.run(0, io[2 * i]);
+                    const float r = diff.run(1, io[2 * i + 1]);
+                    float ol, orr;
+                    native.tick(l, r, ol, orr);
+                    io[2 * i] = ol * kNativeTrim;
+                    io[2 * i + 1] = orr * kNativeTrim;
                 }
                 break;
             }
@@ -1282,6 +1361,14 @@ void dr32_efx_defaults(dr32_efx_type type, float *o) {
             // hit and the window start together.
             o[0] = 0.35f; o[1] = 0.25f; o[2] = 0.45f; o[3] = 0.0f; o[4] = 0.5f;
             o[5] = 0.07f; break;   // ~1.5 ms, the cliff this always had
+        case DR32_EFX_NATIVE:
+            // A stock drum-kit room, in the device's own numbers: RoomSize 60
+            // (the value the factory kits' return chains carry), a ~1.5 s decay,
+            // a little HF damping, and Diffusion at 0.6 — again the factory
+            // kits' own value. Pre-delay 0: the native device's own PreDelay is
+            // 0 in every kit return chain, and DR32's line stands in for it.
+            o[0] = 0.55f; o[1] = 0.59f; o[2] = 0.42f; o[3] = 0.0f;
+            o[4] = 0.46f; break;
         case DR32_EFX_DELAY:
             // The factory corpus's dominant configuration, not a guess: L = 1
             // sixteenth and R = 4 is what ten of the twelve native delay returns
@@ -1310,6 +1397,7 @@ const char *dr32_efx_name(dr32_efx_type type) {
         case DR32_EFX_DIGITAL:return "Digital";
         case DR32_EFX_HALL:   return "Hall";
         case DR32_EFX_NONLIN: return "NonLin";
+        case DR32_EFX_NATIVE: return "Native";
         default:              return "Off";
     }
 }
@@ -1323,6 +1411,7 @@ dr32_efx_type dr32_efx_from_name(const char *name) {
     if (!std::strcmp(name, "Digital")) return DR32_EFX_DIGITAL;
     if (!std::strcmp(name, "Hall")) return DR32_EFX_HALL;
     if (!std::strcmp(name, "NonLin")) return DR32_EFX_NONLIN;
+    if (!std::strcmp(name, "Native")) return DR32_EFX_NATIVE;
     // Anything else, including a saved state naming the old "Drum Bus" send
     // type, falls through to Off.
     return DR32_EFX_NONE;

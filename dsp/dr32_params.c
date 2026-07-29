@@ -62,7 +62,8 @@ static int send_slot_index(const char *name) {
      * the gate — where slot 2 is the gate's hold, so "decay" would have been
      * ambiguous and `tail` is used instead. */
     if (!strcmp(name, "pingpong") || !strcmp(name, "shape")
-        || !strcmp(name, "tail") || !strcmp(name, "p5")) return 4;
+        || !strcmp(name, "tail") || !strcmp(name, "diffusion")
+        || !strcmp(name, "p5")) return 4;
     /* Slot 5 is sync on a Delay and the RELEASE on the two envelope types. */
     if (!strcmp(name, "release")) return 5;
     if (!strcmp(name, "sync")     || !strcmp(name, "p6")) return 5;

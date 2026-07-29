@@ -525,6 +525,27 @@ capture rig as the null test rather than as the source of the model.
 
 ## PER-BAND RT60 — 2026-07-29: the shelves are RULED OUT
 
+> ## ⚠⚠ RETRACTED, 2026-07-29 (same day)
+> **This section's conclusion is WRONG, and the table below is an artifact.**
+> The shelves are the cause after all. `_bandpass` in `tools/irtools.py` was a
+> one-pole HP into a one-pole LP — 6 dB/octave — which is not selective enough
+> to separate bands that differ in DECAY RATE as well as level: the loud, slow
+> mid band leaks through every other band's skirts and is the tail you measure
+> there, so every band reads back the mid band's RT60 and the result looks flat.
+>
+> Re-measured from the SAME captures with a steep filter (six cascaded
+> pole-pairs), the low band saturates at **1.85 s** against the mid's 5.90 s at
+> DecayTime 19500 — the separation this section says would prove shelf
+> involvement, and close to the 2.38 s low-shelf ceiling it predicts below.
+>
+> Confirmed independently in the port, where the shelves can simply be switched
+> off: 17.54 s with both open, 6.60 s with both at stock.
+>
+> Full account, both tables, and the general lesson:
+> [`2026-07-29-supereco-port.md`](2026-07-29-supereco-port.md).
+> **Everything from here to the end of the file is retained as a record of how
+> the wrong answer looked; do not act on it.**
+
 Run from the already-captured IRs, no device time. `tools/irtools.py` now
 carries the loader and the slope-fit RT60 so this is repeatable.
 

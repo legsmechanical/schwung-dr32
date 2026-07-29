@@ -42,6 +42,32 @@ static float peak_range(const float *x, int from, int to) {
     return p;
 }
 
+/** RT60 by Schroeder backward integration over the LEFT channel.
+ *
+ *  Not a log-envelope regression: a four-lane tank's bare impulse response is
+ *  sparse enough that block-RMS bounces above the fit window and ends the scan
+ *  early, which reads as "no decay at all" rather than as a noisy estimate.
+ *  Backward integration is monotonic by construction and has neither problem. */
+static float schroeder_rt60(const float *x, int n) {
+    double *e = (double *)malloc((size_t)n * sizeof(double));
+    if (!e) return -1.0f;
+    double acc = 0.0;
+    for (int i = n - 1; i >= 0; i--) { acc += (double)x[2*i] * x[2*i]; e[i] = acc; }
+    if (e[0] <= 0.0) { free(e); return -1.0f; }
+    double sx = 0, sy = 0, sxx = 0, sxy = 0; int c = 0;
+    for (int i = 0; i < n; i++) {
+        double d = 10.0 * log10(e[i] / e[0] + 1e-300);
+        if (d > -5.0) continue;
+        if (d < -35.0) break;
+        double t = (double)i / SR;
+        sx += t; sy += d; sxx += t * t; sxy += t * d; c++;
+    }
+    free(e);
+    if (c < 100) return -1.0f;
+    double slope = (c * sxy - sx * sy) / (c * sxx - sx * sx);
+    return slope >= 0.0 ? -1.0f : (float)(-60.0 / slope);
+}
+
 static float rms_range(const float *x, int from, int to) {
     double s = 0; int n = 0;
     for (int i = from; i < to; i++) { s += (double)x[2 * i] * x[2 * i]; n++; }
@@ -1194,6 +1220,83 @@ int main(void) {
               "the idle-skip silenced the delay after 4 s of quiet (peak %.6f) — "
               "a delay's input IS silent between hits", late);
         dr32_fxbus_destroy(fx);
+    }
+
+    // ---- Native: the PORTED SuperEco decay law.
+    //
+    // ⭑ This is the one effect in DR32 that is a port rather than a design, so
+    // it gets tested against the binary's own law rather than against taste:
+    //
+    //     RT60 = ln(1000)*1.15/8.833317 = 0.8993 x DecayTime
+    //
+    // which the two decay constants imply INDEPENDENTLY of path time, and which
+    // was confirmed on device (1.33 s measured against 1.35 predicted).
+    //
+    // ⚠ It only holds with the SHELVES OPEN. Both shelves are a per-round-trip
+    // loss, so with damping up they impose a hard RT60 ceiling no DecayTime can
+    // exceed — that is the mechanism behind the device's measured saturation
+    // (5.44 s at DecayTime 19.5 s), and the second check here pins it.
+    {
+        /* Damping 0 -> both shelf gains unity. Decay 0.5778 -> DecayTime 2.0 s
+         * on the knob's 0.3..8 s log law. */
+        static float imp[2 * SR * 6], out[2 * SR * 6];
+        const int NL = SR * 6;
+        float p[8] = { 0.55f, 0.0f, 0.5778f, 0.0f, 0.46f, 0.0f, 125.0f, 500.0f };
+        memset(imp, 0, sizeof(imp));
+        imp[0] = 1.0f; imp[1] = 1.0f;
+        run_wet_p(DR32_EFX_NATIVE, p, imp, out, NL, 120.0f);
+        float open_rt = schroeder_rt60(out, NL);
+        printf("  Native RT60 at DecayTime 2.0 s, shelves open: %.2f s "
+               "(law says %.2f)\n", open_rt, 0.8993f * 2.0f);
+        CHECK(open_rt > 0.8993f * 2.0f * 0.90f && open_rt < 0.8993f * 2.0f * 1.10f,
+              "ported SuperEco decay law broken: RT60 %.2f s against %.2f s "
+              "implied by the binary's own constants", open_rt, 0.8993f * 2.0f);
+
+        /* ⚠ The ceiling only bites at LONG decays — at 2 s the per-loop shelf
+         * loss is small against the decay gain and damping moves RT60 by about
+         * 12%, which is why this second check runs at the top of the knob
+         * (DecayTime 8 s) and needs a 25 s tail to measure. Same reason the
+         * device's own saturation was invisible until the sweep reached 4 s. */
+        {
+            const int NC = SR * 25;
+            float *ci = (float *)calloc((size_t)NC * 2, sizeof(float));
+            float *co = (float *)calloc((size_t)NC * 2, sizeof(float));
+            CHECK(ci && co, "out of memory in the Native ceiling test");
+            if (ci && co) {
+                ci[0] = 1.0f; ci[1] = 1.0f;
+                float q[8] = { 0.55f, 0.0f, 1.0f, 0.0f, 0.46f, 0.0f, 125.0f, 500.0f };
+                run_wet_p(DR32_EFX_NATIVE, q, ci, co, NC, 120.0f);
+                float ceil_open = schroeder_rt60(co, NC);
+                q[1] = 1.0f;
+                run_wet_p(DR32_EFX_NATIVE, q, ci, co, NC, 120.0f);
+                float ceil_damp = schroeder_rt60(co, NC);
+                printf("  Native at DecayTime 8.0 s: shelves open %.2f s "
+                       "(law says %.2f), damped %.2f s\n",
+                       ceil_open, 0.8993f * 8.0f, ceil_damp);
+                CHECK(ceil_open > 0.8993f * 8.0f * 0.90f &&
+                      ceil_open < 0.8993f * 8.0f * 1.10f,
+                      "the decay law fails at the top of the knob: RT60 %.2f s "
+                      "against %.2f s", ceil_open, 0.8993f * 8.0f);
+                CHECK(ceil_damp > 0.0f && ceil_damp < ceil_open * 0.55f,
+                      "damping did not impose an RT60 ceiling (%.2f s open, "
+                      "%.2f s damped) — the shelf is a per-round-trip loss, not "
+                      "a tone control, and that loss is what caps this reverb's "
+                      "tail on the real device", ceil_open, ceil_damp);
+            }
+            free(ci); free(co);
+        }
+
+        /* And it must stay finite at the extremes of every control. */
+        int bad = 0;
+        for (int k = 0; k < 4; k++) {
+            float q[8] = { (k & 1) ? 1.0f : 0.0f, 0.0f, 1.0f,
+                           0.0f, (k & 2) ? 1.0f : 0.0f, 0.0f, 125.0f, 500.0f };
+            run_wet_p(DR32_EFX_NATIVE, q, imp, out, NL, 120.0f);
+            for (int i = 0; i < 2 * NL; i++)
+                if (!isfinite(out[i]) || fabsf(out[i]) > 100.0f) { bad++; break; }
+        }
+        CHECK(bad == 0, "Native went non-finite or ran away at %d of 4 control "
+                        "extremes", bad);
     }
 
     // ---- Delay: an absurdly slow tempo must clamp, not read out of bounds.

@@ -53,6 +53,11 @@ typedef enum {
     DR32_EFX_DIGITAL,      // 4-line FDN at fs/2, 12-bit loop grain — 80s rack
     DR32_EFX_HALL,         // Airwindows Chamber, golden-ratio Householder
     DR32_EFX_NONLIN,       // RMX16-style: flat (or rising) window, then a cliff
+    // ⭑ The ONLY one of these that is a port rather than DR32's own effect:
+    // the late network of Move's own Reverb, read off the binary. All 466
+    // Reverb instances in the CoreLibrary are SuperEco, so this is the reverb
+    // that is actually on the stock drum kits. See dsp/dr32_supereco.h.
+    DR32_EFX_NATIVE,
     DR32_EFX_COUNT
 } dr32_efx_type;
 
@@ -75,16 +80,16 @@ void dr32_fxbus_set_send_type(dr32_fxbus *fx, int slot, dr32_efx_type type);
 /** Generic per-slot controls, `p[0..n-1]` (n may be short; the rest keep their
  *  current values).
  *
- *    idx  Plate / Spaces          Delay
- *    ---  ----------------------  ---------------------------------------
- *     0   size                    TIME L, in SIXTEENTHS (1..16)
- *     1   damping / tone          TIME R, in SIXTEENTHS (1..16)
- *     2   decay                   feedback
- *     3   PRE-DELAY (0..200 ms)   tone (feedback bandpass centre)
- *     4   —                       ping-pong
- *     5   —                       sync: 0 = free, 1 = tempo-synced
- *     6   —                       FREE TIME L, in MILLISECONDS
- *     7   —                       FREE TIME R, in MILLISECONDS
+ *    idx  Plate / Spaces          Delay                                    Native
+ *    ---  ----------------------  ---------------------------------------  ------------------
+ *     0   size                    TIME L, in SIXTEENTHS (1..16)            RoomSize (log)
+ *     1   damping / tone          TIME R, in SIXTEENTHS (1..16)            HF damping
+ *     2   decay                   feedback                                 DecayTime (log)
+ *     3   PRE-DELAY (0..200 ms)   tone (feedback bandpass centre)          PRE-DELAY
+ *     4   —                       ping-pong                                Diffusion
+ *     5   —                       sync: 0 = free, 1 = tempo-synced         —
+ *     6   —                       FREE TIME L, in MILLISECONDS             —
+ *     7   —                       FREE TIME R, in MILLISECONDS             —
  *
  *  ⚠ Everything here is 0..1 EXCEPT the Delay's four times. The synced pair is
  *  a count of SIXTEENTH NOTES, the unit Move's own device syncs in
