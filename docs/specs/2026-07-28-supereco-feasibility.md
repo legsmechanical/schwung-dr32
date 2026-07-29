@@ -147,3 +147,37 @@ pad at a click) plus the parameter grid.
 Remaining before the fit: `make_fixture.mjs` still needs the RETURN-DEVICE
 parameter overrides (RoomSize / DecayTime / PreDelay / the shelves). The send
 half is done.
+
+---
+
+## FIRST PARAMETER GRID — 2026-07-28: inconclusive, and why
+
+Captured a click-excited IR (attack 0.0001 / hold 0.001 / decay 0.002) plus a
+3x3 grid over `AllPassGain` x `RoomSize`, isolated by subtraction as designed.
+
+| AllPassGain | RoomSize | RT60 | peak rms |
+|---:|---:|---:|---:|
+| 0.60 | 10 / 45 / 95 | 2.04 / 2.12 / 2.24 s | 0.0253 / 0.0213 / 0.0192 |
+| 0.85 | 10 / 45 / 95 | 2.00 / 2.24 / 2.12 s | 0.0275 / 0.0191 / 0.0203 |
+| 0.97 | 10 / 45 / 95 | 1.96 / 2.16 / 2.12 s | 0.0297 / 0.0208 / 0.0213 |
+
+**`RoomSize` clearly works** — peak level falls monotonically as the room grows,
+0.0297 -> 0.0192, which is what spreading the same energy over a bigger space
+does. **`AllPassGain` moves neither RT60 nor level**, and RT60 sits at 2.0-2.2 s
+everywhere.
+
+⚠ Two readings, and the next capture has to separate them:
+
+1. **`DecayTime` does not exist on this device instance.** The stock kits'
+   reverbs carry it (Ahlimba Kit: 1442.9) but the benchmark's does not, and
+   `make_fixture --return=` deliberately only sets keys that are already
+   present. So whatever governs decay in SuperEco mode may simply not have been
+   swept yet — `AllPassSize`, `DiffuseDelay` and `MixDiffuse`/`MixReflect` are
+   the untried candidates.
+2. **The render is 2 s and the measurement window is the same length.** An RT60
+   estimate that lands at ~2 s across every setting is exactly what a truncated
+   measurement looks like, so it must be re-run at 10 s before any of these
+   numbers are trusted.
+
+Do NOT fit anything to this table. The isolation method is proven (see the
+go/no-go above); the parameter mapping is not.

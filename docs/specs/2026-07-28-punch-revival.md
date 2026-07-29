@@ -199,3 +199,58 @@ matching in the acceptance test has to expect that.
   out
 
 The 5x5 grid is unchanged, and now has a known-good extraction to run through.
+
+---
+
+## RESULT — 2026-07-28: re-derived, enabled, and per-pad
+
+20-point grid captured (amount x time), curve extracted by division. **All four
+laws came out clean:**
+
+| law | status |
+|---|---|
+| `peak = 1 + amount^3` | **exact at all 20 points** |
+| `floor = max(1 - amount, 0.15)` | measured 0.7502 / 0.5005 / 0.2507 / 0.1500 |
+| shape separable, scaled by `punch_gain` | confirmed — normalised curves lie on each other |
+| `recovery = x^p`, `p` polynomial in `cbrt(u)` | **exactly as the trace said** |
+
+```
+   u      0.000  0.255  0.574  1.000
+ cbrt(u)  0.000  0.634  0.831  1.000
+   p      4.99   4.42   4.30   4.26      ->  p = 4.99 - 1.194w + 0.464w^2
+```
+
+⚠ The trace's 0.15 minimum applies to the **normalised** curve. The whole thing
+is scaled by `punch_gain`, which is why the measured minimum at amount 1.0 is
+0.30 — that is 0.15 x 2.0, not a different floor.
+
+⚠ The fast descent at the top of the hit is the **smoother**, not a separate
+attack curve: the target drops to the floor at once and the smoothed gain slides
+down from unity. Its time constant scales with punch_time (~T/45), so the
+coefficient is `45/punch_samples`, not the old fixed `0.05`.
+
+### Acceptance — passed
+
+Modelled curve nulled against every native render:
+
+| | worst | best | amount 0 |
+|---|---:|---:|---:|
+| null vs native | **−9.5 dB** | −31.7 dB | −323 dB |
+
+Bar was "better than the −2.4 dB dry fallback". `dr32_fx_modelled()` now returns
+1 for Punch on that basis.
+
+### Shipped as a per-pad control
+
+`pad_punch` (Amount) and `pad_punch_time` on every pad page and in the menu.
+Amount at 0 leaves the pad a plain sampler; above 0 the DSP arms
+`Effect_Type = Punch`. The values are the native `Effect_PunchAmount` /
+`Effect_PunchTime`, so they round-trip into the `.ablpreset` — which is the
+whole reason this beat a bespoke per-pad shaper.
+
+### Still open
+
+The exponent drifts slightly with **amount** as well (5.40 -> 4.56 across amount
+at time 0.06) and the model uses the mean. That is inside the accepted null, but
+it is the obvious next refinement if the worst case (−9.5 dB, at high amount and
+short time) ever matters.
