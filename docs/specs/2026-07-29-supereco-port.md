@@ -241,52 +241,82 @@ placeholder that ignored them inverted the trend.
 return: the control is equal-power (`dry = cos(MD*pi/2)`, `wet = sin(...)`), so
 zero means zero wet.
 
-### ⚠ OPEN: the low band decays ~2.6x too slowly
+### ⭑ RESOLVED: SuperEco runs ONE all-pass, and the port ran two
 
-| DecayTime 19500 | device | ours |
-|---|---:|---:|
-| below 671 Hz | 1.85 s | **4.78 s** |
-| mid | 5.90 s | 7.27 s |
-| above 1470 Hz | 4.70 s | 6.62 s |
+`REVERB_DECAY_GAIN_PLACEMENT_RECON.md` settled it from the kernel's actual
+loads. The builder produces decay-gain banks for both the B and C delay
+families, at full-state `0x1040` and `0x1250` — and **no SuperEco kernel ever
+loads `0x1040`**. The quality-dependent rule, audited across all 32 emitted
+specialisations:
 
-The shelf tables are **not** the problem — printing the built coefficients, every
-lane predicts a combined low-band RT60 of exactly **2.10 s**, which is the
-device's 1.85 s to within the usual margin. The engine simply does not decay at
-the rate its own coefficients specify.
+| RoomType | feedback all-passes per lane | families |
+|---|---:|---|
+| SuperEco | 1 | C |
+| Eco | 1 | C |
+| Mid | 2 | B then C |
+| High | 2 | B then C |
 
-Ruled out, each by direct measurement:
+The port ran both, which added a delay element and an internal Schroeder mode
+the stock kernel does not have. At the stock `AllPassGain` of 0.92 the B
+all-pass's internal mode is `g x decayGain = 0.897` per **70 ms** — a ~4.5 s
+tail. Family C's delay is a quarter of that, so its equivalent mode is ~1.3 s
+and never showed. Removing B fixed the low band: **4.78 s -> 2.07 s** against
+the device's 1.85 s.
 
-- *the analysis filter* — device and port are both stable across 6/10/16
-  cascaded sections (1.85/1.83/1.78 vs 4.79/5.03/5.06);
-- *the mixer's early bus* — `MixReflect = 0` changes it by 0.04 s;
-- *late modulation* — `SizeModDepth = 0` changes nothing;
-- *the input Band filter* — widening `BandWidth` to 9 changes nothing, and
-  bypassing it entirely changes 5.18 -> 5.10 s;
-- *shelf placement in the outer loop* — after the room delay and on the residual
-  measure IDENTICALLY, as a linear loop requires. Inside the all-pass chain is
-  much worse, because that destroys the all-pass property.
+⚠ The shelf builder still sums `(A + B + C)` for the lane's loop time even
+though the audio path never runs B. That asymmetry is literal stock behaviour —
+Eco is the one quality whose shelf builder omits B — and the port keeps it.
 
-**The suspect is the all-pass recirculation.** A Schroeder all-pass recirculates
-internally at `AllPassGain x decayGain`, and the stock `AllPassGain` is **0.92**:
-0.9219 x 0.9728 = 0.897 per 70 ms all-pass delay is a **~4.5 s mode that no
-shelf in the outer loop can touch**, which is very close to what we measure. The
-device has the same nominal structure and does not have that mode, so something
-about how the decay gain and the all-passes combine is still wrong here.
+### ⚠ The decay-gain split is still an inference, and it now conflicts
 
-The most likely culprit is a documented inference of mine rather than anything
-read off the binary: the port applies **one decay gain per delay element**
-(`gainA`, `gainB`, `gainC`), which reproduces the round-trip law exactly and was
-justified on those grounds, but distributes the loss differently inside the
-all-pass than a single per-path gain would. Settling it needs the kernel's
-actual gain placement, not more measurement from this side.
+The same note reads the kernel as putting **no gain on the room-delay output**,
+with the single decay gain on the all-pass read alone. Implemented literally,
+that does not reproduce the device:
+
+| decay-gain placement | RT60 at DecayTime 2.0 s |
+|---|---:|
+| all-pass read only, gain sized by `tC` | 13.67 s |
+| all-pass read only, gain sized by the loop time | 4.40 s |
+| split across the room delay and the all-pass | **1.80 s** |
+| *the law, and the device* | *1.80 s* |
+
+The reason the middle row fails is structural: a decay gain placed **inside** an
+all-pass makes the attenuation frequency-dependent. Its magnitude runs from
+near-total at one end of the spectrum to `(d+g)/(1+gd) = 0.956` per traversal at
+the other, and the tail is owned by the slow end. The device's decay is not
+frequency-dependent in that way — `RT60 = 0.8993 x DecayTime` is confirmed on
+the device itself (1.33 s measured against 1.35 s predicted) — so the loss
+cannot live only inside the all-pass.
+
+So the port splits the loss across the two elements that are actually in the
+loop. A traversal still accumulates `exp(-k*(tA+tC))`, which is what makes the
+law come out exactly, and it damps the all-pass's own internal mode. **This is a
+derivation from a measured law, not a preference — but it is an inference about
+which array feeds `0x1250`, and it is flagged in the header as the one place the
+file departs from a literal reading.**
+
+### Where it stands now
+
+Every band across every case is within about 10-15%, and what remains looks like
+a single systematic shortfall rather than a structural error:
+
+| case | broadband | low | mid | high |
+|---|---:|---:|---:|---:|
+| DecayTime 600 | 0.60 -> 0.56 | 0.47 -> 0.58 | 0.60 -> 0.66 | 0.57 -> 0.61 |
+| DecayTime 1500 | 1.33 -> 1.20 | 0.87 -> 0.90 | 1.40 -> 1.33 | 1.26 -> 1.35 |
+| DecayTime 4000 | 2.62 -> 2.26 | 1.27 -> 1.40 | 2.70 -> 2.59 | 2.44 -> 2.46 |
+| DecayTime 19500 | 5.44 -> 4.92 | 1.85 -> 2.07 | 5.90 -> 5.45 | 4.70 -> 4.77 |
+| RoomSize 0.3 | 1.35 -> 1.25 | | | |
+| RoomSize 500 | 1.88 -> 1.73 | | | |
 
 ## Still open
 
 - ~~A **direct-parameter path** for the null test.~~ **Done** — see above.
-- The four decompile gaps, handed off in
-  `_worklogs/NEXT-PROMPT-reverb-nulltest.md`: the final mixer's coefficient
-  builder (highest value — it explains both findings above), the input Band
-  filter's builder, late-lane size modulation, and the property converters.
+- ⚠ **Confirm the decay-gain split** against the binary — which path-time array
+  feeds `0x1250`, and whether anything scales the family-A room read. The port's
+  split is derived from a measured law rather than read off the ELF, and it is
+  the last such place in the file.
+- The uniform ~10% shortfall above. One systematic factor, not five.
 - Device CPU, via `tools/bench_fx.c`.
 - Kit import could now select `Native` automatically when a kit's return chain
   is a native Reverb, and carry its `RoomSize`/`DecayTime` across. Return

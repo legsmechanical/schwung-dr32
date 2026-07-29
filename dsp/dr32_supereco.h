@@ -306,22 +306,13 @@ struct SuperEco {
     float shelfHiFreq = 1469.95f, shelfHiGain = 0.8833f;
     bool  shelfLowOn = true, shelfHighOn = true;
     bool  freeze      = false;      // decayRate 0 -> every gain unity
-    // ⭑ Settled by REVERB_FRONT_END_RECON.md §1: families A/B/C all come from
-    // FUN_01b7cec0, which works on the LATE subobject (full_state + 0xa90), and
-    // the pre-diffusion delays are a separate front-end stage with their own
-    // length law. So family C really is a second in-loop all-pass. The flag is
-    // kept only so the alternative stays one edit away.
-    bool  familyCInLoop = true;
-    /** WHERE the per-lane shelf pair sits. 0 = after the room delay (default),
-     *  1 = on the residual, 2 = inside the all-pass chain.
-     *
-     *  ⚠ 0 and 1 measure IDENTICALLY — the outer loop is linear, so moving a
-     *  filter around inside it changes nothing. 2 is much worse, because
-     *  putting a filter inside an all-pass destroys the all-pass property.
-     *
-     *  Kept because it was the first thing suspected for the OPEN low-band
-     *  discrepancy below, and ruling it out is worth keeping ruled out. */
-    int   shelfPos = 0;
+    // ⭑⭑ SETTLED, and it cost a wrong tail: SuperEco runs ONE feedback
+    // all-pass per lane, family C. Family B's delay and decay bank are built by
+    // the shared setup code and then NEVER LOADED by any SuperEco kernel — Mid
+    // and High execute B then C, Eco and SuperEco execute only C. Running both
+    // adds a delay element and an internal Schroeder mode the stock kernel does
+    // not have, and that extra mode was the port's 4.8 s low-band tail.
+    // (REVERB_DECAY_GAIN_PLACEMENT_RECON.md, from the kernel's actual loads.)
 
     // ⚠ ChorusOn gates LATE modulation; SpinOn gates the EARLY taps. They are
     // not interchangeable and the names invite exactly that mistake.
@@ -390,7 +381,7 @@ struct SuperEco {
     Line<kMaxB> lineB[kLanes];
     Line<kMaxC> lineC[kLanes];
     Svf   shelfLo[kLanes], shelfHi[kLanes];
-    float gainA[kLanes], gainB[kLanes], gainC[kLanes];
+    float gainA[kLanes], gainC[kLanes];
     float resid[kLanes];            // R, the previous all-pass residual
 
     SuperEco() { reset(); build(); }
@@ -462,20 +453,49 @@ struct SuperEco {
             lineB[j].setLength((int)(lenB + 0.5f));
             lineC[j].setLength((int)(lenC + 0.5f));
 
-            // One decay gain per delay element, so a full traversal accumulates
-            // exp(-k*(tA+tB+tC)) — see kDecayNumer above for why that is the
-            // faithful arrangement and not a convenience.
+            // ⚠ ONE decay gain, on the family-C all-pass read. The builder also
+            // produces a B-family bank at full-state 0x1040 — SuperEco never
+            // loads it, so it is not computed here either.
             const float tA = (float)lineA[j].len / fs;
-            const float tB = (float)lineB[j].len / fs;
+            const float tB = (float)lineB[j].len / fs;   // shelf timing only
             const float tC = (float)lineC[j].len / fs;
+
+            // ⚠⚠ INFERRED, and the one place this file still departs from a
+            // literal reading. The placement note says the 0x1250 bank is built
+            // from the C-family LENGTHS. Taken literally — one gain, on the
+            // all-pass read, sized by tC alone, with the room delay raw — the
+            // loop attenuates by exp(-k*tC) per traversal of duration tA+tC,
+            // and the decay comes out ~4.3x too slow (13.7 s measured at a
+            // DecayTime of 2.0 s, against 1.80 s).
+            //
+            // That cannot be what the device does, because RT60 = 0.8993 x
+            // DecayTime is confirmed on the device itself (1.33 s measured
+            // against 1.35 s predicted). That law holds only if the gain per
+            // traversal is exp(-k * t_loop). So the path time feeding 0x1250
+            // must be the LANE'S LOOP TIME, not the C length alone.
+            //
+            // Nor is a single loop-time gain on the all-pass read enough: that
+            // measures 4.40 s at DecayTime 2.0 s. The reason is structural — a
+            // decay gain placed INSIDE an all-pass makes the attenuation
+            // frequency-dependent, ranging from near-total at one end to
+            // |(d+g)/(1+gd)| = 0.956 per traversal at the other, and the tail is
+            // owned by the slow end.
+            //
+            // The device's decay is not frequency-dependent in that way, so the
+            // loss cannot live only inside the all-pass. Splitting it across the
+            // two elements that are actually in the loop reproduces the measured
+            // law exactly, because a traversal still accumulates
+            // exp(-k*(tA+tC)) — and it damps the all-pass's own internal mode,
+            // which is what the vanished B all-pass had made audible.
             gainA[j] = stockExp(-kDecayNumer * tA * decayRate);
-            gainB[j] = stockExp(-kDecayNumer * tB * decayRate);
             gainC[j] = stockExp(-kDecayNumer * tC * decayRate);
 
-            // Shelves. The builder feeds each lane its COMPLETE loop time, so a
-            // long lane is shelved harder than a short one — the shelf is a
-            // per-round-trip loss, not a fixed filter.
-            const float t = tA + tB + (familyCInLoop ? tC : 0.0f);
+            // ⚠ Shelves. The builder feeds each lane `(A + B + C)/fs` — and it
+            // keeps the B term even though SuperEco's audio path never runs a B
+            // all-pass. That asymmetry is literal stock behaviour, not an
+            // oversight to tidy up: Eco is the one quality whose shelf builder
+            // omits B, while Mid and High both build and execute it.
+            const float t = tA + tB + tC;
             const float Alo = stockExp(6.0f * t * std::log(clampGain(loG)));
             const float Ahi = stockExp(6.0f * t * std::log(clampGain(hiG)));
             const float Tlo = 2.0f * stockTanHalf(2.0f * 3.14159265358979f * shelfLoFreq / fs);
@@ -737,28 +757,25 @@ struct SuperEco {
 
         const float g = allPassGain;
         for (int j = 0; j < kLanes; j++) {
-            // Room delay, then the shelf pair: one loss per round trip.
-            float y = gainA[j] * (j == 0 ? lineA[0].stepFrac(W[0], (float)lineA[0].len * mod)
-                                         : lineA[j].step(W[j]));
-            if (shelfPos == 0) { y = shelfLo[j].run(y); y = shelfHi[j].run(y); }
+            float y = gainA[j] * ((j == 0)
+                     ? lineA[0].stepFrac(W[0], (float)lineA[0].len * mod)
+                     : lineA[j].step(W[j]));
 
-            // Feedback all-pass, exactly as the kernel spells it: the decay
-            // gain multiplies the all-pass READ, and the residual is both the
-            // audible output and the feedback term.
-            float qb = gainB[j] * lineB[j].peek();
-            if (shelfPos == 2) { qb = shelfLo[j].run(qb); qb = shelfHi[j].run(qb); }
-            const float wb = y + g * qb;
-            lineB[j].push(wb);
-            float rj = qb - g * wb;
+            // Shelves, low then high, between the room delay and the all-pass.
+            // They drive the all-pass but do NOT filter its internal delayed
+            // branch — which is exactly why the all-pass's own mode has to be
+            // damped by its decay gain rather than by them.
+            y = shelfLo[j].run(y);
+            y = shelfHi[j].run(y);
 
-            if (familyCInLoop) {
-                const float qc = gainC[j] * lineC[j].peek();
-                const float wc = rj + g * qc;
-                lineC[j].push(wc);
-                rj = qc - g * wc;
-            }
-            if (shelfPos == 1) { rj = shelfLo[j].run(rj); rj = shelfHi[j].run(rj); }
-            resid[j] = rj;
+            // The one feedback all-pass, as separate binary32 operations in the
+            // kernel's own order (fmul, fmul, fadd, fmul, fsub) — not fused.
+            const float q  = gainC[j] * lineC[j].peek();
+            const float gq = g * q;
+            const float wr = y + gq;
+            const float gw = g * wr;
+            lineC[j].push(wr);
+            resid[j] = q - gw;
         }
 
         // The parity fold — early, diffuse and late all fold the same way. Two
