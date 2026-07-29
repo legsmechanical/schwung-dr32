@@ -267,57 +267,77 @@ the device's 1.85 s.
 though the audio path never runs B. That asymmetry is literal stock behaviour —
 Eco is the one quality whose shelf builder omits B — and the port keeps it.
 
-### ⚠ The decay-gain split is still an inference, and it now conflicts
+### ⭑ RESOLVED: the late loop's loss is folded into the FEEDBACK MATRIX
 
-The same note reads the kernel as putting **no gain on the room-delay output**,
-with the single decay gain on the all-pass read alone. Implemented literally,
-that does not reproduce the device:
+`REVERB_LATE_LOOP_LOSS_RECON.md` confirmed the hypothesis. `FUN_01b7d584`
+copies the orthonormal quality table into `0xab0` and then multiplies **every
+coefficient of row `j` by that lane's family-A decay gain**. The resident matrix
+is `diag(decayGainA) * M` — ROWS scaled, not columns.
 
-| decay-gain placement | RT60 at DecayTime 2.0 s |
-|---|---:|
-| all-pass read only, gain sized by `tC` | 13.67 s |
-| all-pass read only, gain sized by the loop time | 4.40 s |
-| split across the room delay and the all-pass | **1.80 s** |
-| *the law, and the device* | *1.80 s* |
+That is exactly why the kernel showed a raw room write, a raw room read, and a
+gain only on the all-pass: **the loss had already been paid at the matrix.** The
+precedent was there in the front end all along, where the pre-diffusion rows are
+scaled the same way (`runtimeRow[j][k] = baseRow[j][k] * pdGain[j]`).
 
-The reason the middle row fails is structural: a decay gain placed **inside** an
-all-pass makes the attenuation frequency-dependent. Its magnitude runs from
-near-total at one end of the spectrum to `(d+g)/(1+gd) = 0.956` per traversal at
-the other, and the tail is owned by the slow end. The device's decay is not
-frequency-dependent in that way — `RT60 = 0.8993 x DecayTime` is confirmed on
-the device itself (1.33 s measured against 1.35 s predicted) — so the loss
-cannot live only inside the all-pass.
+⚠ Worth stating plainly: **the resident matrix is deliberately NOT orthonormal.**
+It is orthonormal only under Freeze, where the decay rate is zero and every row
+scalar is exactly one.
 
-So the port splits the loss across the two elements that are actually in the
-loop. A traversal still accumulates `exp(-k*(tA+tC))`, which is what makes the
-law come out exactly, and it damps the all-pass's own internal mode. **This is a
-derivation from a measured law, not a preference — but it is an inference about
-which array feeds `0x1250`, and it is flagged in the header as the one place the
-file departs from a literal reading.**
+The port's split was therefore mathematically right and structurally wrong —
+scaling the room delay's output is identical to scaling the matrix row that
+feeds it, and moving it changed the measurements by nothing at all. It is now in
+the matrix, which is both faithful and one multiply per lane per sample cheaper.
+`0x1250` was also confirmed to use **C time alone**, as the note originally said.
 
-### Where it stands now
+### ⭑⭑ `0x437f0000` is 255.0, not 127.0 — and that was the last 10%
 
-Every band across every case is within about 10-15%, and what remains looks like
-a single systematic shortfall rather than a structural error:
+This file read the `stockExp` clamp as `[0, 127]` and documented a "hard unity
+ceiling", stating that a gain above 1 was silently flattened. **Both were
+wrong.** The constant is `255.0f`, so `stockExp` can return up to `2^128` and
+`stockExp(0.5)` really is 1.6487.
 
-| case | broadband | low | mid | high |
-|---|---:|---:|---:|---:|
-| DecayTime 600 | 0.60 -> 0.56 | 0.47 -> 0.58 | 0.60 -> 0.66 | 0.57 -> 0.61 |
-| DecayTime 1500 | 1.33 -> 1.20 | 0.87 -> 0.90 | 1.40 -> 1.33 | 1.26 -> 1.35 |
-| DecayTime 4000 | 2.62 -> 2.26 | 1.27 -> 1.40 | 2.70 -> 2.59 | 2.44 -> 2.46 |
-| DecayTime 19500 | 5.44 -> 4.92 | 1.85 -> 2.07 | 5.90 -> 5.45 | 4.70 -> 4.77 |
-| RoomSize 0.3 | 1.35 -> 1.25 | | | |
-| RoomSize 500 | 1.88 -> 1.73 | | | |
+For every decay gain the argument is negative and nothing changed. But one call
+site passes a **positive** argument, and it is the Band filter's width:
+
+```text
+R   = stockExp(BandWidth * 0.5)      // BandWidth 4.57 -> R = 9.84
+flo = max(BandFreq / R, 50)          // 50 Hz
+fhi = min(BandFreq * R, 18000)       // 3956 Hz
+```
+
+Clamped at 127, `R` collapsed to **1.0**, which makes `flo = fhi = BandFreq` — a
+razor-thin band-pass at 402 Hz instead of a 50 Hz to 4 kHz passband. Almost all
+the input energy was being thrown away before the tank saw it, and the measured
+decay came out about 10% short everywhere as a result.
+
+One misread constant, two wrong claims in a header, and a systematic error that
+survived three rounds of structural debugging because it looked like a modelling
+shortfall rather than a filter that was barely open.
+
+### Where it stands
+
+Nothing in the file is inferred any more. Driven from each preset's own numbers:
+
+| case | device | ours | | case | device | ours |
+|---|---:|---:|---|---|---:|---:|
+| DecayTime 600 | 0.60 s | **0.61** | | RoomSize 0.3 | 1.35 s | **1.37** |
+| DecayTime 1500 | 1.33 s | **1.33** | | RoomSize 10 | 1.42 s | **1.49** |
+| DecayTime 4000 | 2.62 s | **2.51** | | RoomSize 60 | 1.61 s | **1.63** |
+| DecayTime 10000 | 4.50 s | **4.05** | | RoomSize 200 | 1.90 s | **1.93** |
+| DecayTime 19500 | 5.44 s | **5.25** | | RoomSize 500 | 1.88 s | **1.92** |
+
+Most cases are within 2-5%; the two longest decays are 4-10% short and are the
+only systematic residue left.
 
 ## Still open
 
 - ~~A **direct-parameter path** for the null test.~~ **Done** — see above.
-- ⚠ **Confirm the decay-gain split** against the binary — which path-time array
-  feeds `0x1250`, and whether anything scales the family-A room read. The port's
-  split is derived from a measured law rather than read off the ELF, and it is
-  the last such place in the file.
-- The uniform ~10% shortfall above. One systematic factor, not five.
-- Device CPU, via `tools/bench_fx.c`.
+- The two longest decays run 4-10% short (DecayTime 10000 and 19500). Everything
+  else is within 2-5%.
+- The remaining unmodelled parameters, all named in `setRaw()`: the Lowpass
+  variant of the high shelf (`HighFilterType`), and `FlatOn`, which affects
+  frozen mode only.
+- Device CPU, via `tools/bench_fx.c`. Nothing here has been on the device yet.
 - Kit import could now select `Native` automatically when a kit's return chain
   is a native Reverb, and carry its `RoomSize`/`DecayTime` across. Return
   chains are not imported at all today.

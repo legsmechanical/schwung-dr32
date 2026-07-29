@@ -54,31 +54,50 @@ namespace dr32_supereco {
 // ── The stock transcendental approximations ─────────────────────────────────
 //
 // The device does NOT call expf/tanf. It uses its own approximations, and their
-// quirks are part of the sound — most notably stockExp CANNOT RETURN MORE THAN
-// 1.0, because the base-2 exponent is clamped to [0,127] and 127 is the unity
-// exponent. A shelf gain above 1 is therefore silently flattened to unity.
+// quirks are part of the sound.
 //
-// From FUN_01b7cec0 (reverb-coalesced-rebuild.c:718-795), which computes
-//     127.0 - t*rate*8.833317*1.442695
-// clamps it with fmax(.,0) then fmin(.,127.0), truncates to an int, and
-// multiplies a degree-4 polynomial in the fraction by a BIT-CAST `i << 23`
-// (i.e. 2^(i-127) — not an integer conversion, which is what it looks like in
-// the decompiler output).
+// From FUN_01b7cec0 / FUN_01b7d584: a biased base-2 exponent, clamped, split
+// into an integer part and a fraction, with a degree-4 polynomial in the
+// fraction scaled by a BIT-CAST `i << 23` (i.e. 2^(i-127) — not an integer
+// conversion, which is what it looks like in the decompiler output).
+//
+// ⚠ The clamp is `[0, 255]`, NOT `[0, 127]`. `0x437f0000` is 255.0f; this file
+// previously read it as 127 and documented a "hard unity ceiling" that does not
+// exist — stockExp(0.5) really is ~1.6487, not 1.0. For non-negative decay
+// rates the natural upper bound is 127 anyway, so nothing in the decay path
+// changed, but a shelf gain above unity is a boost and not a silent flatten.
 
 /** exp(x) as the device computes it. Exact to the binary, quirks included. */
 inline float stockExp(float x) {
-    float e = 127.0f + x * 1.442695f;              // 1/ln(2), as spelled there
+    float e = x * 1.4426950216293335f + 127.0f;    // log2(e), as spelled there
     if (e < 0.0f) e = 0.0f;
-    if (e > 127.0f) e = 127.0f;                    // ⚠ hard unity ceiling
+    if (e > 255.0f) e = 255.0f;
     const int   i = (int)e;                        // truncation, not floor
     const float f = e - (float)i;
-    const float poly =
-        1.0f + (((f * 0.013487903f + 0.0521745f) * f + 0.24128748f) * f
-                + 0.6930501f) * f;
+    // Horner, in the stock fma order.
+    float poly = f * 0.013487903401255608f + 0.05217450112104416f;
+    poly = f * poly + 0.2412874847650528f;
+    poly = f * poly + 0.6930500864982605f;
+    poly = f * poly + 1.0f;
     uint32_t bits = (uint32_t)i << 23;             // 2^(i-127)
     float scale;
     std::memcpy(&scale, &bits, sizeof(scale));
     return poly * scale;
+}
+
+/** The decay-gain law, in the stock instruction order.
+ *
+ *  ⚠ `3 * 2.944438934326172` rounds to the same stored float as the shared
+ *  8.833317 constant, but the binary retains it as TWO operations and a
+ *  bit-exact port has to as well. `lengthOrTime` is samples for the family-A
+ *  path (which divides by the sample rate here) and an already-normalised time
+ *  for family C (pass sampleRate = 1). */
+inline float stockDecayGain(float decayRate, float sampleRate, float length) {
+    const float t0 = decayRate * 3.0f;
+    const float t1 = t0 * 2.944438934326172f;
+    const float t2 = t1 / sampleRate;
+    const float t3 = t2 * length;
+    return stockExp(-t3);
 }
 
 /** The stock rational tangent, evaluated at an angle the caller has already
@@ -382,6 +401,9 @@ struct SuperEco {
     Line<kMaxC> lineC[kLanes];
     Svf   shelfLo[kLanes], shelfHi[kLanes];
     float gainA[kLanes], gainC[kLanes];
+    /** The resident matrix: `diag(decayGainA) * M`. Rebuilt whenever the decay
+     *  rate or the room lengths move. */
+    float matrix[kLanes][kLanes];
     float resid[kLanes];            // R, the previous all-pass residual
 
     SuperEco() { reset(); build(); }
@@ -453,43 +475,29 @@ struct SuperEco {
             lineB[j].setLength((int)(lenB + 0.5f));
             lineC[j].setLength((int)(lenC + 0.5f));
 
-            // ⚠ ONE decay gain, on the family-C all-pass read. The builder also
-            // produces a B-family bank at full-state 0x1040 — SuperEco never
-            // loads it, so it is not computed here either.
-            const float tA = (float)lineA[j].len / fs;
+            // ⭑ WHERE THE LOOP PAYS ITS LOSS — settled, and not where it looks.
+            //
+            // The family-A loss is FOLDED INTO THE FEEDBACK MATRIX: the builder
+            // copies the orthonormal table and then multiplies every coefficient
+            // of row j by that lane's A decay gain, so the resident matrix is
+            // diag(decayGainA) * M — ROWS scaled, not columns. That is why the
+            // kernel shows a raw room write, a raw room read, and a gain only on
+            // the all-pass: the loss was already paid at the matrix.
+            //
+            // ⚠ Consequence worth stating: the resident matrix is deliberately
+            // NOT orthonormal. It is orthonormal only under Freeze, where the
+            // decay rate is zero and every row scalar is exactly one.
+            //
+            // Family C's gain uses C TIME ALONE, not the loop time.
             const float tB = (float)lineB[j].len / fs;   // shelf timing only
             const float tC = (float)lineC[j].len / fs;
 
-            // ⚠⚠ INFERRED, and the one place this file still departs from a
-            // literal reading. The placement note says the 0x1250 bank is built
-            // from the C-family LENGTHS. Taken literally — one gain, on the
-            // all-pass read, sized by tC alone, with the room delay raw — the
-            // loop attenuates by exp(-k*tC) per traversal of duration tA+tC,
-            // and the decay comes out ~4.3x too slow (13.7 s measured at a
-            // DecayTime of 2.0 s, against 1.80 s).
-            //
-            // That cannot be what the device does, because RT60 = 0.8993 x
-            // DecayTime is confirmed on the device itself (1.33 s measured
-            // against 1.35 s predicted). That law holds only if the gain per
-            // traversal is exp(-k * t_loop). So the path time feeding 0x1250
-            // must be the LANE'S LOOP TIME, not the C length alone.
-            //
-            // Nor is a single loop-time gain on the all-pass read enough: that
-            // measures 4.40 s at DecayTime 2.0 s. The reason is structural — a
-            // decay gain placed INSIDE an all-pass makes the attenuation
-            // frequency-dependent, ranging from near-total at one end to
-            // |(d+g)/(1+gd)| = 0.956 per traversal at the other, and the tail is
-            // owned by the slow end.
-            //
-            // The device's decay is not frequency-dependent in that way, so the
-            // loss cannot live only inside the all-pass. Splitting it across the
-            // two elements that are actually in the loop reproduces the measured
-            // law exactly, because a traversal still accumulates
-            // exp(-k*(tA+tC)) — and it damps the all-pass's own internal mode,
-            // which is what the vanished B all-pass had made audible.
-            gainA[j] = stockExp(-kDecayNumer * tA * decayRate);
-            gainC[j] = stockExp(-kDecayNumer * tC * decayRate);
+            // A takes the length in SAMPLES and divides by the sample rate
+            // inside the law; C's time is already normalised, so it passes 1.
+            gainA[j] = stockDecayGain(decayRate, fs, (float)lineA[j].len);
+            gainC[j] = stockDecayGain(decayRate, 1.0f, tC);
 
+            const float tA = (float)lineA[j].len / fs;
             // ⚠ Shelves. The builder feeds each lane `(A + B + C)/fs` — and it
             // keeps the B term even though SuperEco's audio path never runs a B
             // all-pass. That asymmetry is literal stock behaviour, not an
@@ -506,6 +514,12 @@ struct SuperEco {
             shelfLo[j].set(Tlo / qlo, kShelfK, Alo, kShelfK * std::sqrt(Alo), 1.0f);
             shelfHi[j].set(Thi * qhi, kShelfK, 1.0f, kShelfK * std::sqrt(Ahi), Ahi);
         }
+
+        // Row-scale the matrix, exactly as the builder does — one multiply per
+        // coefficient at build time instead of one per lane per sample.
+        for (int j = 0; j < kLanes; j++)
+            for (int k = 0; k < kLanes; k++)
+                matrix[j][k] = kMatrix[j][k] * gainA[j];
 
         buildFrontEnd(r, decayRate);
         buildBand();
@@ -738,12 +752,13 @@ struct SuperEco {
         float U[kLanes];
         for (int j = 0; j < kLanes; j++) U[j] = E[j] + D[j] + resid[j];
 
-        // W = M * U. Orthonormal, so this redistributes energy without adding
-        // or removing any.
+        // W = diag(decayGainA) * M * U. The orthonormal part redistributes
+        // energy without adding or removing any; the row scalars are the late
+        // loop's broadband loss.
         float W[kLanes];
         for (int j = 0; j < kLanes; j++) {
             float acc = 0.0f;
-            for (int k = 0; k < kLanes; k++) acc += kMatrix[j][k] * U[k];
+            for (int k = 0; k < kLanes; k++) acc += matrix[j][k] * U[k];
             W[j] = acc;
         }
 
@@ -757,9 +772,9 @@ struct SuperEco {
 
         const float g = allPassGain;
         for (int j = 0; j < kLanes; j++) {
-            float y = gainA[j] * ((j == 0)
-                     ? lineA[0].stepFrac(W[0], (float)lineA[0].len * mod)
-                     : lineA[j].step(W[j]));
+            // Raw — the A loss is already in the matrix coefficients.
+            float y = (j == 0) ? lineA[0].stepFrac(W[0], (float)lineA[0].len * mod)
+                               : lineA[j].step(W[j]);
 
             // Shelves, low then high, between the room delay and the all-pass.
             // They drive the all-pass but do NOT filter its internal delayed
