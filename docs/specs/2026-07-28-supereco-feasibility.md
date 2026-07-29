@@ -419,3 +419,97 @@ up to about a second and then increasingly cannot deliver what it is asked for.
 - `Density`/`RoomType` needs no sweeping at all — Move only ever ships SuperEco.
 - `Smooth` is always `Fast` on Move and only governs behaviour *while Size
   changes*, so it is irrelevant to a static model.
+
+---
+
+## THE DECOMPILE CAUGHT UP — 2026-07-29, and it changes the goal
+
+`move original reconstruct/analysis/audio-effects/` gained ~30 files today,
+including `REVERB_QUALITY_NETWORK_RECON.md`. **The reverb is essentially
+solved statically.** This changes the campaign from "fit a model to
+measurements" to "port the algorithm and use measurements to VERIFY it".
+
+### What is now exact
+
+**`RoomType` IS `ReverbQualityMode`**, confirming the manual's Density reading
+and quantifying it:
+
+| value | name | feedback lanes |
+|---:|---|---:|
+| 0 | **SuperEco** | **4** |
+| 1 | Eco | 6 |
+| 2 | Mid | 8 |
+| 3 | High | 10 |
+
+`N = 2 * RoomType + 4`, and the N x N feedback matrices are **orthonormal**
+(verified to ~1e-6), i.e. energy-preserving diffusion. SuperEco is the same
+algorithm at 4 lanes — not a different reverb.
+
+**The decay law:**
+
+```
+decayRate       = 1 / (1.15 * DecayTimeSeconds)
+feedbackGain[i] = exp(-8.833317 * pathTime[i] / (1.15 * DecayTimeSeconds))
+```
+
+**Delay lengths**, with the four SuperEco constants per family given
+explicitly, and ⭑ `RoomSize` entering as a **cube root**:
+
+```
+r         = max(cuberoot(RoomSize), 0.0001)
+tankScale = 0.93 * r
+lengthA[i] = fs * 0.001 * tankScale * 0.500 * A[i]
+lengthB[i] = fs * 0.001 * tankScale * AllPassSize * 0.750 * B[i]
+lengthC[i] = fs * 0.001 * tankScale * AllPassSize * 0.395 * C[i]
+```
+
+Plus the shelf builder (TPT state-variable, K = 1.4357497692108154, the stock
+`tan` rational approximation and clamped polynomial `exp2`), the Lowpass-mode
+one-pole alternative, and Freeze as `decayRate = 0` making every gain unity.
+
+### ⭑ Cross-check against our captures — the law is confirmed at 1.5 s
+
+Over elapsed time a lane makes `x/pathTime` passes, so the feedback term gives
+`amplitude(x) = exp(-8.833317 * x / (1.15 * T))`, hence
+
+```
+RT60 = ln(1000) * 1.15 / 8.833317 = 0.8993 x DecayTime
+```
+
+**independent of path time — and therefore of RoomSize.** Measured:
+
+| DecayTime | predicted | measured | delta |
+|---:|---:|---:|---:|
+| 600 ms | 0.54 | 0.60 | +11% |
+| 1500 ms | **1.35** | **1.33** | **−1%** |
+| 4000 ms | 3.60 | 2.62 | −27% |
+| 10000 ms | 8.99 | 4.50 | −50% |
+| 19500 ms | 17.54 | 5.44 | −69% |
+
+**1% agreement at 1500 ms** — two completely independent routes to the same
+number, which validates both the decompiled constant and the capture rig. It
+also independently confirms the RoomSize prediction: our sweep moved RT60 only
+1.35 -> 1.90 s across 0.3..500, where the law says it should not move at all.
+
+### ⚠ What the saturation is NOT
+
+The obvious candidate was shelf damping. Using the benchmark's own shelves
+(`ShelfLoGain` 0.6167, `ShelfHiGain` 0.8833) and the builder's
+`gain = G^(6x)` form — also path-time independent — gives ceilings of 2.38 s
+(low band) and 9.28 s (high band). Adding the low-shelf rate to the feedback
+rate predicts 0.44 / 0.86 / 1.43 / 1.88 / 2.10 s against measured 0.60 / 1.33 /
+2.62 / 4.50 / 5.44 — **over-predicting the damping roughly two-fold**.
+
+So a single broadband shelf term is the wrong model. The shelves only attenuate
+outside 671 Hz .. 1470 Hz here, and a broadband RT60 is dominated by whichever
+band decays slowest — plausibly the midband between them, where neither shelf
+acts. **The next measurement is therefore RT60 PER BAND**, which separates the
+three regions and identifies what actually limits the tail.
+
+### What this means for DR32
+
+Fitting curves is now the wrong approach. With the topology, the matrices, the
+delay constants, the decay law and the shelf recurrences all recovered, the
+sensible path is to **implement SuperEco directly** — 4 lanes, orthonormal
+mixing, the three delay families, the exact feedback-gain law — and use the
+capture rig as the null test rather than as the source of the model.
