@@ -520,3 +520,38 @@ delay constants, the decay law and the shelf recurrences all recovered, the
 sensible path is to **implement SuperEco directly** — 4 lanes, orthonormal
 mixing, the three delay families, the exact feedback-gain law — and use the
 capture rig as the null test rather than as the source of the model.
+
+---
+
+## PER-BAND RT60 — 2026-07-29: the shelves are RULED OUT
+
+Run from the already-captured IRs, no device time. `tools/irtools.py` now
+carries the loader and the slope-fit RT60 so this is repeatable.
+
+| DecayTime | 0.899 x DT | broadband | <671 Hz | mid | >1470 Hz |
+|---:|---:|---:|---:|---:|---:|
+| 600 | 0.54 | 0.60 | 0.63 | 0.60 | 0.61 |
+| 1500 | 1.35 | 1.33 | 1.30 | 1.32 | 1.33 |
+| 4000 | 3.60 | 2.62 | 2.64 | 2.74 | 2.60 |
+| 10000 | 8.99 | 4.50 | 4.59 | 4.69 | 4.44 |
+| 19500 | 17.54 | 5.44 | 5.53 | 5.60 | 5.31 |
+
+**Every band saturates together.** At 19.5 s the three bands sit within 0.3 s of
+each other and of the broadband figure. A shelf-driven limit would separate them
+— the low shelf alone predicted a 2.38 s ceiling against the high shelf's 9.28 s
+— so **the shelves are excluded as the cause**.
+
+The ceiling is therefore **broadband and in the feedback path itself**: RT60 tops
+out near 5.5 s no matter what `DecayTime` asks for.
+
+### Where to look next — a specific line, not a sweep
+
+The recon note records that the decay builder "clamps the base-2 exponent to
+`[0,127]` and uses its shared polynomial `exp2` approximation rather than
+calling `expf`". A ceiling on RT60 is exactly what a clamp or a
+precision/denormal floor in `feedbackGain` would produce, and it would be
+frequency-flat — which is what we measure.
+
+**So this is now a decompile question, not a capture question:** read the gain
+computation in `FUN_01b7d584` / `reverb-coalesced-rebuild.c` and find what
+bounds the gain. No further captures are needed to make progress on it.
