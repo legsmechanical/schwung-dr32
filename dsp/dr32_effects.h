@@ -66,6 +66,9 @@ typedef struct {
     float punch_samples;   // time * sample_rate
     float punch_pos;       // samples since note start
     float punch_smoothed;  // the engine smooths the target gain
+    float punch_floor;     // max(1 - amount, 0.15), MEASURED
+    float punch_exp;       // recovery exponent, polynomial(cbrt(u)), MEASURED
+    float punch_k;         // smoothing coefficient, 45 / punch_samples
 } dr32_fx;
 
 /** Model-domain clamps, exactly as the engine's parameter combiner applies

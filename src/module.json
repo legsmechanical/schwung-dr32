@@ -253,6 +253,25 @@
               "step": 0.01
             },
             {
+              "key": "punch",
+              "name": "Punch",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0
+            },
+            {
+              "key": "punch_time",
+              "name": "Punch Time",
+              "type": "float",
+              "min": 0.06,
+              "max": 1.0,
+              "step": 0.01,
+              "unit": "s",
+              "default": 0.3
+            },
+            {
               "key": "send1",
               "name": "Send 1",
               "type": "float",

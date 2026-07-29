@@ -970,7 +970,13 @@ const PAD_BANK_SPECS = [
     (p) => { const c = penum(`pad_env_mode`, "Env", "Envelope", kEnvModes, kEnvSq);
              c.widget = "enumsq"; return c; },
     (p) => plin(`pad_volume`, "Vol", "Volume", -36, 12, fmtDb),
-    (p) => plin(`pad_pan`, "Pan", "Pan", -50, 50, fmtPan)
+    (p) => plin(`pad_pan`, "Pan", "Pan", -50, 50, fmtPan),
+    /* Punch — the NATIVE transient shaper, per pad. Amount at 0 leaves the pad
+     * a plain sampler; above 0 the DSP arms Effect_Type = Punch, so one knob
+     * turns it on. It writes the native Effect_PunchAmount / _PunchTime, so a
+     * kit shaped with it round-trips and still opens on Move. */
+    (p) => plin(`pad_punch`, "Pnch", "Punch", 0, 1),
+    (p) => plog(`pad_punch_time`, "PTim", "Punch Time", 0.06, 1.0, fmtSec)
   ] },
   { label: "Filter", icon: "lp",
     /* By CELL INDEX, not key: every cell rebinds to the selected pad, so a key

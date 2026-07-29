@@ -32,6 +32,7 @@ int dr32_fx_modelled(dr32_fx_type type) {
     switch (type) {
         case DR32_FX_STANDARD: return 1;   // the shared sample reader
         case DR32_FX_STRETCH:  return 1;   // factor 1 IS the plain reader (what stock kits use)
+        case DR32_FX_PUNCH:    return 1;   // re-derived by measurement 2026-07-28
         default:               return 0;   // dropped — see the note above
     }
 }
@@ -91,6 +92,48 @@ void dr32_fx_start(dr32_fx *fx, dr32_fx_type type, float p1, float p2,
     (void)base_step;
 
     switch (type) {
+        case DR32_FX_PUNCH: {
+            /* MEASURED 2026-07-28 against the stock engine, by rendering the
+             * same fixture with Effect_Type Standard and Punch and DIVIDING —
+             * Punch is a pure gain envelope, so the quotient IS the curve, with
+             * no model assumed in the extraction. 20 grid points, amount x time.
+             *
+             *   peak gain   = 1 + amount^3          exact at all 20 points
+             *   floor       = max(1 - amount, 0.15) measured 0.7502 / 0.5005 /
+             *                                       0.2507 / 0.1500
+             *   recovery    = x^p over x = t/punch_time, p a polynomial in
+             *                 cbrt(u) exactly as the binary trace said:
+             *                   u    0.000 0.255 0.574 1.000
+             *                   p    4.99  4.42  4.30  4.26
+             *
+             * ⚠ The whole curve is SCALED by punch_gain, and the trace's 0.15
+             * minimum applies to the NORMALISED curve — which is why the
+             * measured minimum at amount 1.0 is 0.30, i.e. 0.15 x 2.0.
+             *
+             * ⚠ Punch is a SCOOP, not a spike: the gain starts at punch_gain,
+             * the body is pushed down, and it recovers by punch_time. The
+             * previous implementation ramped UP from zero and settled at unity —
+             * inverted at the start and wrong at the end, which is why it scored
+             * +1.1 dB against a -2.4 dB dry fallback. */
+            const float a = p1;
+            fx->punch_gain = 1.0f + a * a * a;
+            fx->punch_floor = 1.0f - a;
+            if (fx->punch_floor < 0.15f) fx->punch_floor = 0.15f;
+            fx->punch_samples = p2 * sample_rate;
+            if (fx->punch_samples < 1.0f) fx->punch_samples = 1.0f;
+            const float u = (p2 - 0.06f) / 0.94f;
+            const float w = cbrtf(u < 0.0f ? 0.0f : u);
+            fx->punch_exp = 4.99f - 1.194f * w + 0.464f * w * w;
+            /* The descent is the SMOOTHER, not a curve: the target drops to the
+             * floor at once and the smoothed gain slides down from unity. Its
+             * time constant scales with punch_time (measured ~T/45), so this is
+             * per-sample 45/punch_samples rather than a fixed coefficient. */
+            fx->punch_k = 45.0f / fx->punch_samples;
+            if (fx->punch_k > 1.0f) fx->punch_k = 1.0f;
+            fx->punch_smoothed = 1.0f;      /* starts at unity, then falls */
+            fx->punch_pos = 0.0f;
+            break;
+        }
         case DR32_FX_PITCHENV: {
             // EXACT (DRUM_EFFECTS_RECON.md "Pitch Envelope"):
             //   pitch_depth_octaves = amount * 4
@@ -129,13 +172,6 @@ void dr32_fx_start(dr32_fx *fx, dr32_fx_type type, float p1, float p2,
             fx->rng_b = 0x243F6A88u;      // own seeding is not yet attributed
             break;
         }
-        case DR32_FX_PUNCH:
-            // EXACT: punch_gain = 1 + amount^3; punch_time_samples = SR * time.
-            fx->punch_gain = 1.0f + p1 * p1 * p1;
-            fx->punch_samples = sample_rate * p2;
-            fx->punch_pos = 0.0f;
-            fx->punch_smoothed = 1.0f;
-            break;
         case DR32_FX_FM:
             fx->osc_inc = p2 / sample_rate;
             break;
@@ -243,25 +279,21 @@ void dr32_fx_output(dr32_fx *fx, float *l, float *r) {
             break;
         }
         case DR32_FX_PUNCH: {
-            // Two-region transient curve: a square-root attack up to the
-            // amount-derived boundary, then a power-law tail to punch_samples.
-            // The engine smooths the target and enforces a 0.15 gain floor.
-            // ⚠ The tail's exact exponent comes from polynomial(cbrt(u)) in the
-            // setter, which the reconstruction does not spell out — so this is
-            // structurally right but not yet numerically pinned.
-            float t = fx->punch_pos / (fx->punch_samples > 1.0f ? fx->punch_samples : 1.0f);
+            /* The normalised curve: floor immediately, recovering to unity as
+             * x^p by punch_time. See dr32_fx_start() for where every constant
+             * came from — all of it measured, none of it guessed. */
+            float x = fx->punch_pos / fx->punch_samples;
             float target;
-            if (t >= 1.0f) {
-                target = 1.0f;
-            } else {
-                float boundary = 0.25f;
-                if (t < boundary) target = fx->punch_gain * sqrtf(t / boundary);
-                else target = 1.0f + (fx->punch_gain - 1.0f) * powf(1.0f - (t - boundary) / (1.0f - boundary), 2.0f);
-            }
-            if (target < 0.15f) target = 0.15f;
-            fx->punch_smoothed += (target - fx->punch_smoothed) * 0.05f;
-            *l *= fx->punch_smoothed;
-            *r *= fx->punch_smoothed;
+            if (x >= 1.0f) target = 1.0f;
+            else target = fx->punch_floor
+                        + (1.0f - fx->punch_floor) * powf(x, fx->punch_exp);
+            /* The smoother starts at unity, so the fast descent at the top of
+             * the hit is this one-pole sliding down to the floor — it is not a
+             * separate "attack" curve. */
+            fx->punch_smoothed += (target - fx->punch_smoothed) * fx->punch_k;
+            const float g = fx->punch_gain * fx->punch_smoothed;
+            *l *= g;
+            *r *= g;
             fx->punch_pos += 1.0f;
             break;
         }

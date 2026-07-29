@@ -247,6 +247,10 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "pitch_env"))   return snprintf(buf, buf_len, "%d", p->pitch_to_env);
         if (!strcmp(sub, "sending_note"))return snprintf(buf, buf_len, "%d", p->sending_note);
         if (!strcmp(sub, "speaker_on"))  return snprintf(buf, buf_len, "%d", p->speaker_on);
+        if (!strcmp(sub, "punch"))
+            return snprintf(buf, buf_len, "%g",
+                            p->fx_type == DR32_FX_PUNCH ? (double)p->fx_p1 : 0.0);
+        if (!strcmp(sub, "punch_time")) return snprintf(buf, buf_len, "%g", (double)p->fx_p2);
         if (!strcmp(sub, "send1"))       return snprintf(buf, buf_len, "%g", (double)p->send_db[0]);
         if (!strcmp(sub, "send2"))       return snprintf(buf, buf_len, "%g", (double)p->send_db[1]);
         return 0;
@@ -369,6 +373,20 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "sending_note"))  p->sending_note = atoi(val);
         else if (!strcmp(sub, "send1"))         p->send_db[0] = f;
         else if (!strcmp(sub, "send2"))         p->send_db[1] = f;
+        /* Punch as a plain per-pad control (Josh, 2026-07-28). It is the
+         * native transient shaper, so unlike a bespoke one its settings live in
+         * the kit: these write Effect_Type / Effect_PunchAmount / _PunchTime and
+         * round-trip into the .ablpreset.
+         *
+         * Amount drives the TYPE as well — at 0 the pad is a plain sampler,
+         * above 0 it is a Punch pad — so a single knob turns it on. The other
+         * playback effects stay dropped, so nothing else competes for fx_type. */
+        else if (!strcmp(sub, "punch")) {
+            p->fx_p1 = f;
+            if (f > 0.0f) { p->fx_type = DR32_FX_PUNCH; if (p->fx_p2 <= 0.0f) p->fx_p2 = 0.3f; }
+            else if (p->fx_type == DR32_FX_PUNCH) p->fx_type = DR32_FX_STANDARD;
+        }
+        else if (!strcmp(sub, "punch_time"))    p->fx_p2 = f;
         else if (!strcmp(sub, "fx_type"))       p->fx_type = dr32_fx_from_name(val);
         else if (!strcmp(sub, "fx_p1"))         p->fx_p1 = f;
         else if (!strcmp(sub, "fx_p2"))         p->fx_p2 = f;

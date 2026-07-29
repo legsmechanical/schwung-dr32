@@ -23,8 +23,12 @@ if (!src || !out) {
     process.exit(2);
 }
 const opt = Object.fromEntries(flags.map((f) => {
-    const [k, v = '1'] = f.replace(/^--/, '').split('=');
-    return [k, v];
+    // Split on the FIRST '=' only: --return=Key=Value,Key2=Value2 carries its
+    // own '=' signs, and a plain split() handed back just the first fragment,
+    // so every parameter after the first was silently dropped.
+    const body = f.replace(/^--/, '');
+    const i = body.indexOf('=');
+    return i < 0 ? [body, '1'] : [body.slice(0, i), body.slice(i + 1)];
 }));
 
 const song = JSON.parse(readFileSync(src, 'utf8'));
@@ -120,6 +124,26 @@ for (const chain of rack.chains) {
             s.isEnabled = true;
         }
     }
+}
+
+// --return=Key=Value,Key2=Value2 — parameters on the RETURN chain's device.
+// The 61 stock drum kits all use RoomType SuperEco but differ in RoomSize,
+// DecayTime, PreDelay and the shelves, so a model has to track those, and each
+// grid point is one render.
+if ('return' in opt) {
+    const rc = rack.returnChains || [];
+    let n = 0;
+    for (const pair of String(opt.return).split(',')) {
+        const [k, v] = pair.split('=');
+        for (const ch of rc) {
+            for (const d of (ch.devices || [])) {
+                if (!d.parameters || !(k in d.parameters)) continue;
+                d.parameters[k] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
+                n++;
+            }
+        }
+    }
+    console.error(`  return device: set ${n} param(s)`);
 }
 
 writeFileSync(out, JSON.stringify(song, null, 2) + '\n');
