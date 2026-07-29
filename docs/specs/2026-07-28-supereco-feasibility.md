@@ -334,3 +334,88 @@ RT60 is identical at every non-zero setting, so it is level only — and 0 mutes
 the device outright, which is what made the "100% wet insert" attempt render
 nine silent files. Despite the name it scales the reverb's own output rather
 than a dry path.
+
+---
+
+## THE MANUAL — 2026-07-29 (Live 12 manual, 28.32, pp. 608-612)
+
+Josh pointed at the Live manual's Reverb section. It names every control, which
+maps the 33 serialized parameters onto a real UI and **corrects three things I
+had inferred wrongly**. No captures were run for this.
+
+### The mapping
+
+| Manual UI | `.abl` parameter | note |
+|---|---|---|
+| Input Filter: Lo Cut / Hi Cut, centre + bandwidth | `BandFreq` `BandWidth` `BandLowOn` `BandHighOn` | ⚠ this is the **INPUT** filter |
+| Early Reflections: Spin on / Amount / Rate | `SpinOn` `EarlyReflectModDepth` `EarlyReflectModFreq` | |
+| Early Reflections: **Shape** | `DiffuseDelay` | prominence of the ERs and their overlap with the tail |
+| Diffusion Network: high shelf | `ShelfHighOn` `ShelfHiFreq` `ShelfHiGain` `HighFilterType` | |
+| Diffusion Network: low shelf | `ShelfLowOn` `ShelfLoFreq` `ShelfLoGain` | |
+| Diffusion Network: **Diffusion** / **Scale** | `AllPassGain` / `AllPassSize` | density and coarseness |
+| Chorus: Amount / Rate | `SizeModDepth` `SizeModFreq` `ChorusOn` | |
+| Global: Predelay / Size / Decay / Stereo / Smooth | `PreDelay` `RoomSize` `DecayTime` `StereoSeparation` `SizeSmoothing` | |
+| Global: Freeze / Flat / Cut | `FreezeOn` `FlatOn` `CutOn` | |
+| Global: **Density** | **`RoomType`** | ⭑ see below |
+| Output: Reflect / Diffuse / **Dry/Wet** | `MixReflect` `MixDiffuse` **`MixDirect`** | |
+
+### ⭑⭑ "RoomType" is DENSITY — a CPU/quality tier, not a room shape
+
+> "The Density chooser controls the tradeoff between reverb quality and
+> performance. Sparse uses minimal CPU resources, while High delivers the
+> richest reverberation."
+
+Live offers Sparse / Low / High. Move serializes `RoomType: "SuperEco"`, which
+is evidently **a tier below Sparse**, specific to the hardware. That fits the
+binary carrying a `ReverbQualityMode` enum, and it settles what SuperEco *is*:
+not a different algorithm, the same algorithm run at the cheapest density.
+
+**And it explains the decay saturation we measured.** A sparser diffusion
+network has fewer recirculating paths, so it cannot hold energy long enough to
+deliver a long tail — the measured RT60 falls further behind `DecayTime` the
+longer the tail is asked to be. That is a consequence of the density tier, not a
+separate mystery.
+
+### ⭑ Decay is DEFINED as RT60
+
+> "The Decay control adjusts the time required for this reverb tail to drop to
+> 1/1000th (-60 dB) of its initial amplitude."
+
+So `DecayTime` **is** RT60 by the device's own definition, and our measurement
+says how badly SuperEco fails to deliver it:
+
+| DecayTime | RT60 delivered | shortfall |
+|---:|---:|---|
+| 600 ms | 0.60 s | none — exactly on spec |
+| 1500 ms | 1.33 s | −11% |
+| 4000 ms | 2.62 s | −34% |
+| 10000 ms | 4.50 s | −55% |
+| 19500 ms | 5.44 s | **−72%** |
+
+That is a much sharper statement than "the ratio drifts": the device is on spec
+up to about a second and then increasingly cannot deliver what it is asked for.
+
+### ⚠ Three corrections to earlier notes in this document
+
+1. **`BandFreq`/`BandWidth` are the INPUT filter**, applied before the reverb —
+   not tail damping. The tail's frequency-dependent decay is the two **shelves**
+   in the Diffusion Network ("The high-frequency decay models the absorption of
+   sound energy due to air, walls and other materials"). So the per-octave
+   damping campaign should sweep the shelves, and treat Band* as an input EQ.
+2. **`MixDirect` is Dry/Wet**, not a "direct output level". The empirical result
+   stands — 0 silences a return and it does not affect RT60 — and now has a
+   reason: on a return chain there is no dry path, so a fully-dry setting has
+   nothing to pass.
+3. **`DiffuseDelay` is "Shape"**, the early-reflection control, not a delay time.
+   Small values let the reflections decay gradually with the diffusion starting
+   sooner; large values make them decay fast with a later diffuse onset.
+
+### What this changes about the plan
+
+- Sweep the **shelves** for the damping laws, not the band filter.
+- `RoomSize`'s manual description matches what we measured: "a very large size
+  will lend a shifting, diffused delay effect... a very small value will give it
+  a highly colored, metallic feel", and the stock range is 0.27-500.
+- `Density`/`RoomType` needs no sweeping at all — Move only ever ships SuperEco.
+- `Smooth` is always `Fast` on Move and only governs behaviour *while Size
+  changes*, so it is irrelevant to a static model.
