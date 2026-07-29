@@ -1,5 +1,12 @@
 # Modelling Move's own reverb (SuperEco) — feasibility
 
+> **STATUS 2026-07-29: feasibility CLOSED, and superseded by a better route.**
+> The decompile recovered the algorithm exactly (see the last section), so the
+> plan is now to **PORT SuperEco**, not to fit a model to captures. Josh's call:
+> **SuperEco only** — Move ships nothing else, and the other tiers cost 3-7.5x.
+> Everything below is kept because the rig knowledge and the cross-check data
+> remain valid; read it as the record of how the ground truth was established.
+
 Investigation, 2026-07-28, at Josh's request. **Go/no-go capture run the same
 day — result at the end: GO.**
 This reports the method and the cost so the decision to commit can be made with
