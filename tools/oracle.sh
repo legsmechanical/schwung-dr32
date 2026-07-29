@@ -27,6 +27,12 @@
 # "capture while the stack is live" is the better-supported theory, and the
 # partial stop was a separate (real) defect rather than the proven cause.
 #
+# ⚠ A FLAT BATTERY LOOKS EXACTLY LIKE THAT LOCKUP. Both present as: no ping on
+# WiFi AND none on the USB tether, a stale ARP entry, and the host's own network
+# fine. On 2026-07-28 a batch was followed by exactly that picture and written up
+# as a third lockup — it was the battery. Check that the Move is plugged in and
+# powered before concluding anything about captures.
+#
 # Usage: STOP_STACK=1 tools/oracle.sh <song.abl> <out.wav> [frames]
 set -euo pipefail
 
