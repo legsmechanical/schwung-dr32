@@ -1,4 +1,4 @@
-# Porting SuperEco: the late network, and what really caps its tail
+# Porting SuperEco, and what really caps its tail
 
 2026-07-29. Supersedes the modelling half of
 `2026-07-28-supereco-feasibility.md` — and **overturns that document's per-band
@@ -11,39 +11,88 @@ the `MoveOriginal` binary or measured from IRs already banked in `build/ir/`.
 
 ## What shipped
 
-`dsp/dr32_supereco.h` — the **late network** of Move's own Reverb, ported from
-the decompile rather than fitted to captures, and wired up as a new send type
-`Native` (`DR32_EFX_NATIVE`).
+`dsp/dr32_supereco.h` — Move's own Reverb, **complete apart from two named
+gaps**, ported from the decompile rather than fitted to captures, and wired up
+as a new send type `Native` (`DR32_EFX_NATIVE`).
+
+The late network landed first; the front end followed the same day, once the
+parallel decompile session produced `REVERB_FRONT_END_RECON.md`.
 
 Everything in it is read off the binary:
 
+**Late network**
 - the 4-lane orthonormal feedback matrix, exact float bits
 - the three delay-length families A/B/C, and the RoomSize **cube-root** law
 - the decay law, including the stock clamped-`exp2` approximation
 - the per-lane TPT shelf pair, including the stock `tan` approximation
 - the feedback all-pass recurrence and the stereo parity folds
 
-Deliberately absent rather than guessed, pending
-`_worklogs/NEXT-PROMPT-reverb-frontend.md`: the early-reflection tap table, the
-two-state diffuser coefficients, the input Band filter, and room-delay
-modulation. DR32's own diffuser stands in front of the network as a marked
-placeholder — it should be **deleted, not tuned**, when the real front end
-lands.
+**Front end**
+- the early-reflection tap-position law, and its four per-lane quadrature
+  oscillators running at `fs/8` — the device's real modulation resolution
+- two-point **linear** tap interpolation (confirmed from the `fmls`/`fmla`
+  pair, so the usual "a cubic reader would be nicer" is simply wrong here)
+- the decaying tap gains, pre-delay-compensated, with lane 2's **negative**
+  trim
+- the four pre-diffusion delays and their orthonormal coefficient rows
+- the two-state diffuser, whose five coefficients turn out to be **derived**
+  rather than constant: a fixed-Q lowpass whose cutoff is 12 kHz scaled by the
+  last pre-diffusion gain, so the diffuser opens and closes with `DecayTime`
+  and `DiffuseDelay`
+
+⭑ The front end runs on **its own decay rate** — `(DiffuseDelay + 0.5) /
+(1.15 x DecayTime)`. `DiffuseDelay` (the manual's "Shape") enters there and
+nowhere else.
+
+### Still deliberately absent rather than guessed
+
+- **The input Band filter's coefficient builder.** The recurrence is known; the
+  map from `BandFreq`/`BandWidth` to G/K/mixes is not. It is an input tone
+  control, not part of the tail mechanism.
+- **The final mixer's exact form.** `MixReflect`/`MixDiffuse` are applied here
+  as plain gains on the early and diffuse stereo pairs. That is the one
+  structural guess in the file, and it is a material one — at the stock values
+  (1.79 / 2.00) the early and diffuse fields carry most of the output level.
+- **Late-lane modulation** (`SizeModFreq`/`SizeModDepth`), as distinct from the
+  early-tap motion, which is implemented.
+
+### Two questions the front-end recon settled
+
+**Offset bases.** `FUN_01b7cec0`, `FUN_01b7d584` and `FUN_01b7d9e4` all take
+`full_state + 0xa90`; the kernel takes `full_state`. The two `0x5b0` writes do
+not alias — the builder's is full-state `0x1040`, the kernel's really is the
+first pre-diffusion coefficient row. **Both notes were right.**
+
+**Family C.** It is a second in-loop all-pass, as implemented. All three
+families come from `FUN_01b7cec0`, which works on the *late* subobject, and the
+pre-diffusion delays are a separate front-end stage with their own length law
+(`0.54 x cuberoot(RoomSize) x 32.036`). The `familyCInLoop` flag is kept only so
+the alternative stays one edit away.
 
 ### The decay law holds exactly
 
 `tests/test_fxbus.c` asserts it. RT60 predicted as
 `ln(1000) * 1.15 / 8.833317 = 0.8993 x DecayTime`:
 
-| DecayTime | predicted | ported, shelves open |
-|---:|---:|---:|
-| 2.0 s | 1.80 s | **1.80 s** |
-| 8.0 s | 7.19 s | **7.20 s** |
+| DecayTime | predicted | late network only | complete engine |
+|---:|---:|---:|---:|
+| 2.0 s | 1.80 s | **1.80 s** | **1.81 s** |
+| 8.0 s | 7.19 s | **7.20 s** | **7.19 s** |
 
 Across the full sweep, with both shelves at unity, the ratio sits at 0.900 at
 every point out to 19.5 s. That is the binary's own constants coming back out
 of a running implementation, which is about as good as a port can be checked
 before the null test.
+
+⭑ **Adding the whole front end moved it by 0.01 s.** That independently confirms
+the front-end recon's own §8 inference — early reflection, pre-diffusion and the
+diffuser are feed-forward into `U`, so once their rings empty the recirculating
+late residual bypasses them entirely and they cannot contribute a continuing
+loss. Two routes, same answer.
+
+(At DecayTime 0.6 s the ratio does drop to 0.69, because at that length the
+early and diffuse fields are a large fraction of the total and the Schroeder fit
+lands partly on them. It is the measurement's scope, not the decay law.)
 
 ### `stockExp` reproduces `expf` to ~2e-6 — and cannot exceed 1.0
 
@@ -56,8 +105,8 @@ above unity is silently flattened. That is faithful and it is implemented.
 
 ### Cost
 
-Cheapest reverb in the module — 0.30% of one core against the Plate's 0.42% for
-30 s of audio, measured on the host. ⚠ Host numbers, not device numbers;
+Cheapest reverb in the module even with the front end in — 0.62% of one core
+against the Plate's 0.72% for 30 s of audio, measured on the host. ⚠ Host numbers, not device numbers;
 `tools/bench_fx.c` exists for the aarch64 measurement and has still not been
 run. "SuperEco" appears to be earned.
 
@@ -85,9 +134,9 @@ a capture. At DecayTime 19.5 s:
 
 | shelves | RT60 |
 |---|---:|
-| both stock (Lo 0.6167, Hi 0.8833) | 6.60 s |
-| low shelf only | 17.42 s |
-| high shelf only | 14.32 s |
+| both stock (Lo 0.6167, Hi 0.8833) | 6.52 s |
+| low shelf only | 17.33 s |
+| high shelf only | 13.87 s |
 | neither | 17.54 s |
 
 Both shelves **cut** — the loop is a band-pass between `ShelfLoFreq` and
@@ -108,11 +157,15 @@ Reproduced exactly in the port, at DecayTime 19.5 s:
 
 | band | 1 pole-pair (Q=1.4) | 6 cascaded (~72 dB/oct) |
 |---:|---:|---:|
-| 150 Hz | 6.65 s | **2.57 s** |
-| 300 Hz | 6.91 s | **2.72 s** |
-| 1 kHz | 7.38 s | 7.25 s |
-| 3 kHz | 6.72 s | 6.63 s |
-| 8 kHz | 6.47 s | 6.46 s |
+| 150 Hz | 5.75 s | **2.44 s** |
+| 300 Hz | 6.29 s | **2.72 s** |
+| 1 kHz | 7.19 s | 7.11 s |
+| 3 kHz | 6.61 s | 6.57 s |
+| 8 kHz | 6.35 s | 6.30 s |
+
+(Complete engine. The late network alone gave the same picture: 6.65 -> 2.57 s
+at 150 Hz against 7.38 -> 7.25 s at 1 kHz. The front end does not change the
+conclusion, which is what §8 of the front-end recon predicts.)
 
 ### And on the real device IRs
 
@@ -159,17 +212,12 @@ default.
 
 ## Still open
 
-- The front end (see the handoff). Until it lands, a null test against a stock
-  preset cannot close, because the early field, the diffuser and the room-delay
-  modulation are all missing from the tail's input.
 - A **direct-parameter path** for the null test. The eight generic send slots
   cannot carry the device's 33 parameters, so `tools/fx_suite.sh` will need a
-  test-only entry point that sets `RoomSize`/`DecayTime`/the shelves raw.
-- ⚠ Whether family C belongs **inside** the feedback loop. It is there now,
-  following the shelf builder's own loop-time sum (all three families), against
-  the topology note reading it as pre-diffusion outside the loop. The two notes
-  use different offset bases; `familyCInLoop` flips it so the question can be
-  settled by measurement rather than argued.
+  test-only entry point that sets `RoomSize`/`DecayTime`/the shelves raw. This
+  is now the last thing between the port and an actual null number.
+- The two named gaps above — the Band filter builder and the final mixer's
+  form. The mixer is the one that will show up in a null test.
 - Device CPU, via `tools/bench_fx.c`.
 - Kit import could now select `Native` automatically when a kit's return chain
   is a native Reverb, and carry its `RoomSize`/`DecayTime` across. Return

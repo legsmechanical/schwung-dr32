@@ -789,7 +789,7 @@ struct NonLin {
  *  puts Native's tail RMS on the Plate's at each type's own default settings.
  *  ⚠ It is a LEVEL match only — it must not be used to compensate for anything
  *  the port gets wrong, and the null test bypasses it. */
-static const float kNativeTrim = 0.561f;
+static const float kNativeTrim = 0.204f;
 
 struct Slot {
     dr32_efx_type type = DR32_EFX_NONE;
@@ -996,13 +996,23 @@ struct Slot {
             // uses; the audio-effect presets range wider.
             native.allPassGain = 0.30f + 0.65f * (p[4] < 0.0f ? 0.0f :
                                                   (p[4] > 1.0f ? 1.0f : p[4]));
+            // ⚠ Pre-delay goes to the DEVICE'S OWN PreDelay, not to DR32's line
+            // in front. It is not merely a delay here: it moves the early taps
+            // AND compensates both their gains and the tap-modulation depth, so
+            // routing it through the generic line would silently drop three
+            // recovered laws. The generic line is disabled for this type below.
+            native.preDelayMs = (p[3] < 0.0f ? 0.0f : (p[3] > 1.0f ? 1.0f : p[3]))
+                                * (float)DR32_PREDELAY_MAX_MS;
             native.build();
         }
 
         // The Delay reads the whole array (its own units — see the header).
         delay.setParams(p);
 
-        int n = (int)(p[3] * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
+        // Native owns its pre-delay (see above), so the shared line is off for
+        // it — otherwise the two would stack.
+        int n = (type == DR32_EFX_NATIVE) ? 0
+                : (int)(p[3] * (DR32_PREDELAY_MAX_MS * 0.001f) * fs_);
         if (n < 0) n = 0;
         if (n > DR32_PREDELAY_MAX - 1) n = DR32_PREDELAY_MAX - 1;
         preLen = n;
@@ -1121,19 +1131,16 @@ struct Slot {
                 break;
             }
             case DR32_EFX_NATIVE: {
-                // ⚠ The diffuser in front is a PLACEHOLDER for the device's own
-                // early-reflection and pre-diffusion stages, which are not
-                // recovered yet (see dr32_supereco.h and
-                // `_worklogs/NEXT-PROMPT-reverb-frontend.md`). It is not a
-                // voicing choice and it should be DELETED, not tuned, when the
-                // real front end lands. Its two sides run different prime
-                // lengths, which is what keeps the two input parities
-                // decorrelated in the meantime.
+                // ⭑ Nothing in front of it any more. The placeholder diffuser
+                // that stood here is gone: the device's own early-reflection
+                // and pre-diffusion stages are inside the port now, and this
+                // reverb takes a MONO input by construction (the kernel injects
+                // L+R) with all of its stereo coming from the parity folds.
+                // Adding a per-channel diffuser would have been decorating a
+                // path that the real algorithm does not have.
                 for (int i = 0; i < n; i++) {
-                    const float l = diff.run(0, io[2 * i]);
-                    const float r = diff.run(1, io[2 * i + 1]);
                     float ol, orr;
-                    native.tick(l, r, ol, orr);
+                    native.tick(io[2 * i], io[2 * i + 1], ol, orr);
                     io[2 * i] = ol * kNativeTrim;
                     io[2 * i + 1] = orr * kNativeTrim;
                 }

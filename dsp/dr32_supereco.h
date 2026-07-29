@@ -19,24 +19,28 @@
 // ── WHAT IS PORTED, AND WHAT IS NOT ──────────────────────────────────────────
 //
 // PORTED (all of it read off the binary):
+//   LATE NETWORK
 //   - the 4-lane orthonormal feedback matrix, exact float bits
 //   - the three delay-length families A/B/C and the RoomSize cube-root law
 //   - the decay law, including the stock clamped-exp2 approximation
 //   - the per-lane TPT shelf pair, including the stock tan approximation
 //   - the feedback all-pass recurrence and the stereo parity folds
+//   FRONT END (REVERB_FRONT_END_RECON.md)
+//   - the early-reflection tap-position law, its per-lane quadrature
+//     oscillators, linear interpolation, and the decaying tap gains
+//   - the four pre-diffusion delays and their orthonormal coefficient rows
+//   - the two-state diffuser, whose five coefficients are DERIVED from the
+//     last pre-diffusion gain rather than being constants
 //
-// NOT PORTED — the front end is still unrecovered, and is deliberately absent
-// rather than guessed (see `_worklogs/NEXT-PROMPT-reverb-frontend.md`):
-//   - the early-reflection tap table (offsets, weights, gains, tap motion)
-//   - the two-state diffuser's five coefficient vectors
-//   - the input Band filter's coefficient builder
-//   - room-delay modulation: `SizeModFreq`/`SizeModDepth`/`SpinOn` are real and
-//     nonzero in every stock preset, but the law that turns them into a read
-//     offset is not recovered. **It is therefore OFF**, and a null test against
-//     a stock preset will not close until it lands.
-//
-// So this is the TAIL, fed by DR32's own diffuser. It is the part the RT60
-// measurements bear on, and it is complete on its own terms.
+// NOT PORTED, and deliberately absent rather than guessed:
+//   - the input Band filter's coefficient builder. Its recurrence is known but
+//     the map from `BandFreq`/`BandWidth` to G/K/mixes is not, and it is an
+//     INPUT tone control rather than part of the tail mechanism.
+//   - the final mixer's exact form. `MixReflect`/`MixDiffuse` are applied here
+//     as plain gains on the early and diffuse stereo pairs, which is the one
+//     structural guess in this file — flagged, not hidden.
+//   - room-delay modulation (`SizeModFreq`/`SizeModDepth` on the LATE lanes, as
+//     distinct from the early-tap motion, which IS implemented).
 
 #ifndef DR32_SUPERECO_H
 #define DR32_SUPERECO_H
@@ -169,6 +173,13 @@ struct Line {
         buf[w] = x;
         if (++w >= CAP) w = 0;
     }
+    /** Read `n` samples back from the write head. The early ring is ONE buffer
+     *  with four independently-moving tap pairs, so it needs an arbitrary read
+     *  rather than a single fixed length. */
+    inline float at(int n) const {
+        int r = w - 1 - n; while (r < 0) r += CAP;
+        return buf[r];
+    }
     /** Read the delayed sample, then write the new one. */
     inline float step(float x) {
         const float y = peek();
@@ -176,6 +187,47 @@ struct Line {
         return y;
     }
 };
+
+// ── Front-end constants (REVERB_FRONT_END_RECON.md) ─────────────────────────
+
+/** Early-reflection tap shape, and the fixed sign/trim on each lane. ⚠ Lane 2
+ *  is NEGATIVE — that sign is the reverb's, and dropping it as "just a phase"
+ *  collapses part of the early stereo image. */
+static const float kEarlyShape[kLanes] =
+    { 0.8481000066f, 1.0f, 0.6955000162f, 0.4178999960f };
+static const float kEarlyTrim[kLanes] = { 1.0f, 1.0f, -1.0f, 1.0f };
+
+/** Per-lane quadrature oscillator that moves the early taps: detune ratios and
+ *  the exact initial (x,y). The seeds are cos/sin of 10/20/30/40 degrees, which
+ *  is what decorrelates the four lanes' motion. */
+static const float kEarlyDetune[kLanes] =
+    { 1.0149999857f, 0.9916999936f, 1.0230000019f, 0.9897000194f };
+static const float kEarlyOscX[kLanes] =
+    { 0.9848077297f, 0.9396926165f, 0.8660253882f, 0.7660444379f };
+static const float kEarlyOscY[kLanes] =
+    { 0.1736481935f, 0.3420201540f, 0.5f, 0.6427876353f };
+
+/** Pre-diffusion delay shape, and the orthonormal rows that feed the four
+ *  delays from the four early lanes. Only the first four of each row's twelve
+ *  floats are active in SuperEco; the rest are exact zero. */
+static const float kPdShape[kLanes] =
+    { 0.9010000229f, 0.6599000096f, 0.8421999812f, 0.4629999995f };
+static const float kPdRow[kLanes][kLanes] = {
+    { -0.048771999f /*0xbd47c526*/, -0.321126014f /*0xbea46aa1*/,
+      -0.911998987f /*0xbf6978c4*/,  0.250515997f /*0x3e8043a2*/ },
+    { -0.075773001f /*0xbd9b2ee0*/, -0.615700006f /*0xbf1d9e84*/,
+       0.405299991f /*0x3ecf837b*/,  0.671494007f /*0x3f2be708*/ },
+    {  0.477892011f /*0x3ef4ae43*/, -0.658955991f /*0xbf28b157*/,
+       0.047448002f /*0x3d4258d6*/, -0.578917027f /*0xbf1433e8*/ },
+    {  0.873784006f /*0x3f5fb04f*/,  0.289081007f /*0x3e94026d*/,
+      -0.041708998f /*0xbd2ad70e*/,  0.388835996f /*0x3ec71583*/ },
+};
+
+// Ring capacities. The early ring's own allocation law is fs*0.001*984.1425,
+// i.e. ~0.98 s; the largest tap actually reachable is roomSpan(RoomSize 500)
+// plus PreDelay, about 14.2k samples at 48 kHz with a 200 ms pre-delay.
+static const int kMaxEarly = 24576;
+static const int kMaxPd    = 8192;
 
 /** The TPT state-variable stage both shelves are built from. `G`, `K`, and the
  *  three output mixes come from the builder; the recurrence is transcribed
@@ -231,7 +283,36 @@ struct SuperEco {
     float shelfLoFreq = 670.77f, shelfLoGain = 0.6167f;
     float shelfHiFreq = 1469.95f, shelfHiGain = 0.8833f;
     bool  freeze      = false;      // decayRate 0 -> every gain unity
+    // ⭑ Settled by REVERB_FRONT_END_RECON.md §1: families A/B/C all come from
+    // FUN_01b7cec0, which works on the LATE subobject (full_state + 0xa90), and
+    // the pre-diffusion delays are a separate front-end stage with their own
+    // length law. So family C really is a second in-loop all-pass. The flag is
+    // kept only so the alternative stays one edit away.
     bool  familyCInLoop = true;
+
+    // Front end. Defaults are the values the factory drum kits' return chains
+    // actually carry, so an untouched instance is a stock drum room.
+    float preDelayMs   = 0.0f;
+    float diffuseDelay = 0.2143f;   // "Shape" — early-reflection spread
+    float earlyModFreq = 0.1094f;   // Hz
+    float earlyModDepth = 3.2429f;  // public units; 0.01x becomes the depth
+    bool  spinOn       = true;
+    float mixReflect   = 1.7925f;   // ⚠ see the header: plain gains here
+    float mixDiffuse   = 1.9953f;
+
+    // Front-end state. ONE early ring with four moving tap pairs (that is the
+    // device's arrangement — not four rings), then four pre-diffusion delays.
+    Line<kMaxEarly> early;
+    Line<kMaxPd>    pd[kLanes];
+    float oscX[kLanes], oscY[kLanes], oscK[kLanes];
+    int   earlyBase[kLanes];        // unmodulated tap position, in samples
+    float earlyGain[kLanes];
+    int   tapOff[kLanes];           // live, modulated
+    float tapW[kLanes];
+    int   ctrlPhase = 0;            // the updater runs once every 8 samples
+    float pdRow[kLanes][kLanes];    // base rows scaled by their delay's gain
+    float dfA = 0.0f, dfB = 0.0f, dfC = 0.0f, dfD = 0.0f, dfE = 0.0f;
+    float dfZ0[kLanes], dfZ1[kLanes];
 
     Line<kMaxA> lineA[kLanes];
     Line<kMaxB> lineB[kLanes];
@@ -243,11 +324,20 @@ struct SuperEco {
     SuperEco() { reset(); build(); }
 
     void reset() {
+        early.reset();
         for (int j = 0; j < kLanes; j++) {
             lineA[j].reset(); lineB[j].reset(); lineC[j].reset();
+            pd[j].reset();
             shelfLo[j].reset(); shelfHi[j].reset();
             resid[j] = 0.0f;
+            dfZ0[j] = dfZ1[j] = 0.0f;
+            // The oscillators are seeded, not zeroed: their (x,y) pairs are
+            // cos/sin of 10/20/30/40 degrees, which is what decorrelates the
+            // four lanes' tap motion. Zeroing them would stop all four dead.
+            oscX[j] = kEarlyOscX[j];
+            oscY[j] = kEarlyOscY[j];
         }
+        ctrlPhase = 0;
     }
 
     void setSampleRate(float sr) {
@@ -310,20 +400,139 @@ struct SuperEco {
             shelfLo[j].set(Tlo / qlo, kShelfK, Alo, kShelfK * std::sqrt(Alo), 1.0f);
             shelfHi[j].set(Thi * qhi, kShelfK, 1.0f, kShelfK * std::sqrt(Ahi), Ahi);
         }
+
+        buildFrontEnd(r, decayRate);
+    }
+
+    /** The early-reflection and pre-diffusion tables.
+     *
+     *  ⚠ The front end runs on its OWN decay rate, not the late network's:
+     *  `DiffuseDelay` (the manual's "Shape") enters it as `(DiffuseDelay+0.5)`
+     *  and nowhere else. It is not a second copy of the tail's decay. */
+    void buildFrontEnd(float r, float decayRate) {
+        const float preS = preDelayMs * 0.001f;
+        const float frontDecayRate = (diffuseDelay + 0.5f) *
+                                     (decayRate <= 0.0f ? 0.0f : decayRate);
+
+        // Early taps. The order of operations here follows the AArch64
+        // fmul/fadd sequence: the algebraically shorter roomSpan*(shape-0.4179)
+        // rounds differently, and this is a port.
+        const float roomScale = 0.33f * r;
+        const float roomSpan  = (roomScale * 62.41f) * 0.001f;
+        const float origin    = preS + roomSpan * -0.4179f;
+        for (int j = 0; j < kLanes; j++) {
+            const float raw = ((kEarlyShape[j] * roomSpan + origin) * fs) + 0.5f;
+            int b = (int)raw;                       // truncation after the +0.5
+            if (b < 1) b = 1;
+            if (b > kMaxEarly - 2) b = kMaxEarly - 2;
+            earlyBase[j] = b;
+            tapOff[j] = b - 1;
+            tapW[j] = 0.0f;
+            // ⚠ The tap gains DECAY, and they are compensated for pre-delay:
+            // a tap that arrives later has had longer to fall, except for the
+            // part of its lateness that is just pre-delay.
+            earlyGain[j] = kEarlyTrim[j] *
+                stockExp(-kDecayNumer * frontDecayRate *
+                         ((float)b / fs - 0.83f * preS));
+            // Control-rate quadrature oscillator, one per lane.
+            const float ctrlFs = fs / 8.0f;
+            const float q = earlyModFreq * kEarlyDetune[j] / ctrlFs;
+            oscK[j] = 2.0f * std::sin(3.14159265358979f * q);
+        }
+
+        // Pre-diffusion delays, and their rows scaled by each delay's own gain.
+        const float pdScale = 0.54f * r;
+        const float pdBase  = ((pdScale * 32.036003f) * fs) * 0.001f;
+        for (int j = 0; j < kLanes; j++) {
+            const float pdLen = pdBase * kPdShape[j];
+            int n = (int)pdLen;
+            if (n < 1) n = 1;
+            if (n > kMaxPd - 1) n = kMaxPd - 1;
+            pd[j].setLength(n);
+            const float g = stockExp(-kDecayNumer * frontDecayRate * pdLen / fs);
+            for (int k = 0; k < kLanes; k++) pdRow[j][k] = kPdRow[j][k] * g;
+            if (j == kLanes - 1) {
+                // ⭑ The two-state diffuser's five coefficients are DERIVED,
+                // not constants: a fixed-Q lowpass whose cutoff is 12 kHz
+                // scaled by the LAST pre-diffusion gain. So the diffuser opens
+                // and closes with DecayTime and DiffuseDelay.
+                const float cutoff = 12000.0f * g;
+                const float G  = 2.0f * stockTanHalf(2.0f * 3.14159265358979f *
+                                                     cutoff / fs);
+                const float G2 = G * G;
+                const float den = G2 + 4.0f * G + 4.0f;
+                dfA = dfC = G2 / den;
+                dfB = (2.0f * G2) / den;
+                dfD = (2.0f * (G2 - 4.0f)) / den;
+                dfE = (G2 - 4.0f * G + 4.0f) / den;
+            }
+        }
+    }
+
+    /** The eight-sample control update: move the taps. */
+    inline void updateTaps() {
+        const float preS = preDelayMs * 0.001f;
+        float depth = 0.01f * earlyModDepth;
+        if (preS > 0.005f) depth = depth / (1.0f + 500.0f * (preS - 0.005f));
+        const float spin = spinOn ? 1.0f : 0.0f;
+        for (int j = 0; j < kLanes; j++) {
+            const float x1 = oscK[j] * oscY[j] - oscX[j];
+            const float y1 = oscY[j] + oscK[j] * x1;
+            oscX[j] = x1; oscY[j] = y1;
+            const float p = (float)earlyBase[j] * (1.0f + depth * spin * y1);
+            int t = (int)p;
+            if (t < 1) t = 1;
+            if (t > kMaxEarly - 2) t = kMaxEarly - 2;
+            tapOff[j] = t - 1;
+            tapW[j] = p - (float)((int)p);
+        }
     }
 
     /** One stereo frame.
      *
-     *  ⚠ The injection is a PLACEHOLDER. In the device, `U = E + D + R` — the
-     *  early field and the diffuser output, neither of which is recovered yet.
-     *  Here the (already diffused, by DR32's own diffuser) input is split by
-     *  PARITY, matching the output fold, so the two sides stay decorrelated
-     *  instead of collapsing to mono. Replace this with the real E and D once
-     *  the front-end constants land. */
+     *  ⚠ The input is MONO — the kernel injects `L+R` and everything stereo
+     *  about this reverb comes out of the parity folds, not out of two
+     *  independent channels. Feeding it a stereo pair and expecting the sides
+     *  to stay separate is a misreading of the topology. */
     inline void tick(float inL, float inR, float &outL, float &outR) {
+        // (The input Band filter belongs here; see the header for why it is
+        // absent rather than approximated.)
+        const float x = inL + inR;
+
+        // ── Early reflections ──────────────────────────────────────────────
+        // The control-rate updater runs once every eight samples, which is the
+        // device's rate and therefore also the modulation's real resolution.
+        if (ctrlPhase == 0) updateTaps();
+        if (++ctrlPhase >= 8) ctrlPhase = 0;
+
+        early.push(x);
+        float E[kLanes];
+        for (int j = 0; j < kLanes; j++) {
+            const float a = early.at(tapOff[j]);
+            const float b = early.at(tapOff[j] + 1);
+            // Two-point LINEAR interpolation. Confirmed from the fmls/fmla
+            // instruction pair — not cubic, whatever "nicer" would suggest.
+            E[j] = 1.5f * earlyGain[j] * (a + (b - a) * tapW[j]);
+        }
+
+        // ── Pre-diffusion and the two-state diffuser ───────────────────────
+        float X[kLanes];
+        for (int j = 0; j < kLanes; j++) {
+            float acc = 0.0f;
+            for (int k = 0; k < kLanes; k++) acc += pdRow[j][k] * E[k];
+            X[j] = pd[j].step(acc);
+        }
+        float D[kLanes];
+        for (int j = 0; j < kLanes; j++) {
+            const float d = dfZ0[j] + dfA * X[j];
+            dfZ0[j] = dfZ1[j] + dfB * X[j] - dfD * d;
+            dfZ1[j] =           dfC * X[j] - dfE * d;
+            D[j] = d;
+        }
+
+        // ── The late network ───────────────────────────────────────────────
         float U[kLanes];
-        for (int j = 0; j < kLanes; j++)
-            U[j] = ((j & 1) ? inR : inL) + resid[j];
+        for (int j = 0; j < kLanes; j++) U[j] = E[j] + D[j] + resid[j];
 
         // W = M * U. Orthonormal, so this redistributes energy without adding
         // or removing any.
@@ -358,10 +567,20 @@ struct SuperEco {
             resid[j] = rj;
         }
 
-        // The parity fold. Two terms a side at four lanes; six/eight/ten lanes
-        // give three/four/five, which is what proves the lane count.
-        outL = resid[0] + resid[2];
-        outR = resid[1] + resid[3];
+        // The parity fold — early, diffuse and late all fold the same way. Two
+        // terms a side at four lanes; six/eight/ten lanes give three/four/five,
+        // which is what proves the lane count.
+        //
+        // ⚠ The weighted sum is THE structural guess in this file. The device's
+        // final mixer (FUN_01b7ebc0) takes the three stereo pairs plus the dry
+        // and applies MixDirect/MixReflect/MixDiffuse; its exact form is not
+        // recovered, so they are applied here as plain gains. MixDirect is
+        // absent on purpose — a send bus is 100% wet, and there is no dry path
+        // through here to scale.
+        outL = (resid[0] + resid[2])
+             + mixReflect * (E[0] + E[2]) + mixDiffuse * (D[0] + D[2]);
+        outR = (resid[1] + resid[3])
+             + mixReflect * (E[1] + E[3]) + mixDiffuse * (D[1] + D[3]);
     }
 
     /** ShelfLoGain/ShelfHiGain reach 0 in principle and log(0) is not a number.
