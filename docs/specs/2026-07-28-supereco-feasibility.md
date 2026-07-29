@@ -181,3 +181,67 @@ everywhere.
 
 Do NOT fit anything to this table. The isolation method is proven (see the
 go/no-go above); the parameter mapping is not.
+
+---
+
+## SECOND GRID — 2026-07-29: DecayTime found, and the decay law measured
+
+Josh supplied three facts that unblocked this: the send and insert reverbs are
+the same device and an insert can run 100% wet; an impulse sample can be placed
+on the device; and **Ableton Live is on the workstation and loads Move sets with
+every reverb parameter exposed**.
+
+### Live answered the open question for free
+
+`.als` is gzipped XML, so dumping a set's Reverb needs no device time at all. It
+has **33 parameters with exactly the names in the Move `.abl` JSON** — same
+device — and among them:
+
+```
+DecayTime    3310.78     (milliseconds)
+MixDirect    0.746
+RoomType     1           (Live uses an index; the .abl writes "SuperEco")
+```
+
+So **`DecayTime` is real, it is the decay control, and it is in milliseconds.**
+The first grid never swept it because the benchmark preset omits the key and
+`--return=` only wrote keys that already existed. That, plus 2 s renders, was
+the whole story of the flat 2.0-2.2 s readings.
+
+### Three tooling fixes this needed
+
+1. **`--sample=`**, to point a pad at an impulse. ⚠ It must emit the
+   **core-library pack** scheme, not user-library: EnginePerfTool has no user
+   library configured and dies on
+   `ASSERT 'config.userLibraryPath().has_value()'`
+   (`shared/abl-uri-scheme/src/AbletonScheme.cpp:163`). The file goes in
+   `/data/CoreLibrary/Samples/`, which needs **root** to write.
+2. **`--return=` now creates a missing key** instead of skipping it.
+3. 20 s renders (882000 frames) rather than 2 s.
+
+### ⚠ MixDirect = 0 MUTES the return
+
+Setting it to 0 to get "100% wet" produced nine byte-identical renders with no
+tail at all — only the dry click. On a return this parameter is not a dry/wet
+control; leaving it alone is correct, and with a true impulse the dry is a
+single sample anyway, so the tail is already isolated with no subtraction.
+
+### The decay law
+
+20 s renders, single-sample impulse, RT60 by least-squares fit of the
+log-envelope over the -5 to -35 dB span (the -30 dB-doubled estimate distorts on
+a non-exponential tail):
+
+| DecayTime | RoomSize 20 | 60 | 99 | mean | RT60/DecayTime |
+|---:|---:|---:|---:|---:|---:|
+| 400 ms | 0.337 | 0.413 | 0.443 | **0.398 s** | 0.99 |
+| 1200 ms | 1.047 | 1.081 | 1.104 | **1.077 s** | 0.90 |
+| 3600 ms | 2.290 | 2.428 | 2.640 | **2.453 s** | 0.68 |
+
+**RT60 tracks DecayTime and compresses as it grows** — near 1:1 at 400 ms,
+falling to 0.68 by 3600 ms. `RoomSize` is a real but secondary effect, adding
+10-15% to the tail across its range.
+
+That is the first genuine law out of this campaign. Next: more DecayTime points
+to pin the compression curve, then the per-octave damping laws (the shelves and
+the band filter), then the early-reflection pattern.

@@ -113,6 +113,23 @@ for (const chain of rack.chains) {
     if ('pan' in opt) chain.mixer.pan = Number(opt.pan);
     if ('volume' in opt) chain.mixer.volume = Number(opt.volume);
     if ('choke' in opt) chain.drumZoneSettings.chokeGroup = Number(opt.choke) || null;
+    // --sample=<user-library path> — repoint the pad at one file. For impulse
+    // response work the pad must play a CLICK, and nothing else in the fixture
+    // chain could set the sample.
+    if ('sample' in opt) {
+        const cellDev = (chain.devices || []).find((d) => d.kind === 'drumCell');
+        if (cellDev) {
+            cellDev.deviceData = cellDev.deviceData || {};
+            // ⚠ The CORE-LIBRARY pack scheme, not user-library. EnginePerfTool
+            // has no user library configured and dies on the URI:
+            //   ASSERT 'config.userLibraryPath().has_value()' failed
+            //   (shared/abl-uri-scheme/src/AbletonScheme.cpp:163)
+            // The stock benchmark's own samples all use this scheme, which is
+            // why they resolve. Put the file in /data/CoreLibrary/Samples/.
+            cellDev.deviceData.sampleUri =
+                'ableton:/packs/abl-core-library/Samples/' + String(opt.sample);
+        }
+    }
     // --send=<dB> drives the RETURN path, which the stock fixture deliberately
     // silences at -70. Rendering the same fixture at -70 and at 0 dB and
     // subtracting isolates the return exactly, because the engine is
@@ -137,7 +154,12 @@ if ('return' in opt) {
         const [k, v] = pair.split('=');
         for (const ch of rc) {
             for (const d of (ch.devices || [])) {
-                if (!d.parameters || !(k in d.parameters)) continue;
+                if (!d.parameters) continue;
+                // ⚠ Write the key even when the preset omits it. DecayTime is a
+                // real field of this device — Live exposes it on the very same
+                // Reverb, at 3310 ms in one of Josh's sets — but the benchmark's
+                // instance does not carry it, and skipping absent keys meant the
+                // first grid never swept the actual decay control at all.
                 d.parameters[k] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v;
                 n++;
             }
