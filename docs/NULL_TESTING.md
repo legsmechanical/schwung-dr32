@@ -206,6 +206,50 @@ prints them; `verb_suite.sh` leaves them in `build/fx/<case>.log`.
 `verb_score.mjs` is equally strict on its own side and exits non-zero rather
 than drop a key it cannot represent.
 
+## ⚠⚠ A SAMPLE-LEVEL NULL DOES NOT TRANSFER TO A REVERB
+
+This is the important thing on this page, and it took building the null path to
+find out.
+
+Measured against the device, the tails' waveform correlation is **-0.008** and
+the null depth is **-0.34 dB**. That is not a verdict on the model. Two reverbs
+whose delay lines differ by a single sample produce completely decorrelated
+tails while sounding identical, so the null is **all-or-nothing**: it reads 0 dB
+for everything except a bit-exact port, and cannot tell "very close" from
+"wildly wrong".
+
+DR32's usual rule — *the acceptance test is a null test, not an ear test* —
+holds for the pad effects, which are deterministic transforms of one sample. It
+does not hold for a reverb, and pretending otherwise would have meant reporting
+0 dB forever and calling it a failure.
+
+**The acceptance metric for the reverb is therefore ENERGY DECAY CURVE
+deviation per band**, which is graded, insensitive to phase, and is what a
+reverb is actually judged on. `tools/verb_null.py` reports both — the null for
+the record and to catch a gross error, the EDC deviation as the number that
+means something.
+
+⚠ One trap worth keeping: the reference is a WHOLE-TRACK render, so the dry
+click goes to master alongside the return. That single dry sample carries about
+50x the energy of the entire tail, and our render has no dry path — so with it
+included, the least-squares fit correctly concludes "subtract almost nothing"
+and the null reads 0 dB however good the model is. `--skip=` (default 512
+frames) steps past it.
+
+Current state, driven from each preset's own 33 parameters:
+
+| band | EDC deviation (rms) |
+|---|---:|
+| 5-16 kHz | **0.29 dB** |
+| 1.5-5 kHz | **0.36 dB** |
+| 671 Hz - 1.5 kHz | **0.95 dB** |
+| 200-671 Hz | 2.21 dB |
+| 20-200 Hz | **5.28 dB** |
+
+The model is very close above ~700 Hz and drifts at the bottom. The low end is
+the remaining work, and it is consistent with the low-band RT60 running slightly
+long (1.85 s device against 2.11 s ours).
+
 ## ⚠ The null column is not yet a measure of the model
 
 Four parts of the device are still unmodelled, and one of them is the **final
