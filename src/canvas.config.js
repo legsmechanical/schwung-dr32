@@ -411,8 +411,12 @@ function drawWave(ctx, g, cells, s) {
 
 /* ---------- send FX ------------------------------------------------------ */
 
-const kSendTypes   = ["Off", "Plate", "Spaces", "Delay", "Gated", "Digital", "Hall", "NonLin"];
-const kSendSq      = ["OFF", "PLT", "SPC", "DLY", "GAT", "DIG", "HAL", "NLN"];
+/* ⚠ THIS list is what the on-device picker shows, and it is NOT derived from
+ * module.json — the two have to be edited together. Adding a type to the DSP
+ * enum and to module.json alone gets you a type the shadow UI knows about and
+ * the device's own send page will never offer. */
+const kSendTypes   = ["Off", "Plate", "Spaces", "Delay", "Gated", "Digital", "Hall", "NonLin", "Native"];
+const kSendSq      = ["OFF", "PLT", "SPC", "DLY", "GAT", "DIG", "HAL", "NLN", "NAT"];
 /* Tempo-synced or free-running, for the Delay. Both times are stored either
  * way, so flipping this recalls what you last had in that mode rather than
  * reinterpreting one number in the wrong unit — which is what the native
@@ -469,6 +473,19 @@ function sendBank(n) {
     ret
   ];
 
+  /* Native is the ported Move reverb, and it is the only type with a Diffusion
+   * control — the device's own AllPassGain. Everything else on the page means
+   * what it does on the other reverbs, so this is the verb page plus one cell. */
+  const native = [
+    type,
+    plin(p + "size", "Size", "Size", 0, 1),
+    plin(p + "damp", "Damp", "Damping", 0, 1),
+    plin(p + "decay", "Dcy", "Decay", 0, 1),
+    plin(p + "diffusion", "Dif", "Diffusion", 0, 1),
+    plin(p + "predelay", "Pre", "Pre-delay", 0, 1),
+    ret
+  ];
+
   /* Sync vs free is a THIRD page, not a variant of the delay page: the two time
    * controls change unit with it, and one cell cannot honestly be both a count
    * of sixteenths and a millisecond value.
@@ -514,6 +531,7 @@ function sendBank(n) {
     const t = ctx.getParam(p + "type");
     if (t === "Gated") return gate;
     if (t === "NonLin") return nonlin;
+    if (t === "Native") return native;
     if (t !== "Delay") return verb;
     return ctx.getParam(p + "sync") === "Free" ? dlyFree : dlySync;
   };
