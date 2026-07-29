@@ -175,7 +175,7 @@
                             "Volume": -15
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -187,7 +187,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -251,7 +251,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -263,7 +263,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -327,7 +327,7 @@
                             "Volume": -13.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -339,7 +339,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -403,7 +403,7 @@
                             "Volume": -16.999998092651367
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -415,7 +415,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -479,7 +479,7 @@
                             "Volume": -21.999998092651367
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -491,7 +491,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -555,7 +555,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -567,7 +567,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -631,7 +631,7 @@
                             "Volume": -16.999998092651367
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -643,7 +643,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -707,7 +707,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -719,7 +719,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -783,7 +783,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -795,7 +795,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -859,7 +859,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -871,7 +871,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -935,7 +935,7 @@
                             "Volume": -17.999998092651367
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -947,7 +947,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -1011,7 +1011,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -1023,7 +1023,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -1087,7 +1087,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -1099,7 +1099,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -1163,7 +1163,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -1175,7 +1175,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -1239,7 +1239,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -1251,7 +1251,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -1315,7 +1315,7 @@
                             "Volume": -15.999999046325684
                           },
                           "deviceData": {
-                            "sampleUri": "ableton:/user-library/Samples/dr32-click.wav"
+                            "sampleUri": "ableton:/packs/abl-core-library/Samples/dr32-click.wav"
                           }
                         }
                       ],
@@ -1327,7 +1327,7 @@
                         "sends": [
                           {
                             "isEnabled": true,
-                            "amount": -70
+                            "amount": 0
                           }
                         ]
                       },
@@ -1356,7 +1356,7 @@
                             "BandWidth": 4.572916507720947,
                             "ChorusOn": false,
                             "CutOn": false,
-                            "DecayTime": 6643.7255859375,
+                            "DecayTime": 2000,
                             "DiffuseDelay": 0.2142857164144516,
                             "EarlyReflectModDepth": 3.2428934574127197,
                             "EarlyReflectModFreq": 0.1093868613243103,
@@ -1367,8 +1367,8 @@
                             "MixDiffuse": 1.995300054550171,
                             "MixDirect": 1,
                             "MixReflect": 1.7925310134887695,
-                            "PreDelay": 7.023662090301514,
-                            "RoomSize": 67.26939392089844,
+                            "PreDelay": 0,
+                            "RoomSize": 0.3,
                             "RoomType": "SuperEco",
                             "ShelfHiFreq": 1469.94873046875,
                             "ShelfHiGain": 0.8833333253860474,

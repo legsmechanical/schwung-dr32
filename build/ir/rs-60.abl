@@ -1356,7 +1356,7 @@
                             "BandWidth": 4.572916507720947,
                             "ChorusOn": false,
                             "CutOn": false,
-                            "DecayTime": 1200,
+                            "DecayTime": 2000,
                             "DiffuseDelay": 0.2142857164144516,
                             "EarlyReflectModDepth": 3.2428934574127197,
                             "EarlyReflectModFreq": 0.1093868613243103,

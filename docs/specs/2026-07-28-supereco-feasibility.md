@@ -245,3 +245,92 @@ falling to 0.68 by 3600 ms. `RoomSize` is a real but secondary effect, adding
 That is the first genuine law out of this campaign. Next: more DecayTime points
 to pin the compression curve, then the per-octave damping laws (the shelves and
 the band filter), then the early-reflection pattern.
+
+---
+
+## THIRD GRID — 2026-07-29: real ranges, and the decay SATURATES
+
+Two leads from Josh: use the decompile, and compare the stock reverb presets.
+Both paid off, and neither needed device time.
+
+### The decompile: seven user-facing controls
+
+`analysis/audio-effects/REVERB_RECON.md` — the device-definitions builder
+registers exactly **seven** parameters, and the other 26 are reachable only
+through the preset/`.abl` route:
+
+```
+DecayTime · RoomSize · BandFreq · PreDelay · StereoSeparation · ShelfLoGain · MixDirect
+```
+
+It also records that the converter constructors were **not** decompiled, so
+ranges, defaults and units are exactly the gap measurement fills. Good division
+of labour: static analysis gives the parameter set and which ones are user
+facing, capture gives the laws.
+
+### The stock presets: real ranges, and one model
+
+19 stock Reverb presets in `/data/CoreLibrary/Audio Effects/Reverb/`. Comparing
+them tells us which of the 33 parameters matter and over what span:
+
+| parameter | distinct values | range across presets |
+|---|---:|---|
+| DecayTime | 19 | **600 .. 19522 ms** |
+| BandFreq | 18 | 265 .. 7124 Hz |
+| PreDelay | 18 | 0.95 .. 103.6 ms |
+| RoomSize | 16 | **0.27 .. 500** |
+| AllPassSize | 16 | 0.178 .. 1.000 |
+| MixDirect | 12 | 0.197 .. 0.500 |
+| ShelfLoGain | 9 | 0.200 .. 1.000 |
+
+**Fixed in every one of the 19:** `RoomType=SuperEco`, `SizeSmoothing=Fast`,
+`BandLowOn`, `ShelfLowOn`, `ShelfHighOn` all true, `FreezeOn` false. So the
+filter sections are always on and a model needs them.
+
+⭑ **One model, everywhere.** `RoomType` is `"SuperEco"` in **all 466** reverb
+instances across the entire CoreLibrary — every drum kit, every track preset,
+every audio-effect preset. The binary does carry a `ReverbQualityMode` enum
+(with `LinearConverter` and `StringConverter` specialisations, i.e. real
+alternatives exist internally, and the recon note reads it as a quality
+dimension multiplying the kernel bank), but Move never instantiates anything
+else. **Modelling SuperEco is modelling the whole device** — no mode switching,
+no per-preset variation.
+
+### The laws, over the real ranges
+
+30 s renders, single-sample impulse, RT60 by log-envelope regression.
+
+**DecayTime — and it SATURATES:**
+
+| DecayTime | RT60 | RT60/DecayTime |
+|---:|---:|---:|
+| 600 ms | 0.60 s | **1.01** |
+| 1500 ms | 1.33 s | 0.89 |
+| 4000 ms | 2.62 s | 0.66 |
+| 10000 ms | 4.50 s | 0.45 |
+| 19500 ms | 5.44 s | **0.28** |
+
+One-to-one at the short end, compressing hard as it grows, and heading for an
+asymptote around 5-6 s. **Move's reverb cannot produce an arbitrarily long
+tail**, whatever the preset asks for — which is presumably exactly what
+"SuperEco" buys. The earlier 3-point sweep to 3600 ms only saw the top of this
+curve and read it as a mild droop.
+
+**RoomSize** — mild on decay, real on onset:
+
+| RoomSize | 0.3 | 10 | 60 | 200 | 500 |
+|---|---:|---:|---:|---:|---:|
+| RT60 | 1.35 | 1.42 | 1.61 | 1.90 | 1.88 s |
+| onset | 0 | 0 | 0 | 0 | 20 ms |
+
+**MixDirect** — a pure output level on the wet signal:
+
+| MixDirect | 0 | 0.2 | 0.35 | 0.5 | 1.0 |
+|---|---:|---:|---:|---:|---:|
+| RT60 | — | 1.61 | 1.61 | 1.61 | 1.61 s |
+| peak | **silent** | 0.9 | 1.5 | 2.0 | 2.8 (x10^-6) |
+
+RT60 is identical at every non-zero setting, so it is level only — and 0 mutes
+the device outright, which is what made the "100% wet insert" attempt render
+nine silent files. Despite the name it scales the reverb's own output rather
+than a dry path.
