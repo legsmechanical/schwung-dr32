@@ -219,39 +219,66 @@ raw through `dr32_fxbus_native_set_raw()`, and the suite reports RT60 rather
 than a null number (see `docs/NULL_TESTING.md` for why the null column would
 currently measure the placeholder mixer rather than the model).
 
+**Updated after the four decompile gaps landed** (`REVERB_NULL_TEST_GAPS_RECON.md`).
 Driven purely from each preset's own numbers, with nothing fitted:
 
-| case | device | ours | | case | device | ours |
-|---|---:|---:|---|---|---:|---:|
-| DecayTime 600 | 0.60 s | 0.38 s | | RoomSize 0.3 | 1.35 s | 1.43 s |
-| DecayTime 1500 | 1.33 s | 0.91 s | | RoomSize 10 | 1.42 s | 1.46 s |
-| DecayTime 4000 | 2.62 s | 2.37 s | | RoomSize 60 | 1.61 s | 1.22 s |
-| DecayTime 10000 | 4.50 s | 4.23 s | | RoomSize 200 | 1.90 s | 1.16 s |
-| DecayTime 19500 | 5.44 s | 5.70 s | | RoomSize 500 | 1.88 s | 1.01 s |
+| case | device | before | now | | case | device | before | now |
+|---|---:|---:|---:|---|---|---:|---:|---:|
+| DecayTime 600 | 0.60 s | 0.38 | **0.58** | | RoomSize 0.3 | 1.35 s | 1.43 | **1.30** |
+| DecayTime 1500 | 1.33 s | 0.91 | **1.18** | | RoomSize 10 | 1.42 s | 1.46 | **1.42** |
+| DecayTime 4000 | 2.62 s | 2.37 | **2.54** | | RoomSize 60 | 1.61 s | 1.22 | **1.52** |
+| DecayTime 10000 | 4.50 s | 4.23 | **4.35** | | RoomSize 200 | 1.90 s | 1.16 | **1.68** |
+| DecayTime 19500 | 5.44 s | 5.70 | 6.21 | | RoomSize 500 | 1.88 s | 1.01 | **1.77** |
 
-Two specific gaps fall out of this, and both are more useful than a single
-aggregate number would have been:
+**Both earlier findings are resolved by the real mixer.** The short-decay
+shortfall is gone (DecayTime 600: 0.38 -> 0.58 s against 0.60), and the RoomSize
+trend now runs the right way (1.30 -> 1.77 s rising, against the device's
+1.35 -> 1.88). `RoomSize` and `DecayTime` both enter the mixer's own gain
+builder — `r = RoomSize/500`, `t = DecayTime/60000` — which is precisely why a
+placeholder that ignored them inverted the trend.
 
-**1. Long decays track, short ones run short.** Above DecayTime 4 s the model is
-within 6-10%, including the saturation. Below it, the model is 30-37% short. The
-short end is exactly where the early and diffuse fields are the largest share of
-the output — i.e. where the placeholder mixer has the most influence. The
-per-band columns agree: the low-band ceiling, which is a pure late-loop
-property, matches closely (1.27 -> 1.25, 1.69 -> 1.72, 1.85 -> 1.98).
+`MixDirect = 0` now correctly produces **silence**, matching the device's muted
+return: the control is equal-power (`dry = cos(MD*pi/2)`, `wet = sin(...)`), so
+zero means zero wet.
 
-**2. The RoomSize trend is INVERTED.** The device's RT60 *rises* with RoomSize
-(1.35 -> 1.90 s); ours *falls* (1.43 -> 1.01 s). The late network alone is
-RoomSize-independent, as the decay law requires — measured flat at 1.17-1.24 s
-across 0.3..500 before the front end went in — so the dependence is entering
-through the front end, whose pre-diffusion gains and derived diffuser cutoff
-both scale with RoomSize. Every one of those laws is transcribed, so this is
-most likely the missing mixer rebalancing early/diffuse/late rather than a
-transcription error; that is a hypothesis, not a finding, and the mixer builder
-will settle it.
+### ⚠ OPEN: the low band decays ~2.6x too slowly
 
-The `MixDirect` sweep is a clean control: the device's broadband RT60 is
-constant at 1.61 s across it and so is ours, which is the documented behaviour
-(`MixDirect` is dry/wet and does not touch the tail).
+| DecayTime 19500 | device | ours |
+|---|---:|---:|
+| below 671 Hz | 1.85 s | **4.78 s** |
+| mid | 5.90 s | 7.27 s |
+| above 1470 Hz | 4.70 s | 6.62 s |
+
+The shelf tables are **not** the problem — printing the built coefficients, every
+lane predicts a combined low-band RT60 of exactly **2.10 s**, which is the
+device's 1.85 s to within the usual margin. The engine simply does not decay at
+the rate its own coefficients specify.
+
+Ruled out, each by direct measurement:
+
+- *the analysis filter* — device and port are both stable across 6/10/16
+  cascaded sections (1.85/1.83/1.78 vs 4.79/5.03/5.06);
+- *the mixer's early bus* — `MixReflect = 0` changes it by 0.04 s;
+- *late modulation* — `SizeModDepth = 0` changes nothing;
+- *the input Band filter* — widening `BandWidth` to 9 changes nothing, and
+  bypassing it entirely changes 5.18 -> 5.10 s;
+- *shelf placement in the outer loop* — after the room delay and on the residual
+  measure IDENTICALLY, as a linear loop requires. Inside the all-pass chain is
+  much worse, because that destroys the all-pass property.
+
+**The suspect is the all-pass recirculation.** A Schroeder all-pass recirculates
+internally at `AllPassGain x decayGain`, and the stock `AllPassGain` is **0.92**:
+0.9219 x 0.9728 = 0.897 per 70 ms all-pass delay is a **~4.5 s mode that no
+shelf in the outer loop can touch**, which is very close to what we measure. The
+device has the same nominal structure and does not have that mode, so something
+about how the decay gain and the all-passes combine is still wrong here.
+
+The most likely culprit is a documented inference of mine rather than anything
+read off the binary: the port applies **one decay gain per delay element**
+(`gainA`, `gainB`, `gainC`), which reproduces the round-trip law exactly and was
+justified on those grounds, but distributes the loss differently inside the
+all-pass than a single per-path gain would. Settling it needs the kernel's
+actual gain placement, not more measurement from this side.
 
 ## Still open
 

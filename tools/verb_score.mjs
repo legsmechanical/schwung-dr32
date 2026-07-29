@@ -30,7 +30,10 @@ const want = Number(opt.index ?? 0);
 const ENUMS = {
     RoomType:       ['SuperEco', 'Eco', 'Mid', 'High'],
     HighFilterType: ['Shelf', 'Lowpass'],
-    SizeSmoothing:  ['Fast', 'Slow'],
+    // ⚠ ORDER MATTERS AND None IS FIRST. Getting this wrong maps the stock
+    // 'Fast' to 0, which is None — and 0 selects the eight-sample delay
+    // quantiser in the mixer, a mode the preset never asked for.
+    SizeSmoothing:  ['None', 'Slow', 'Fast'],
 };
 
 function findReverbs(node, out = []) {

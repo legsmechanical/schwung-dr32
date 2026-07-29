@@ -81,15 +81,21 @@ inline float stockExp(float x) {
     return poly * scale;
 }
 
+/** The stock rational tangent, evaluated at an angle the caller has already
+ *  halved and clamped. The Band builder needs this form; the shelf builder uses
+ *  the wrapper below. */
+inline float stockTanHalfRaw(float x) {
+    const float x2 = x * x;
+    return x * (0.999999463558197f - 0.09652461111545563f * x2) /
+           (1.0f + (-0.4298672676086426f + 0.009981878101825714f * x2) * x2);
+}
+
 /** tan(w/2) as the device computes it, `w` being an angular frequency.
  *  The clamp is the device's, and it is what keeps the shelves stable as the
  *  corner frequency approaches Nyquist. */
 inline float stockTanHalf(float w) {
     const float kClamp = 3.1337387561798096f;
-    const float x  = 0.5f * (w < kClamp ? w : kClamp);
-    const float x2 = x * x;
-    return x * (0.999999463558197f - 0.09652461111545563f * x2) /
-           (1.0f + (-0.4298672676086426f + 0.009981878101825714f * x2) * x2);
+    return stockTanHalfRaw(0.5f * (w < kClamp ? w : kClamp));
 }
 
 // ── The recovered constants ─────────────────────────────────────────────────
@@ -180,6 +186,22 @@ struct Line {
         int r = w - 1 - n; while (r < 0) r += CAP;
         return buf[r];
     }
+    /** Read at a fractional delay, then write. Linear interpolation, which is
+     *  what the kernel does: one rounded subtraction and one fused
+     *  multiply-add. */
+    inline float stepFrac(float x, float delay) {
+        if (delay < 1.0f) delay = 1.0f;
+        if (delay > (float)(CAP - 2)) delay = (float)(CAP - 2);
+        const int   i = (int)delay;
+        const float f = delay - (float)i;
+        int r0 = w - i;     if (r0 < 0) r0 += CAP;
+        int r1 = w - i - 1; if (r1 < 0) r1 += CAP;
+        const float a = buf[r0], b = buf[r1];
+        const float y = a + f * (b - a);
+        push(x);
+        return y;
+    }
+
     /** Read the delayed sample, then write the new one. */
     inline float step(float x) {
         const float y = peek();
@@ -290,6 +312,35 @@ struct SuperEco {
     // length law. So family C really is a second in-loop all-pass. The flag is
     // kept only so the alternative stays one edit away.
     bool  familyCInLoop = true;
+    /** WHERE the per-lane shelf pair sits. 0 = after the room delay (default),
+     *  1 = on the residual, 2 = inside the all-pass chain.
+     *
+     *  ⚠ 0 and 1 measure IDENTICALLY — the outer loop is linear, so moving a
+     *  filter around inside it changes nothing. 2 is much worse, because
+     *  putting a filter inside an all-pass destroys the all-pass property.
+     *
+     *  Kept because it was the first thing suspected for the OPEN low-band
+     *  discrepancy below, and ruling it out is worth keeping ruled out. */
+    int   shelfPos = 0;
+
+    // ⚠ ChorusOn gates LATE modulation; SpinOn gates the EARLY taps. They are
+    // not interchangeable and the names invite exactly that mistake.
+    bool  chorusOn     = true;
+    bool  cutOn        = false;   // only meaningful while frozen
+    float sizeModFreq  = 2.3728f;   // Hz
+    float sizeModDepth = 0.1558f;   // percent; x0.01 becomes the depth
+    // Input Band filter. Every stock preset has at least one side on.
+    float bandFreq  = 402.48f;      // Hz
+    float bandWidth = 4.5729f;      // OCTAVES: before clamping, fhi/flo = 2^W
+    bool  bandLowOn = true, bandHighOn = true;
+    // Final mixer.
+    float mixDirect  = 1.0f;        // equal-power dry/wet, 0..1
+    float stereoSeparation = 107.62f;   // 0..120, a WIDTH control
+    // A send bus is 100% wet, so the direct path is off unless the null test
+    // turns it on — the device's own render contains it.
+    bool  includeDirect = false;
+    // 0 = None (eight-sample quantised delays), 1 = Slow, 2 = Fast.
+    int   sizeSmoothing = 2;
 
     // Front end. Defaults are the values the factory drum kits' return chains
     // actually carry, so an untouched instance is a stock drum room.
@@ -303,6 +354,26 @@ struct SuperEco {
 
     // Front-end state. ONE early ring with four moving tap pairs (that is the
     // device's arrangement — not four rings), then four pre-diffusion delays.
+    // Input Band filter: an upper-cutoff low-pass and a lower-cutoff high-pass
+    // in series. ⚠ The ON switches do not bypass — a disabled BandHighOn leaves
+    // the high-pass at 50 Hz and a disabled BandLowOn leaves the low-pass at
+    // 18 kHz, which is a filter, not an absence of one.
+    Svf bandLp, bandHp;
+
+    // The final mixer's two stereo rings. Fixed capacities, not sized from
+    // StereoSeparation.
+    static const int kMaxMixLate  = 4096;   // floor(fs * 0.0735)
+    static const int kMaxMixEarly = 1024;   // floor(fs * 0.01155)
+    float mixLateBuf[2 * kMaxMixLate], mixEarlyBuf[2 * kMaxMixEarly];
+    int   mixLateW = 0, mixEarlyW = 0, mixLateCap = 1, mixEarlyCap = 1;
+    int   mixLatePos = 0, mixEarlyPos = 0;
+    float cDry = 1.0f, cRefl = 0.0f, cLate = 0.0f, cSwap = 0.0f, cSame = 1.0f;
+
+    // Late Size modulation. ⭑ SuperEco modulates ONE lane — lane 0. Lanes 1-3
+    // are fixed integer reads. (Eco/Mid/High add a second oscillator on lane 5;
+    // every other lane stays fixed at every quality.)
+    float lateOscX = 1.0f, lateOscY = 0.0f, lateOscK = 0.0f, lateDepth = 0.0f;
+
     Line<kMaxEarly> early;
     Line<kMaxPd>    pd[kLanes];
     float oscX[kLanes], oscY[kLanes], oscK[kLanes];
@@ -339,6 +410,14 @@ struct SuperEco {
             oscY[j] = kEarlyOscY[j];
         }
         ctrlPhase = 0;
+        bandLp.reset(); bandHp.reset();
+        std::memset(mixLateBuf, 0, sizeof(mixLateBuf));
+        std::memset(mixEarlyBuf, 0, sizeof(mixEarlyBuf));
+        mixLateW = mixEarlyW = 0;
+        // Late oscillator 0's seed is (1,0) — a different pair from the early
+        // oscillators, and it advances BEFORE the first read, so the first
+        // sample sees y = k rather than the seed's 0.
+        lateOscX = 1.0f; lateOscY = 0.0f;
     }
 
     void setSampleRate(float sr) {
@@ -409,6 +488,100 @@ struct SuperEco {
         }
 
         buildFrontEnd(r, decayRate);
+        buildBand();
+        buildLateMod();
+        buildMixer();
+    }
+
+    /** The input Band filter (FUN_01b7a1a8). One BandFreq and a WIDTH IN
+     *  OCTAVES: before clamping, fhi/flo is exactly 2^BandWidth. */
+    void buildBand() {
+        const float R = stockExp(bandWidth * 0.5f);
+        const float flo = bandHighOn ? std::fmax(bandFreq / R, 50.0f) : 50.0f;
+        const float tmp = bandFreq * R;
+        const float fhi = (bandLowOn && tmp <= 18000.0f) ? tmp : 18000.0f;
+
+        const float kClamp = 3.1337387561798096f;
+        float phiLo = 2.0f * 3.14159265358979f * flo / fs;
+        float phiHi = 2.0f * 3.14159265358979f * fhi / fs;
+        if (phiLo > kClamp) phiLo = kClamp;
+        if (phiHi > kClamp) phiHi = kClamp;
+        // The stock code evaluates stockTan twice and adds, rather than
+        // doubling. Transcribed as written — it is a port.
+        const float Ghp = stockTanHalfRaw(phiLo * 0.5f) + stockTanHalfRaw(phiLo * 0.5f);
+        const float Glp = stockTanHalfRaw(phiHi * 0.5f) + stockTanHalfRaw(phiHi * 0.5f);
+
+        bandLp.set(Glp, 1.4144271612167358f, 1.0f, 0.0f, 0.0f);
+        bandHp.set(Ghp, 2.857142925262451f,  0.0f, 0.0f, 1.0f);
+    }
+
+    /** Late Size modulation. Advances EVERY sample, unlike the early taps. */
+    void buildLateMod() {
+        const float q = (sizeModFreq * 1.0149999856948853f) / fs;
+        lateOscK = 2.0f * std::sin(q * 3.14159265358979f);
+        lateDepth = sizeModDepth * 0.01f;
+    }
+
+    /** The final mixer (FUN_01b7ebc0's builder).
+     *
+     *  ⚠ Two things here look like transcription errors and are not.
+     *
+     *  1. `MixReflect` scales the EARLY+diffuse composite ring, and
+     *     `MixDiffuse` scales the LATE ring. That is literally which
+     *     coefficient lands on which tap.
+     *  2. The builder divides a value already in SECONDS by 60000 — the public
+     *     milliseconds were divided by 1000 on the way in. Stock behaviour, not
+     *     a unit slip on this side. */
+    void buildMixer() {
+        const float rr = roomSize / 500.0f;
+        const float tt = decayTime / 60000.0f;
+
+        const float dscale = ((rr + 1.2f) * 0.387f) / (tt + 2.25f);
+        const float rscale = ((rr + 2.5f) * 0.192f) / (tt + 2.5f);
+
+        // MixDirect is an EQUAL-POWER dry/wet, not a linear blend.
+        const float angle = mixDirect * 1.5707963705062866f;
+        cDry = std::cos(angle);
+        const float wetSin = std::sin(angle);
+
+        cRefl = wetSin * (((rscale * mixReflect) / 1.995300054550171f) * 0.44999998807907104f);
+        cLate = wetSin * ((mixDiffuse * dscale) / 1.995300054550171f);
+
+        // Width. 45 degrees at S=0 is a mono wet sum; 90 degrees at S=120
+        // passes the pair with no cross-channel term.
+        const float degrees = stereoSeparation * 0.375f + 45.0f;
+        const float radians = (degrees * 3.14159265358979f) / 180.0f;
+        cSwap = std::cos(radians);
+        cSame = std::sin(radians);
+
+        // Ring positions. DiffuseDelay drives the LATE ring; StereoSeparation
+        // drives the early/diffuse one.
+        float rawA = (diffuseDelay * 0.03500000014901161f) * fs;
+        float rawB = ((((120.0f - stereoSeparation) / 120.0f) * 0.9900000095367432f)
+                      * 0.0006300000241026282f) * fs;
+        if (sizeSmoothing == 0) { rawA = quantise8(rawA); rawB = quantise8(rawB); }
+
+        mixLateCap  = (int)(fs * 0.07349999994039536f);
+        mixEarlyCap = (int)(fs * 0.011549999937415123f);
+        if (mixLateCap  > kMaxMixLate)  mixLateCap  = kMaxMixLate;
+        if (mixEarlyCap > kMaxMixEarly) mixEarlyCap = kMaxMixEarly;
+        if (mixLateCap  < 2) mixLateCap  = 2;
+        if (mixEarlyCap < 2) mixEarlyCap = 2;
+
+        // The reader truncates and does ONE direct ring load. It does not
+        // interpolate — do not "improve" this.
+        mixLatePos  = clampPos((int)rawA, mixLateCap);
+        mixEarlyPos = clampPos((int)rawB, mixEarlyCap);
+    }
+
+    static int clampPos(int p, int cap) {
+        if (p < 0) p = 0;
+        if (p > cap - 1) p = cap - 1;
+        return p;
+    }
+    /** The shared eight-sample quantiser, used when SizeSmoothing is None. */
+    static float quantise8(float raw) {
+        return (float)std::floor((raw + 7.1f) * 0.125f) * 8.0f + 0.01f;
     }
 
     /** The early-reflection and pre-diffusion tables.
@@ -483,7 +656,9 @@ struct SuperEco {
         if (preS > 0.005f) depth = depth / (1.0f + 500.0f * (preS - 0.005f));
         const float spin = spinOn ? 1.0f : 0.0f;
         for (int j = 0; j < kLanes; j++) {
-            const float x1 = oscK[j] * oscY[j] - oscX[j];
+            // ⚠ SIGN: x - k*y, not k*y - x. The first transcription had it
+            // backwards; the AArch64 is an `fmsub`, which negates the PRODUCT.
+            const float x1 = oscX[j] - oscK[j] * oscY[j];
             const float y1 = oscY[j] + oscK[j] * x1;
             oscX[j] = x1; oscY[j] = y1;
             const float p = (float)earlyBase[j] * (1.0f + depth * spin * y1);
@@ -502,15 +677,17 @@ struct SuperEco {
      *  independent channels. Feeding it a stereo pair and expecting the sides
      *  to stay separate is a misreading of the topology. */
     inline void tick(float inL, float inR, float &outL, float &outR) {
-        // (The input Band filter belongs here; see the header for why it is
-        // absent rather than approximated.)
-        const float x = inL + inR;
+        // ⚠ Freeze+Cut together zero the input. Freeze alone keeps accepting
+        // it, and Cut outside Freeze does nothing at all.
+        float x = (freeze && cutOn) ? 0.0f : (inL + inR);
+        x = bandHp.run(bandLp.run(x));
 
         // ── Early reflections ──────────────────────────────────────────────
-        // The control-rate updater runs once every eight samples, which is the
-        // device's rate and therefore also the modulation's real resolution.
-        if (ctrlPhase == 0) updateTaps();
-        if (++ctrlPhase >= 8) ctrlPhase = 0;
+        // ⚠ The updater is called before every tap read but ADVANCES only when
+        // the incremented counter reaches eight. So samples 1..7 after a reset
+        // use the seed positions and sample 8 is the first to move — an
+        // off-by-one that matters for a sample-exact null and for nothing else.
+        if (++ctrlPhase >= 8) { ctrlPhase = 0; updateTaps(); }
 
         early.push(x);
         float E[kLanes];
@@ -550,17 +727,26 @@ struct SuperEco {
             W[j] = acc;
         }
 
+        // ⭑ Lane 0's room delay is read at a MODULATED fractional position;
+        // lanes 1-3 are plain integer reads. The oscillator advances before the
+        // read, every sample — not at the early block's eight-sample rate.
+        const float lx = lateOscX - lateOscK * lateOscY;
+        const float ly = lateOscY + lateOscK * lx;
+        lateOscX = lx; lateOscY = ly;
+        const float mod = 1.0f + (chorusOn ? 1.0f : 0.0f) * (ly * lateDepth);
+
         const float g = allPassGain;
         for (int j = 0; j < kLanes; j++) {
             // Room delay, then the shelf pair: one loss per round trip.
-            float y = gainA[j] * lineA[j].step(W[j]);
-            y = shelfLo[j].run(y);
-            y = shelfHi[j].run(y);
+            float y = gainA[j] * (j == 0 ? lineA[0].stepFrac(W[0], (float)lineA[0].len * mod)
+                                         : lineA[j].step(W[j]));
+            if (shelfPos == 0) { y = shelfLo[j].run(y); y = shelfHi[j].run(y); }
 
             // Feedback all-pass, exactly as the kernel spells it: the decay
             // gain multiplies the all-pass READ, and the residual is both the
             // audible output and the feedback term.
-            const float qb = gainB[j] * lineB[j].peek();
+            float qb = gainB[j] * lineB[j].peek();
+            if (shelfPos == 2) { qb = shelfLo[j].run(qb); qb = shelfHi[j].run(qb); }
             const float wb = y + g * qb;
             lineB[j].push(wb);
             float rj = qb - g * wb;
@@ -571,23 +757,44 @@ struct SuperEco {
                 lineC[j].push(wc);
                 rj = qc - g * wc;
             }
+            if (shelfPos == 1) { rj = shelfLo[j].run(rj); rj = shelfHi[j].run(rj); }
             resid[j] = rj;
         }
 
         // The parity fold — early, diffuse and late all fold the same way. Two
         // terms a side at four lanes; six/eight/ten lanes give three/four/five,
         // which is what proves the lane count.
-        //
-        // ⚠ The weighted sum is THE structural guess in this file. The device's
-        // final mixer (FUN_01b7ebc0) takes the three stereo pairs plus the dry
-        // and applies MixDirect/MixReflect/MixDiffuse; its exact form is not
-        // recovered, so they are applied here as plain gains. MixDirect is
-        // absent on purpose — a send bus is 100% wet, and there is no dry path
-        // through here to scale.
-        outL = (resid[0] + resid[2])
-             + mixReflect * (E[0] + E[2]) + mixDiffuse * (D[0] + D[2]);
-        outR = (resid[1] + resid[3])
-             + mixReflect * (E[1] + E[3]) + mixDiffuse * (D[1] + D[3]);
+        const float earlyL = E[0] + E[2],   earlyR = E[1] + E[3];
+        const float diffL  = D[0] + D[2],   diffR  = D[1] + D[3];
+        const float lateL  = resid[0] + resid[2], lateR = resid[1] + resid[3];
+
+        // ── The final mixer ────────────────────────────────────────────────
+        // Two stereo rings, a fixed 1.39 crossfeed, and a rotation matrix. ⚠ It
+        // really is MixReflect on the early+diffuse composite and MixDiffuse on
+        // the LATE bus — see buildMixer().
+        mixLateBuf[2 * mixLateW]     = lateL;
+        mixLateBuf[2 * mixLateW + 1] = lateR;
+        int ra = mixLateW - mixLatePos; if (ra < 0) ra += mixLateCap;
+        const float tapAL = mixLateBuf[2 * ra], tapAR = mixLateBuf[2 * ra + 1];
+        if (++mixLateW >= mixLateCap) mixLateW = 0;
+
+        const float compL = earlyL + 1.3899999856948853f * diffL;
+        const float compR = earlyR + 1.3899999856948853f * diffR;
+        mixEarlyBuf[2 * mixEarlyW]     = compL;
+        mixEarlyBuf[2 * mixEarlyW + 1] = compR;
+        int rb = mixEarlyW - mixEarlyPos; if (rb < 0) rb += mixEarlyCap;
+        const float tapBL = mixEarlyBuf[2 * rb], tapBR = mixEarlyBuf[2 * rb + 1];
+        if (++mixEarlyW >= mixEarlyCap) mixEarlyW = 0;
+
+        const float wetL = cRefl * tapBL + cLate * tapAL;
+        const float wetR = cRefl * tapBR + cLate * tapAR;
+
+        // swapLR is a TRUE channel swap (AArch64 `rev64`), and the third mixer
+        // coefficient is a hard zero, so the direct term is unscaled here.
+        const float dirL = includeDirect ? cDry * inL : 0.0f;
+        const float dirR = includeDirect ? cDry * inR : 0.0f;
+        outL = dirL + cSame * wetL + cSwap * wetR;
+        outR = dirR + cSame * wetR + cSwap * wetL;
     }
 
     /** ShelfLoGain/ShelfHiGain reach 0 in principle and log(0) is not a number.
@@ -641,16 +848,23 @@ struct SuperEco {
         if (eq("ShelfLoGain"))   { shelfLoGain = v; return kApplied; }
         if (eq("ShelfHiGain"))   { shelfHiGain = v; return kApplied; }
 
-        // Real parameters this port does not model yet. Each one is a known
-        // hole with a named owner — see the header and
-        // `_worklogs/NEXT-PROMPT-reverb-nulltest.md`.
-        if (eq("BandFreq") || eq("BandWidth") || eq("BandLowOn") ||
-            eq("BandHighOn") ||                       // input Band filter builder
-            eq("SizeModFreq") || eq("SizeModDepth") ||
-            eq("SizeSmoothing") ||                    // late-lane modulation
-            eq("StereoSeparation") || eq("MixDirect") ||  // final mixer builder
-            eq("ChorusOn") || eq("FlatOn") || eq("CutOn") ||
-            eq("HighFilterType") || eq("Enabled"))
+        if (eq("BandFreq"))      { bandFreq = v; return kApplied; }
+        if (eq("BandWidth"))     { bandWidth = v; return kApplied; }   // OCTAVES
+        if (eq("BandLowOn"))     { bandLowOn = (v >= 0.5f); return kApplied; }
+        if (eq("BandHighOn"))    { bandHighOn = (v >= 0.5f); return kApplied; }
+        if (eq("SizeModFreq"))   { sizeModFreq = v; return kApplied; }
+        if (eq("SizeModDepth"))  { sizeModDepth = v; return kApplied; }
+        if (eq("SizeSmoothing")) { sizeSmoothing = (int)(v + 0.5f); return kApplied; }
+        if (eq("ChorusOn"))      { chorusOn = (v >= 0.5f); return kApplied; }
+        if (eq("CutOn"))         { cutOn = (v >= 0.5f); return kApplied; }
+        if (eq("StereoSeparation")) { stereoSeparation = v; return kApplied; }
+        if (eq("MixDirect"))     { mixDirect = v; return kApplied; }
+
+        // Real parameters this port still does not model. Each is a known hole.
+        //   HighFilterType  the Lowpass shelf variant (recovered, not wired up)
+        //   FlatOn          affects FROZEN mode only, forcing both shelves off
+        //   Enabled         the device's own bypass; DR32 owns bypass itself
+        if (eq("HighFilterType") || eq("FlatOn") || eq("Enabled"))
             return kNotModelled;
 
         // ⚠ RoomType is not a room shape, it is the quality tier, and this port
