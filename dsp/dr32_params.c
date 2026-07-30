@@ -460,7 +460,18 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         return 1;
     }
     if (!strcmp(key, "ui_live_press")) {
-        /* The canvas saw a physical pad press. It cannot say WHICH pad — a grid
+        /* ⚠⚠ TWO writers, not one. The canvas is the obvious one; the other is
+         * dAVEBOx sound mode, which hosts DR32 in a chain slot and where our
+         * canvas NEVER RUNS (it harvests bank_editor._test.BANKS and restores
+         * the globals), so it writes this itself from its own pad handler. It
+         * finds the key via `child_press_param` on the pads level of
+         * module.json — see CLAUDE.md. Changing the meaning of this key, or of
+         * the live_armed/last_hit_pad correlation below, breaks that SILENTLY:
+         * the vouch still arrives, nothing matches it, focus just stops
+         * following and nothing is logged. Measured: the window below is
+         * 20 blocks x 2.902ms = 58.0ms, and a late vouch is simply lost.
+         *
+         * The canvas saw a physical pad press. It cannot say WHICH pad — a grid
          * position is not a pad — so the note decides, and this only vouches
          * that a finger was involved.
          *

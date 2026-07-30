@@ -16,6 +16,33 @@ Key facts for this module specifically:
   That is why the DSP's flat key scheme looks the way it does; don't "tidy" it.
 - Every key the UI displays must be readable back via `dr32_read_param`.
 
+## ⚠⚠ An external consumer depends on `ui_live_press` / `ui_current_pad`
+
+**dAVEBOx "sound mode"** (`schwung-davebox`, branch `sound-mode`) hosts DR32 in a chain slot and
+edits it in place. Under it **DR32's canvas never runs** — davebox loads `canvas.js` only to
+harvest `bank_editor._test.BANKS`, then restores the globals — so `CONFIG.onMidi` is not there to
+vouch that a pad press was live. **davebox vouches in its place**, writing `ui_live_press` itself
+from its own pad handler.
+
+It finds those keys from two fields on the `pads` level of `module.json`:
+
+```json
+"child_select_param": "ui_current_pad",   /* read: which pad is focused */
+"child_press_param":  "ui_live_press"     /* write "1": a finger did that */
+```
+
+**They are not cruft — do not remove them.** They are a generic host-side convention (any tool
+hosting any module can use them), not a DR32 invention.
+
+**Before changing how focus works** — the `live_armed` / `last_hit_pad` correlation in
+`dr32_kit.c` + `dr32_params.c`, or the meaning of either key — say so, because davebox breaks
+silently: it writes the vouch, nothing correlates it, and focus simply stops following. There is
+no error. Timing already measured from the davebox side: the correlation window is
+`DR32_LIVE_MATCH_BLOCKS`=20 × 2.902 ms/block (`FRAMES_PER_BLOCK`=128 @44.1 kHz) = **58.0 ms**, and
+a vouch arriving later than that is silently lost.
+
+Detail + a pad-lag lead: `_worklogs/schwung-dr32.md` and `_worklogs/schwung-davebox.md` (round 30).
+
 ## ⚠ The engine is a reconstruction, not a design
 
 The DSP laws come from `../move original reconstruct/analysis/native-instruments/`

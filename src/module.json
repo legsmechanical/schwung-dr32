@@ -126,6 +126,8 @@
           "child_prefix": "pad",
           "child_count": 32,
           "child_label": "Pad",
+          "child_select_param": "ui_current_pad",
+          "child_press_param": "ui_live_press",
           "params": [
             {
               "level": "sample_src",
