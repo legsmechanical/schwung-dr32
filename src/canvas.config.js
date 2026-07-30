@@ -309,10 +309,39 @@ const PAD_BANK_SPECS = [
  * CONFIG.onMidi). The host forwards raw hardware pad notes 68-99 to an open
  * canvas — this file's earlier claim that "the canvas never receives a pad note
  * at all" was true only of the host before that landed. */
+/* Resolve a pending "a pad was hit" into "did focus actually MOVE?".
+ *
+ * ⭑ CONFIG.onMidi used to flush the whole cache on every press. It cannot know
+ * whether focus will move — the DSP decides that when the note arrives, via
+ * note_to_pad — so it flushed preemptively, and every press paid for a full
+ * uncached re-read of the page. MEASURED on device (2026-07-30, on-screen HUD
+ * so the log's I/O could not skew it): **9 uncached reads per press**, press
+ * frame **43-59 ms** against an idle frame of **17-33 ms**. That cost was paid
+ * even when focus did NOT move — a repeated hit on the pad you are already
+ * editing, or a hit on a pad the kit does not map, bought nothing at all.
+ *
+ * So: don't flush on the press, note that one happened, and settle it here with
+ * ONE uncached read of `ui_current_pad`. Unchanged -> keep the whole warm cache
+ * (~3 ms instead of ~31 ms). Changed -> flush, which is work the frame genuinely
+ * owes. Runs from padOf, which the header and every dynamic cell call before any
+ * value is read, so the flush still lands ahead of the reads it protects. */
+function padFocusSettle(ctx) {
+  if (!ctx._padCheck) return;
+  ctx._padCheck = 0;
+  const cache = ctx._pcache;
+  if (!cache) return;                       /* kit cache not installed yet */
+  const prev = cache["ui_current_pad"];
+  delete cache["ui_current_pad"];           /* force ONE real read */
+  const now = ctx.getParam("ui_current_pad");
+  if (String(now) !== String(prev)) ctx._pcache = {};
+}
+
 function padOf(ctx) {
-  /* Read through the cache; CONFIG.onMidi flushes it when focus moves. */
+  /* Read through the cache; a press only invalidates it if focus MOVED. */
+  padFocusSettle(ctx);
   const p = parseInt(ctx.getParam("ui_current_pad"), 10) | 0;
-  return p < 0 ? 0 : (p >= PAD_COUNT ? PAD_COUNT - 1 : p);
+  const c = p < 0 ? 0 : (p >= PAD_COUNT ? PAD_COUNT - 1 : p);
+  return c;
 }
 
 /* Focus is owned entirely by CONFIG.onMidi, which writes ui_current_pad the
@@ -642,9 +671,12 @@ const CONFIG = {
     if (!d || d.length < 3) return false;
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
     if (d[1] < PAD_NOTE_LO || d[1] > PAD_NOTE_HI) return false;
-    /* Flush BEFORE arming: every cell addresses "pad_*", which is about to mean
-     * a different pad, and the cache must not outlive the change. */
-    if (ctx._pcache) ctx._pcache = {};
+    /* Do NOT flush here. Whether focus moves is the DSP's decision (note ->
+     * note_to_pad), made after this returns, so flushing now threw away a warm
+     * cache on every press including the ones that changed nothing — measured
+     * at 9 uncached reads / ~31 ms a press. Record that a press happened and
+     * let padFocusSettle() resolve it with one read. */
+    ctx._padCheck = 1;
     ctx.setParam("ui_live_press", "1");
     return true;
   },
