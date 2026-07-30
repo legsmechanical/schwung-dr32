@@ -459,6 +459,42 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);
         return 1;
     }
+    /* A host that EMITS the note can name the pad outright — no correlation.
+     *
+     * `ui_live_press` exists because the canvas cannot say WHICH pad: a grid
+     * position is not a pad, so it vouches "a finger did that" and the note
+     * decides. That costs a race — the vouch and the note arrive on different
+     * paths and must meet inside DR32_LIVE_MATCH_BLOCKS. Measured on device
+     * 2026-07-30: 2 of 16 presses missed it (~12.5%), at a hit->change latency
+     * of 55 ms against a 58 ms window.
+     *
+     * A SEQUENCER host has the one thing the canvas lacks: it emits the note,
+     * so it knows exactly which. dAVEBOx writes that note here and focus moves
+     * deterministically — no window, no arming, nothing to lose a race with.
+     * (davebox declares this via `child_press_note_param` on the pads level.)
+     *
+     * Still the NOTE, never a pad index: note -> pad stays ours. A host that
+     * derived the pad itself could only ever address 1-16, with the rows
+     * mis-strided — the exact bug the alias design was built to prevent.
+     *
+     * Sequenced notes never reach here: davebox calls it only from its live
+     * pad-press paths, which its playback path does not go through. */
+    if (!strcmp(key, "ui_live_note")) {
+        if (!kit->ui_auto_select_pad) return 1;
+        int n = atoi(val);
+        if (n < 0 || n > 127) return 1;
+        int pad = kit->note_to_pad[n];
+        if (pad < 0 || pad >= DR32_PADS) return 1;   /* unmapped: not our note */
+        kit->ui_current_pad = pad;
+        /* Consume any vouch state. Under co-run BOTH mechanisms fire — the
+         * canvas still observes the press and vouches — and last writer wins.
+         * Clearing here stops a vouch that resolves later from crediting a
+         * SEQUENCED note over the authoritative answer we just set. */
+        kit->live_armed = 0;
+        kit->last_hit_pad = -1;
+        return 1;
+    }
+
     if (!strcmp(key, "ui_live_press")) {
         /* ⚠⚠ TWO writers, not one. The canvas is the obvious one; the other is
          * dAVEBOx sound mode, which hosts DR32 in a chain slot and where our

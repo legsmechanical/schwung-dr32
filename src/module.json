@@ -128,6 +128,7 @@
           "child_label": "Pad",
           "child_select_param": "ui_current_pad",
           "child_press_param": "ui_live_press",
+          "child_press_note_param": "ui_live_note",
           "params": [
             {
               "level": "sample_src",
