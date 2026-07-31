@@ -553,11 +553,19 @@ const CONFIG = {
      * user's real Move set.
      *
      * ⭑ Copies WHAT THE EDITOR SHOWS — every `pad_` cell across the three pad
-     * banks. Not the pad's full DSP state: the kit cannot enumerate that, and
-     * copying an unstated subset silently would be worse than copying a stated
-     * one. Sample, start/length, transpose, detune, choke, the amp envelope,
-     * volume/pan, punch, filter and both sends all ride along; anything the
-     * pages do not expose does not. */
+     * banks: start/length, transpose, detune, choke, the amp envelope,
+     * volume/pan, punch, filter and both sends. Not the pad's full DSP state:
+     * the kit cannot enumerate that, and copying an unstated subset silently
+     * would be worse than copying a stated one.
+     *
+     * ⚠⚠ `pad_browse` is EXCLUDED by the kit (it is a `list` cell) and
+     * `pad_sample` copied in its place. Browse is a POSITION WITHIN THIS PAD'S
+     * OWN FOLDER, so writing pad A's index onto pad B loads item N of B's
+     * folder — measured on device as "a sample that was on neither pad and is
+     * not in the kit at all". A path is the only self-contained way to say
+     * which sample. It leads the write order, because loading a sample resets
+     * everything derived from it. */
+    copyKeys: ["pad_sample"],
     gestures: true
   },
 

@@ -1894,11 +1894,19 @@ const CONFIG = {
      * user's real Move set.
      *
      * ⭑ Copies WHAT THE EDITOR SHOWS — every `pad_` cell across the three pad
-     * banks. Not the pad's full DSP state: the kit cannot enumerate that, and
-     * copying an unstated subset silently would be worse than copying a stated
-     * one. Sample, start/length, transpose, detune, choke, the amp envelope,
-     * volume/pan, punch, filter and both sends all ride along; anything the
-     * pages do not expose does not. */
+     * banks: start/length, transpose, detune, choke, the amp envelope,
+     * volume/pan, punch, filter and both sends. Not the pad's full DSP state:
+     * the kit cannot enumerate that, and copying an unstated subset silently
+     * would be worse than copying a stated one.
+     *
+     * ⚠⚠ `pad_browse` is EXCLUDED by the kit (it is a `list` cell) and
+     * `pad_sample` copied in its place. Browse is a POSITION WITHIN THIS PAD'S
+     * OWN FOLDER, so writing pad A's index onto pad B loads item N of B's
+     * folder — measured on device as "a sample that was on neither pad and is
+     * not in the kit at all". A path is the only self-contained way to say
+     * which sample. It leads the write order, because loading a sample resets
+     * everything derived from it. */
+    copyKeys: ["pad_sample"],
     gestures: true
   },
 
@@ -3552,29 +3560,66 @@ function padGesturesOn() {
 /* Every key the UI exposes for ONE element: the cells across all banks that
  * address the alias. Deliberately "what the editor shows" rather than every key
  * the DSP might hold — the kit cannot enumerate the latter, and quietly copying
- * half of something is worse than copying a stated subset. */
+ * half of something is worse than copying a stated subset.
+ *
+ * ⚠⚠ A `list` cell is EXCLUDED, and this is the bug that made the feature
+ * dangerous rather than merely wrong. Its value is an INDEX INTO A LIST that
+ * belongs to the element's own context — DR32's `pad_browse` is a position
+ * within *that pad's* sample folder. Copying the number onto another element
+ * means "load item N of the DESTINATION's folder", which loads a file that was
+ * on neither pad and, as measured on device, is not in the kit at all.
+ *
+ * ⭑ The rule generalises: copy VALUES, never POINTERS. A `dir` cell is fine —
+ * its value is a full path, which means the same thing anywhere. An index only
+ * means something alongside the state that was current when it was taken.
+ *
+ * ⭑ The real payload for a list cell is a separate self-contained key (DR32:
+ * `pad_sample`, a path), which the module names in `padSelect.copyKeys`. It is
+ * written FIRST, because loading a sample resets everything derived from it. */
 function padElementKeys() {
   const p = padSpec();
   if (!p) return [];
   const pre = p.prefix + "_";
   const seen = {}, out = [];
+  const add = (k) => {
+    if (typeof k !== "string" || k.lastIndexOf(pre, 0) !== 0) return;
+    if (seen[k]) return;
+    seen[k] = 1; out.push(k);
+  };
+  /* Module-declared payload keys lead, so a sample load lands before the params
+   * that describe it. */
+  const extra = p.copyKeys;
+  if (Array.isArray(extra)) for (let i = 0; i < extra.length; i++) add(extra[i]);
   for (let b = 0; b < BANKS.length; b++) {
     const cells = BANKS[b].knobs || [];
     for (let i = 0; i < cells.length; i++) {
-      const k = cells[i] && cells[i].key;
-      if (typeof k !== "string" || k.lastIndexOf(pre, 0) !== 0) continue;
-      if (seen[k]) continue;
-      seen[k] = 1; out.push(k);
+      const c = cells[i];
+      if (!c || c.list) continue;          /* pointer, not a value — see above */
+      add(c.key);
     }
     const dyn = BANKS[b].dynamicKeys || [];
-    for (let i = 0; i < dyn.length; i++) {
-      const k = dyn[i];
-      if (typeof k !== "string" || k.lastIndexOf(pre, 0) !== 0) continue;
-      if (seen[k]) continue;
-      seen[k] = 1; out.push(k);
-    }
+    for (let i = 0; i < dyn.length; i++) add(dyn[i]);
   }
   return out;
+}
+
+/* Take the CURRENTLY FOCUSED element as the copy source. Reads through the
+ * alias, which points at whatever is on screen. Called on Copy's press edge, so
+ * the family is dropped first: the cache may still hold the previous element's
+ * values if focus moved without the kit doing the invalidating (a host shell
+ * moves it under us). */
+function padGestureCapture(ctx, s) {
+  if (!padGesturesOn()) return;
+  const keys = padElementKeys();
+  if (!keys.length) return;
+  const p = padSpec();
+  if (typeof ctx.invalidate === "function") ctx.invalidate(p.prefix + "_*");
+  else if (ctx._pcache) ctx._pcache = {};
+  const clip = {};
+  for (let i = 0; i < keys.length; i++) clip[keys[i]] = ctx.getParam(keys[i]);
+  s.padClip = clip;
+  s.padGestureMsg = "COPIED";
+  s.padPrev = padIndex(ctx);        /* the source is not also a paste target */
 }
 
 /* Resolve "focus moved" into a gesture step. Called from draw(), i.e. after the
@@ -3607,19 +3652,9 @@ function padGestureOnFocusChange(ctx, s) {
     return;
   }
 
-  if (!s.copyHeld) return;
+  if (!s.copyHeld || !s.padClip) return;
 
-  if (!s.padClip) {
-    /* First tap under a held Copy names the SOURCE. Read through the alias,
-     * which now points at the pad just tapped. */
-    const clip = {};
-    for (let i = 0; i < keys.length; i++) clip[keys[i]] = ctx.getParam(keys[i]);
-    s.padClip = clip;
-    s.padGestureMsg = "COPIED";
-    return;
-  }
-
-  /* Every later tap pastes. Snapshot the destination first, so Undo puts back
+  /* Every focus change pastes. Snapshot the destination first, so Undo puts back
    * the pad that was overwritten rather than the one that was copied. */
   if (typeof ctx.snapshot === "function") ctx.snapshot(keys, "paste");
   for (let i = 0; i < keys.length; i++) {
@@ -3760,7 +3795,19 @@ const bank_editor = {
       const held = val > 0;
       if (cc === 60) {
         s.copyHeld = held;
-        if (!held) { s.padClip = null; s.padGestureMsg = ""; }
+        /* ⭑⭑ The SOURCE is taken the moment Copy goes down — the element on
+         * screen right now — not on a first tap.
+         *
+         * The watcher only sees focus CHANGE, so "tap the source, then tap the
+         * destination" cannot work when the source is the element you are
+         * already looking at: that tap moves nothing, so the gesture silently
+         * did nothing and the NEXT tap became the source. Measured on device as
+         * "the copy gesture shows nothing, the paste gesture says COPIED" — an
+         * off-by-one that also put the clipboard one pad behind what the user
+         * meant. Taking the source on the press edge removes the ambiguity:
+         * what you can see is what you copied. */
+        if (held) padGestureCapture(ctx, s);
+        else { s.padClip = null; s.padGestureMsg = ""; }
       } else {
         s.delHeld = held;
         if (!held) s.padGestureMsg = "";
@@ -4079,7 +4126,7 @@ const bank_editor = {
     dirList, dirState, dirScroll, dirClick, drawDirOverlay, dirParentOf, dirMatchesFilter,
     dirFaceText, dirGotoForTest: dirGoto,
     padSpec, padSelectMidi, padFocusSettle, padIndex, padNoteRange,
-    padGesturesOn, padElementKeys, padGestureTick
+    padGesturesOn, padElementKeys, padGestureTick, padGestureCapture
   }, CONFIG.testExports || {})
 };
 
