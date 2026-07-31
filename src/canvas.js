@@ -1970,6 +1970,15 @@ const CONFIG = {
   name: "DR32",
   banks: DR32_BANKS,
 
+  /* Host input this canvas takes away from Move. Both are DECLARED in
+   * src/module.json (`claims_edit_ccs`, and `canvas_takes_click` on the canvas
+   * params) — build.mjs refuses to emit if either goes missing, because the
+   * failure is silent on device AND Copy/Delete would still act on the user's
+   * real Move set. Device-verified 2026-07-31.
+   *   editCcs  — Undo/Copy/Delete for pad copy/paste/clear gestures.
+   *   jogClick — the canvas's "enter"; without it the click just closes it. */
+  claims: { editCcs: true, jogClick: true },
+
   /* Each pad page is its own picker row: that is where the editing happens,
    * so it should be one SHIFT+jog away, not buried behind bank stepping. */
   sections: [
