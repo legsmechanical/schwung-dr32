@@ -526,11 +526,7 @@ function kitTestBank() {
     start: "/data/UserData/UserLibrary",
     filter: [".wav", ".aif", ".ablpreset", ".json"]
   };
-  c.text = (ctx) => {
-    const v = String(ctx.getParam(`kit_test_path`) || "");
-    const i = v.lastIndexOf("/");
-    return v ? (i >= 0 ? v.slice(i + 1) : v).slice(0, 4) : "--";
-  };
+  /* No cell.text — the kit's own "3/17" face for a dir cell is what we want. */
   return { label: "KitTest", icon: "pulse", knobs: [c] };   /* knobs, NOT cells — see cellsFor() */
 }
 

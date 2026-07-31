@@ -1870,11 +1870,7 @@ function kitTestBank() {
     start: "/data/UserData/UserLibrary",
     filter: [".wav", ".aif", ".ablpreset", ".json"]
   };
-  c.text = (ctx) => {
-    const v = String(ctx.getParam(`kit_test_path`) || "");
-    const i = v.lastIndexOf("/");
-    return v ? (i >= 0 ? v.slice(i + 1) : v).slice(0, 4) : "--";
-  };
+  /* No cell.text — the kit's own "3/17" face for a dir cell is what we want. */
   return { label: "KitTest", icon: "pulse", knobs: [c] };   /* knobs, NOT cells — see cellsFor() */
 }
 
@@ -2272,6 +2268,7 @@ function formatCell(ctx, cell) {
   // cell.text(ctx) overrides the display STRING only (bars keep kind logic):
   // raw engine strings ("1 Init" preset names), rescaled readouts ("1.00").
   if (cell.text) f.text = String(cell.text(ctx));
+  else if (cell.dir) f.text = dirFaceText(ctx, cell);
   return f;
 }
 
@@ -3349,7 +3346,10 @@ function dirList(cwd, spec) {
   const dirs = [], files = [];
   for (let i = 0; i < names.length; i++) {
     const n = names[i];
-    if (n === "." || n === "..") continue;
+    /* Skip "." / ".." and every DOTFILE. The browser synthesises its own ".."
+     * (bounded by `root`), and someone picking a sample has no use for
+     * .DS_Store, .Trash-1000 or a dot-prefixed cache directory. */
+    if (n.charAt(0) === ".") continue;
     const full = dirJoin(cwd, n);
     let isDir = false;
     try {
@@ -3367,12 +3367,16 @@ function dirList(cwd, spec) {
 
 /* Per-cell browse state, rebuilt when the directory changes. */
 function dirState(ctx, cell, s) {
-  let st = s._dir;
+  /* Kept on ctx, not on the per-frame state: the cell's FACE text is produced by
+   * formatCell(), which has no `s`. ctx lives for the whole canvas session, which
+   * is exactly the browser's lifetime. */
+  const store = ctx._dirBrowse || (ctx._dirBrowse = {});
+  let st = store[cell.key];
   if (!st || st.key !== cell.key) {
     const cur = String(ctx.getParam(cell.key) || "");
     const start = cur && cur.indexOf("/") >= 0 ? dirParentOf(cur)
                                                : (cell.dir.start || cell.dir.root || "/");
-    st = s._dir = { key: cell.key, cwd: start, cursor: 0, entries: null };
+    st = store[cell.key] = { key: cell.key, cwd: start, cursor: 0, entries: null };
     /* Land on the current file so opening the browser shows where you are. */
     st.entries = dirList(st.cwd, cell.dir);
     for (let i = 0; i < st.entries.length; i++) {
@@ -3413,6 +3417,22 @@ function dirClick(ctx, cell, s) {
   if (!e || !e.dir) return false;
   dirGoto(ctx, cell, s, e.path);
   return true;
+}
+
+/* "3/17" — where the cursor sits, and how many entries this directory holds.
+ * ".." is excluded from both: it is a way out, not an item in the folder. A
+ * module may still supply its own cell.text to override this. */
+function dirFaceText(ctx, cell) {
+  const st = ctx._dirBrowse && ctx._dirBrowse[cell.key];
+  if (!st || !st.entries) return "--";
+  let total = 0, pos = 0;
+  for (let i = 0; i < st.entries.length; i++) {
+    if (st.entries[i].name === "..") continue;
+    total++;
+    if (i === st.cursor) pos = total;
+  }
+  if (!total) return "0/0";
+  return pos + "/" + total;
 }
 
 function drawDirOverlay(ctx, cells, s) {
@@ -3867,7 +3887,8 @@ const bank_editor = {
     widgetFor, enumSquareLines, pf3Width, CONFIG, envSpec, filtGainAt,
     cellsFor, headerFor, headerTextFor, nameFor, paramNames, fitHdr, hdrWidth, getRaw, subPageCount, stepCells, stepVals, shapeSample, hudCard,
     wavePeaks, drawWave, drawListOverlay, normOf,
-    dirList, dirState, dirScroll, dirClick, drawDirOverlay, dirParentOf, dirMatchesFilter
+    dirList, dirState, dirScroll, dirClick, drawDirOverlay, dirParentOf, dirMatchesFilter,
+    dirFaceText, dirGotoForTest: dirGoto
   }, CONFIG.testExports || {})
 };
 
