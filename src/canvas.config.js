@@ -138,17 +138,20 @@ function penum(key, label, name, options, sq) {
 /* Folder-browse cell: position of this pad's sample among its neighbours.
  *
  * A plain count, deliberately NOT an enum. An enum would hand the list to the
- * kit's own picker overlay, which is sized and fonted for short enum labels —
- * filenames need a wider box and a proportional font. DR32 draws its own
- * instead (drawBrowsePicker below), which is also where a module-specific UI
- * belongs: the kit is a reference to build FROM, not a place to push one
- * module's needs into. Backport it later if it earns its way in.
+ * kit's ENUM picker, which is sized and fonted for short enum labels —
+ * filenames need a wider box and a proportional font. DR32 used to draw its own
+ * for exactly that reason; it has since been backported into the kit as the
+ * separate `cell.list` picker class, so this now just declares the source.
  *
  * The face shows "3/17" — at ~16 px a name truncates to about three glyphs, so
  * position is the useful readout here and the picker carries the names. */
 function browseCell() {
   const c = count(`pad_browse`, "Smpl", 0, 511);
   c.name = "Browse Folder";
+  /* The kit draws the wide proportional picker now; DR32 declares the source.
+   * No `options` here on purpose — that is what keeps the kit's ENUM picker
+   * (sized for short labels) from firing for a list of filenames. */
+  c.list = { names: `pad_browse_names`, count: `pad_browse_count` };
   c.text = (ctx) => {
     const n = parseInt(ctx.getParam(`pad_browse_count`), 10) || 0;
     const i = parseInt(ctx.getParam(`pad_browse`), 10);
@@ -157,76 +160,6 @@ function browseCell() {
     return (i + 1) + "/" + n;
   };
   return c;
-}
-
-/* ---------- browse picker overlay --------------------------------------- */
-
-/* DR32's own scrolling list of the folder's samples, drawn while the Browse
- * knob is the one being touched. CONFIG.overlays runs after the kit's own
- * overlay pass, and the browse cell carries no `options`, so the kit's enum
- * picker never fires and there is nothing to draw over.
- *
- * Uses mvPrint — the movy font, the SAME one under every widget label, so the
- * picker reads as part of the page rather than a different control.
- *
- * The win is that it is PROPORTIONAL where the kit's 5x5 mcufont is a fixed
- * 6 px advance. Measured against this box's 112 px of text width:
- * "MD1_Kick_Sub_02 (alt)" is 96 px in movy and fits whole, but 125 px in
- * mcufont and gets cut. Typical text runs ~22 chars a row against ~18.
- *
- * ⚠ Both fonts are effectively CAPS ONLY — movy's lowercase codepoints map to
- * the same shapes (verified: "Kick" and "KICK" render identical pixels and
- * width), which is unavoidable at a 5 px cap height. Names therefore display
- * uppercase whichever font is used; do not pick one expecting mixed case. */
-const PICK_X = 2, PICK_Y = 10, PICK_W = 124, PICK_H = 54;
-const PICK_ROW_H = 7;                    /* 5px movy glyph + 2px leading */
-
-function drawBrowsePicker(ctx, cells, s) {
-  const k = s.lastKnob;
-  const cell = k >= 0 ? cells[k] : null;
-  if (!cell || cell.key !== `pad_browse`) return;
-
-  const raw = String(ctx.getParam(`pad_browse_names`) || "");
-  if (!raw) return;                                  /* empty pad: nothing to show */
-  const names = raw.split("\n");
-  const n = names.length;
-  const sel = parseInt(ctx.getParam(`pad_browse`), 10);
-  if (!n || !Number.isFinite(sel) || sel < 0) return;
-
-  const X = PICK_X, Y = PICK_Y, W = PICK_W, H = PICK_H;
-  ctx.fillRect(X, Y, W, H, 0);
-  ctx.drawRect(X, Y, W, H, 1);
-
-  const visible = Math.max(1, Math.min(n, Math.floor((H - 4) / PICK_ROW_H)));
-  const hasScroll = n > visible;
-  /* Keep the selection mid-list so there is context either side, clamping at
-   * the ends rather than letting the window run past them. */
-  const start = Math.max(0, Math.min(sel - Math.floor(visible / 2), n - visible));
-  const listTop = Y + Math.floor((H - visible * PICK_ROW_H) / 2);
-  const rowX = X + 2, rowW = W - 4 - (hasScroll ? 4 : 0);
-  const availW = rowW - 4;
-
-  for (let i = 0; i < visible; i++) {
-    const idx = start + i;
-    if (idx >= n) break;
-    const y = listTop + i * PICK_ROW_H;
-    let label = String(names[idx]);
-    while (label.length > 1 && mvWidth(label) > availW) label = label.slice(0, -1);
-    if (idx === sel) {
-      ctx.fillRect(rowX, y, rowW, PICK_ROW_H, 1);
-      mvPrint(ctx, rowX + 2, y + 1, label, 0);
-    } else {
-      mvPrint(ctx, rowX + 2, y + 1, label, 1);
-    }
-  }
-
-  if (hasScroll) {
-    const trackH = visible * PICK_ROW_H;
-    const thumbH = Math.max(3, Math.round(trackH * visible / n));
-    const thumbY = listTop + Math.round((trackH - thumbH) * start / Math.max(1, n - visible));
-    ctx.fillRect(X + W - 2, listTop, 1, trackH, 1);
-    ctx.fillRect(X + W - 3, thumbY, 2, thumbH, 1);
-  }
 }
 
 /* ---------- per-pad cells ---------------------------------------------- */
@@ -248,7 +181,13 @@ const PAD_BANK_SPECS = [
   /* Start and Length lead so the waveform can own cells 0-1: the picture IS
    * the display for those two, and their labels still show the numbers. */
   { label: "Sample", icon: "pulse",
-    cellViz: { cell: 0, span: 2, draw: drawWave },
+    /* The kit draws the waveform now (canvaskit `cellViz.wave`); DR32 only
+     * declares WHERE the data is. `stamp` must name everything that means
+     * "different audio" — the focused pad and its sample — or the CSV is
+     * re-parsed every frame. */
+    cellViz: { cell: 0, span: 2,
+               wave: { peaks: "pad_waveform", start: 0, length: 1,
+                       stamp: ["ui_current_pad", "pad_sample"] } },
     cells: [
     (p) => plin(`pad_start`, "Strt", "Start", 0, 1, (x) => Math.round(x * 100) + "%"),
     (p) => plin(`pad_length`, "Len", "Length", 0, 1, (x) => Math.round(x * 100) + "%"),
@@ -333,7 +272,13 @@ function padFocusSettle(ctx) {
   const prev = cache["ui_current_pad"];
   delete cache["ui_current_pad"];           /* force ONE real read */
   const now = ctx.getParam("ui_current_pad");
-  if (String(now) !== String(prev)) ctx._pcache = {};
+  if (String(now) !== String(prev)) {
+    /* Only the pad_* family is stale — every pad cell now addresses a different
+     * pad. `master`, `send*_` and `kit` are still perfectly good, and flushing
+     * them cost a full uncached re-read on the frame after every press. */
+    if (typeof ctx.invalidate === "function") ctx.invalidate("pad_*");
+    else ctx._pcache = {};      /* older kit: no scoped invalidation */
+  }
 }
 
 function padOf(ctx) {
@@ -387,56 +332,6 @@ const padBanks = PAD_BANK_SPECS.map((spec) => ({
   knobs: spec.cells.map((f) => f(0)),
   header: padHeader()
 }));
-
-/* ---------- sample waveform -------------------------------------------- */
-
-/* The DSP publishes 128 min/max pairs for the focused pad as a flat CSV
- * (dr32_params.c, key "pad_waveform"); the canvas cannot read audio itself.
- * Re-fetched only when the pad or its sample changes — a device getParam is
- * ~2.6 ms blocking, so this must not run every frame. */
-function wavePeaks(ctx, s) {
-  const stamp = padOf(ctx) + "|" + (ctx.getParam("pad_sample") || "");
-  if (s.waveStamp === stamp) return s.wavePeaks;
-  s.waveStamp = stamp;
-  const raw = ctx.getParam("pad_waveform") || "";
-  if (!raw) { s.wavePeaks = null; return null; }
-  const parts = raw.split(",");
-  const out = [];
-  for (let i = 0; i + 1 < parts.length; i += 2)
-    out.push([(parseInt(parts[i], 10) || 0) / 100, (parseInt(parts[i + 1], 10) || 0) / 100]);
-  s.wavePeaks = out.length ? out : null;
-  return s.wavePeaks;
-}
-
-/* Waveform with the play region. Outside the region the wave is drawn as a
- * baseline only, so what will actually sound is obvious at a glance. */
-function drawWave(ctx, g, cells, s) {
-  const peaks = wavePeaks(ctx, s);
-  const midY = g.y + (g.h >> 1);
-  if (!peaks) {                       // empty pad: just the axis
-    for (let x = g.x; x < g.x + g.w; x += 2) ctx.setPixel(x, midY, 1);
-    return;
-  }
-  const st = normOf(ctx, cells[0]);                  // Start 0..1
-  const ln = normOf(ctx, cells[1]);                  // Length 0..1
-  const x0 = g.x + Math.round(st * g.w);
-  const x1 = Math.min(g.x + g.w, x0 + Math.max(1, Math.round(ln * g.w)));
-  const half = (g.h >> 1) - 1;
-  for (let i = 0; i < g.w; i++) {
-    const x = g.x + i;
-    const p = peaks[Math.min(peaks.length - 1, Math.floor(i / g.w * peaks.length))];
-    const inRegion = x >= x0 && x < x1;
-    if (!inRegion) { ctx.setPixel(x, midY, 1); continue; }
-    let top = midY - Math.round(p[1] * half);
-    let bot = midY - Math.round(p[0] * half);
-    if (bot < top) { const t = top; top = bot; bot = t; }
-    if (top === bot) bot = top + 1;
-    ctx.fillRect(x, top, 1, bot - top, 1);
-  }
-  /* Region edges: solid verticals, so a zero-length region is still visible. */
-  ctx.fillRect(x0, g.y, 1, g.h, 1);
-  ctx.fillRect(Math.max(g.x, x1 - 1), g.y, 1, g.h, 1);
-}
 
 /* ---------- send FX ------------------------------------------------------ */
 
@@ -693,7 +588,6 @@ const CONFIG = {
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the
    * classic display-desync. */
-  overlays: [drawBrowsePicker],
 
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;

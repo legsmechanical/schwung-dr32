@@ -1479,17 +1479,20 @@ function penum(key, label, name, options, sq) {
 /* Folder-browse cell: position of this pad's sample among its neighbours.
  *
  * A plain count, deliberately NOT an enum. An enum would hand the list to the
- * kit's own picker overlay, which is sized and fonted for short enum labels —
- * filenames need a wider box and a proportional font. DR32 draws its own
- * instead (drawBrowsePicker below), which is also where a module-specific UI
- * belongs: the kit is a reference to build FROM, not a place to push one
- * module's needs into. Backport it later if it earns its way in.
+ * kit's ENUM picker, which is sized and fonted for short enum labels —
+ * filenames need a wider box and a proportional font. DR32 used to draw its own
+ * for exactly that reason; it has since been backported into the kit as the
+ * separate `cell.list` picker class, so this now just declares the source.
  *
  * The face shows "3/17" — at ~16 px a name truncates to about three glyphs, so
  * position is the useful readout here and the picker carries the names. */
 function browseCell() {
   const c = count(`pad_browse`, "Smpl", 0, 511);
   c.name = "Browse Folder";
+  /* The kit draws the wide proportional picker now; DR32 declares the source.
+   * No `options` here on purpose — that is what keeps the kit's ENUM picker
+   * (sized for short labels) from firing for a list of filenames. */
+  c.list = { names: `pad_browse_names`, count: `pad_browse_count` };
   c.text = (ctx) => {
     const n = parseInt(ctx.getParam(`pad_browse_count`), 10) || 0;
     const i = parseInt(ctx.getParam(`pad_browse`), 10);
@@ -1498,76 +1501,6 @@ function browseCell() {
     return (i + 1) + "/" + n;
   };
   return c;
-}
-
-/* ---------- browse picker overlay --------------------------------------- */
-
-/* DR32's own scrolling list of the folder's samples, drawn while the Browse
- * knob is the one being touched. CONFIG.overlays runs after the kit's own
- * overlay pass, and the browse cell carries no `options`, so the kit's enum
- * picker never fires and there is nothing to draw over.
- *
- * Uses mvPrint — the movy font, the SAME one under every widget label, so the
- * picker reads as part of the page rather than a different control.
- *
- * The win is that it is PROPORTIONAL where the kit's 5x5 mcufont is a fixed
- * 6 px advance. Measured against this box's 112 px of text width:
- * "MD1_Kick_Sub_02 (alt)" is 96 px in movy and fits whole, but 125 px in
- * mcufont and gets cut. Typical text runs ~22 chars a row against ~18.
- *
- * ⚠ Both fonts are effectively CAPS ONLY — movy's lowercase codepoints map to
- * the same shapes (verified: "Kick" and "KICK" render identical pixels and
- * width), which is unavoidable at a 5 px cap height. Names therefore display
- * uppercase whichever font is used; do not pick one expecting mixed case. */
-const PICK_X = 2, PICK_Y = 10, PICK_W = 124, PICK_H = 54;
-const PICK_ROW_H = 7;                    /* 5px movy glyph + 2px leading */
-
-function drawBrowsePicker(ctx, cells, s) {
-  const k = s.lastKnob;
-  const cell = k >= 0 ? cells[k] : null;
-  if (!cell || cell.key !== `pad_browse`) return;
-
-  const raw = String(ctx.getParam(`pad_browse_names`) || "");
-  if (!raw) return;                                  /* empty pad: nothing to show */
-  const names = raw.split("\n");
-  const n = names.length;
-  const sel = parseInt(ctx.getParam(`pad_browse`), 10);
-  if (!n || !Number.isFinite(sel) || sel < 0) return;
-
-  const X = PICK_X, Y = PICK_Y, W = PICK_W, H = PICK_H;
-  ctx.fillRect(X, Y, W, H, 0);
-  ctx.drawRect(X, Y, W, H, 1);
-
-  const visible = Math.max(1, Math.min(n, Math.floor((H - 4) / PICK_ROW_H)));
-  const hasScroll = n > visible;
-  /* Keep the selection mid-list so there is context either side, clamping at
-   * the ends rather than letting the window run past them. */
-  const start = Math.max(0, Math.min(sel - Math.floor(visible / 2), n - visible));
-  const listTop = Y + Math.floor((H - visible * PICK_ROW_H) / 2);
-  const rowX = X + 2, rowW = W - 4 - (hasScroll ? 4 : 0);
-  const availW = rowW - 4;
-
-  for (let i = 0; i < visible; i++) {
-    const idx = start + i;
-    if (idx >= n) break;
-    const y = listTop + i * PICK_ROW_H;
-    let label = String(names[idx]);
-    while (label.length > 1 && mvWidth(label) > availW) label = label.slice(0, -1);
-    if (idx === sel) {
-      ctx.fillRect(rowX, y, rowW, PICK_ROW_H, 1);
-      mvPrint(ctx, rowX + 2, y + 1, label, 0);
-    } else {
-      mvPrint(ctx, rowX + 2, y + 1, label, 1);
-    }
-  }
-
-  if (hasScroll) {
-    const trackH = visible * PICK_ROW_H;
-    const thumbH = Math.max(3, Math.round(trackH * visible / n));
-    const thumbY = listTop + Math.round((trackH - thumbH) * start / Math.max(1, n - visible));
-    ctx.fillRect(X + W - 2, listTop, 1, trackH, 1);
-    ctx.fillRect(X + W - 3, thumbY, 2, thumbH, 1);
-  }
 }
 
 /* ---------- per-pad cells ---------------------------------------------- */
@@ -1589,7 +1522,13 @@ const PAD_BANK_SPECS = [
   /* Start and Length lead so the waveform can own cells 0-1: the picture IS
    * the display for those two, and their labels still show the numbers. */
   { label: "Sample", icon: "pulse",
-    cellViz: { cell: 0, span: 2, draw: drawWave },
+    /* The kit draws the waveform now (canvaskit `cellViz.wave`); DR32 only
+     * declares WHERE the data is. `stamp` must name everything that means
+     * "different audio" — the focused pad and its sample — or the CSV is
+     * re-parsed every frame. */
+    cellViz: { cell: 0, span: 2,
+               wave: { peaks: "pad_waveform", start: 0, length: 1,
+                       stamp: ["ui_current_pad", "pad_sample"] } },
     cells: [
     (p) => plin(`pad_start`, "Strt", "Start", 0, 1, (x) => Math.round(x * 100) + "%"),
     (p) => plin(`pad_length`, "Len", "Length", 0, 1, (x) => Math.round(x * 100) + "%"),
@@ -1674,7 +1613,13 @@ function padFocusSettle(ctx) {
   const prev = cache["ui_current_pad"];
   delete cache["ui_current_pad"];           /* force ONE real read */
   const now = ctx.getParam("ui_current_pad");
-  if (String(now) !== String(prev)) ctx._pcache = {};
+  if (String(now) !== String(prev)) {
+    /* Only the pad_* family is stale — every pad cell now addresses a different
+     * pad. `master`, `send*_` and `kit` are still perfectly good, and flushing
+     * them cost a full uncached re-read on the frame after every press. */
+    if (typeof ctx.invalidate === "function") ctx.invalidate("pad_*");
+    else ctx._pcache = {};      /* older kit: no scoped invalidation */
+  }
 }
 
 function padOf(ctx) {
@@ -1728,56 +1673,6 @@ const padBanks = PAD_BANK_SPECS.map((spec) => ({
   knobs: spec.cells.map((f) => f(0)),
   header: padHeader()
 }));
-
-/* ---------- sample waveform -------------------------------------------- */
-
-/* The DSP publishes 128 min/max pairs for the focused pad as a flat CSV
- * (dr32_params.c, key "pad_waveform"); the canvas cannot read audio itself.
- * Re-fetched only when the pad or its sample changes — a device getParam is
- * ~2.6 ms blocking, so this must not run every frame. */
-function wavePeaks(ctx, s) {
-  const stamp = padOf(ctx) + "|" + (ctx.getParam("pad_sample") || "");
-  if (s.waveStamp === stamp) return s.wavePeaks;
-  s.waveStamp = stamp;
-  const raw = ctx.getParam("pad_waveform") || "";
-  if (!raw) { s.wavePeaks = null; return null; }
-  const parts = raw.split(",");
-  const out = [];
-  for (let i = 0; i + 1 < parts.length; i += 2)
-    out.push([(parseInt(parts[i], 10) || 0) / 100, (parseInt(parts[i + 1], 10) || 0) / 100]);
-  s.wavePeaks = out.length ? out : null;
-  return s.wavePeaks;
-}
-
-/* Waveform with the play region. Outside the region the wave is drawn as a
- * baseline only, so what will actually sound is obvious at a glance. */
-function drawWave(ctx, g, cells, s) {
-  const peaks = wavePeaks(ctx, s);
-  const midY = g.y + (g.h >> 1);
-  if (!peaks) {                       // empty pad: just the axis
-    for (let x = g.x; x < g.x + g.w; x += 2) ctx.setPixel(x, midY, 1);
-    return;
-  }
-  const st = normOf(ctx, cells[0]);                  // Start 0..1
-  const ln = normOf(ctx, cells[1]);                  // Length 0..1
-  const x0 = g.x + Math.round(st * g.w);
-  const x1 = Math.min(g.x + g.w, x0 + Math.max(1, Math.round(ln * g.w)));
-  const half = (g.h >> 1) - 1;
-  for (let i = 0; i < g.w; i++) {
-    const x = g.x + i;
-    const p = peaks[Math.min(peaks.length - 1, Math.floor(i / g.w * peaks.length))];
-    const inRegion = x >= x0 && x < x1;
-    if (!inRegion) { ctx.setPixel(x, midY, 1); continue; }
-    let top = midY - Math.round(p[1] * half);
-    let bot = midY - Math.round(p[0] * half);
-    if (bot < top) { const t = top; top = bot; bot = t; }
-    if (top === bot) bot = top + 1;
-    ctx.fillRect(x, top, 1, bot - top, 1);
-  }
-  /* Region edges: solid verticals, so a zero-length region is still visible. */
-  ctx.fillRect(x0, g.y, 1, g.h, 1);
-  ctx.fillRect(Math.max(g.x, x1 - 1), g.y, 1, g.h, 1);
-}
 
 /* ---------- send FX ------------------------------------------------------ */
 
@@ -2034,7 +1929,6 @@ const CONFIG = {
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the
    * classic display-desync. */
-  overlays: [drawBrowsePicker],
 
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;
@@ -3198,25 +3092,347 @@ function drawBankView(ctx, bank, cells, s) {
     /* Generic reserved span: the kit gives the geometry, the MODULE draws.
      * Anything module-specific belongs in its canvas.config.js, not in core —
      * so a waveform, a meter or a scope lives there and only borrows the slot. */
-    if (cviz && typeof cviz.draw === "function") {
+    if (cviz && (typeof cviz.draw === "function" || cviz.wave)) {
       const c0 = cviz.cell % 4, span = cviz.span || 2;
-      cviz.draw(ctx, {
+      const g = {
         x: c0 * CELL_W + 2,
         y: (cviz.cell < 4 ? ROW0_Y : ROW1_Y) + 1,
         w: span * CELL_W - 4,
         h: KH - 3
-      }, cells, s);
+      };
+      /* `wave` is the kit's own renderer for the commonest case; `draw` stays
+       * the escape hatch for anything module-specific. A cellViz may declare
+       * both, in which case the module's draw runs on top of the waveform. */
+      if (cviz.wave) drawWave(ctx, g, cells, s, cviz.wave);
+      if (typeof cviz.draw === "function") cviz.draw(ctx, g, cells, s);
     }
   }
   drawEnumOverlay(ctx, cells, s);
+  drawListOverlay(ctx, cells, s);
   // Module hooks: transient value-HUDs etc. Each fn(ctx, cells, s) draws on
   // top of the bank view (use hudCard for the standard popup frame).
   if (CONFIG.overlays) for (const fn of CONFIG.overlays) fn(ctx, cells, s);
 }
 
+/* ── list picker ─────────────────────────────────────────────────────────────
+ *
+ * A wide, PROPORTIONAL scrolling list for cells whose options are long strings —
+ * filenames, sample names, presets — declared on the cell:
+ *
+ *   const c = count("pad_browse", "Smpl", 0, 511);
+ *   c.list = { names: "pad_browse_names", count: "pad_browse_count" };
+ *   // the cell's own key is the selected INDEX
+ *
+ * `names` is a newline-separated list served by the DSP; the canvas cannot read
+ * a directory itself.
+ *
+ * ⚠ This is a SEPARATE class from drawEnumOverlay, deliberately. The enum picker
+ * is sized and fonted for short enum labels, and widening it to fit filenames
+ * was tried and rejected: it would restyle every module that regenerates, to
+ * serve one module's need. Two pickers with different jobs beats one that does
+ * both badly. A cell declaring `list` carries no `options`, so the enum picker
+ * never fires for it and the two can never both draw.
+ *
+ * Face vs picker: the CELL shows position ("3/17"), because at ~16px a filename
+ * truncates to about three glyphs; the names live here, where there is room. */
+const LIST_X = 2, LIST_Y = 10, LIST_W = 124, LIST_H = 54;
+const LIST_ROW_H = 7;                      /* 5px movy glyph + 2px leading */
+
+function listSpecOf(cells, s) {
+  const k = s.lastKnob;
+  const cell = k >= 0 ? cells[k] : null;
+  return cell && cell.list ? cell : null;
+}
+
+function drawListOverlay(ctx, cells, s) {
+  const cell = listSpecOf(cells, s);
+  if (!cell) return;
+
+  const raw = String(ctx.getParam(cell.list.names) || "");
+  if (!raw) return;                        /* nothing to show (e.g. empty pad) */
+  const names = raw.split("\n");
+  const n = names.length;
+  const sel = parseInt(ctx.getParam(cell.key), 10);
+  if (!n || !isFinite(sel) || sel < 0) return;
+
+  const X = LIST_X, Y = LIST_Y, W = LIST_W, H = LIST_H;
+  ctx.fillRect(X, Y, W, H, 0);
+  ctx.drawRect(X, Y, W, H, 1);
+
+  const visible = Math.max(1, Math.min(n, Math.floor((H - 4) / LIST_ROW_H)));
+  const hasScroll = n > visible;
+  /* Keep the selection mid-list so there is context either side, clamping at
+   * the ends rather than letting the window run past them. */
+  const start = Math.max(0, Math.min(sel - Math.floor(visible / 2), n - visible));
+  const listTop = Y + Math.floor((H - visible * LIST_ROW_H) / 2);
+  const rowX = X + 2, rowW = W - 4 - (hasScroll ? 4 : 0);
+  const availW = rowW - 4;
+
+  for (let i = 0; i < visible; i++) {
+    const idx = start + i;
+    if (idx >= n) break;
+    const y = listTop + i * LIST_ROW_H;
+    let label = String(names[idx]);
+    while (label.length > 1 && mvWidth(label) > availW) label = label.slice(0, -1);
+    if (idx === sel) {
+      ctx.fillRect(rowX, y, rowW, LIST_ROW_H, 1);
+      mvPrint(ctx, rowX + 2, y + 1, label, 0);
+    } else {
+      mvPrint(ctx, rowX + 2, y + 1, label, 1);
+    }
+  }
+
+  if (hasScroll) {
+    const trackH = visible * LIST_ROW_H;
+    const thumbH = Math.max(3, Math.round(trackH * visible / n));
+    const thumbY = listTop + Math.round((trackH - thumbH) * start / Math.max(1, n - visible));
+    ctx.fillRect(X + W - 2, listTop, 1, trackH, 1);
+    ctx.fillRect(X + W - 3, thumbY, 2, thumbH, 1);
+  }
+}
+
+/* ── sample waveform ─────────────────────────────────────────────────────────
+ *
+ * Declared on a cellViz, with the play region drawn from two of the cells it
+ * spans:
+ *
+ *   cellViz: { cell: 0, span: 2,
+ *              wave: { peaks: "pad_waveform", start: 0, length: 1,
+ *                      stamp: ["pad_sample"] } }
+ *
+ * `peaks` is a flat CSV of min,max pairs scaled x100, served by the DSP — the
+ * canvas cannot read audio itself. `start`/`length` are indices into the spanned
+ * cells (normalised 0..1); omit them for a plain waveform with no region.
+ *
+ * ⚠ `stamp` is not optional in spirit: a device getParam is ~2.6ms blocking, so
+ * the CSV is re-parsed only when the stamp changes. List every param that means
+ * "different audio" (the selected child, the sample name). Without it this runs
+ * every frame and the page visibly slows. */
+function waveStampOf(ctx, spec) {
+  const parts = [];
+  const st = spec.stamp || [];
+  for (let i = 0; i < st.length; i++) parts.push(String(ctx.getParam(st[i]) || ""));
+  return parts.join("|");
+}
+
+function wavePeaks(ctx, spec, s) {
+  const stamp = waveStampOf(ctx, spec);
+  if (s._waveStamp === stamp && s._wavePeaks !== undefined) return s._wavePeaks;
+  s._waveStamp = stamp;
+  const raw = String(ctx.getParam(spec.peaks) || "");
+  if (!raw) { s._wavePeaks = null; return null; }
+  const parts = raw.split(",");
+  const out = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    out.push([(parseInt(parts[i], 10) || 0) / 100, (parseInt(parts[i + 1], 10) || 0) / 100]);
+  }
+  s._wavePeaks = out.length ? out : null;
+  return s._wavePeaks;
+}
+
+/* Waveform with the play region. Outside the region only the baseline is drawn,
+ * so what will actually SOUND is obvious at a glance. */
+function drawWave(ctx, g, cells, s, spec) {
+  const peaks = wavePeaks(ctx, spec, s);
+  const midY = g.y + (g.h >> 1);
+  if (!peaks) {                            // empty: just the axis
+    for (let x = g.x; x < g.x + g.w; x += 2) ctx.setPixel(x, midY, 1);
+    return;
+  }
+  const hasRegion = spec.start !== undefined && spec.length !== undefined
+                    && cells[spec.start] && cells[spec.length];
+  const st = hasRegion ? normOf(ctx, cells[spec.start]) : 0;
+  const ln = hasRegion ? normOf(ctx, cells[spec.length]) : 1;
+  const x0 = g.x + Math.round(st * g.w);
+  const x1 = Math.min(g.x + g.w, x0 + Math.max(1, Math.round(ln * g.w)));
+  const half = (g.h >> 1) - 1;
+  for (let i = 0; i < g.w; i++) {
+    const x = g.x + i;
+    const p = peaks[Math.min(peaks.length - 1, Math.floor(i / g.w * peaks.length))];
+    if (x < x0 || x >= x1) { ctx.setPixel(x, midY, 1); continue; }
+    let top = midY - Math.round(p[1] * half);
+    let bot = midY - Math.round(p[0] * half);
+    if (bot < top) { const t = top; top = bot; bot = t; }
+    if (top === bot) bot = top + 1;
+    ctx.fillRect(x, top, 1, bot - top, 1);
+  }
+  if (hasRegion) {
+    /* Region edges: solid verticals, so a zero-length region is still visible. */
+    ctx.fillRect(x0, g.y, 1, g.h, 1);
+    ctx.fillRect(Math.max(g.x, x1 - 1), g.y, 1, g.h, 1);
+  }
+}
+
 /* ---- the overlay object ---- */
 
+/* ── on-screen text entry ────────────────────────────────────────────────────
+ *
+ * Naming a preset, pad or kit from a canvas was impossible: the host's
+ * text_entry.mjs is host-UI, and a fullscreen canvas draws everything itself, so
+ * it cannot borrow it. Open with ctx.promptText({...}).
+ *
+ * ⭑ MODELLED ON THE HOST KEYBOARD (src/shared/text_entry.mjs) so the gesture is
+ * the one users already know: the jog scrubs a KEYBOARD, click types the
+ * highlighted key, and the specials (page / space / delete / OK) sit after the
+ * characters in the same 1-D selection. Selection CLAMPS at both ends rather
+ * than wrapping — the host does this deliberately so you can slam the jog right
+ * to land on OK, and slam left to land on the first character.
+ *
+ * Two things could NOT be copied, both forced by the canvas environment:
+ *
+ * 1. ⚠ NO LOWERCASE PAGE. The host has a real font; the kit's has 48 glyphs and
+ *    no lowercase at all, and the movy font's "lowercase" is literally the
+ *    uppercase shapes. A lowercase page would type something that displays — and
+ *    would later be saved — as uppercase. So the pages are upper / digits /
+ *    symbols, every glyph verified renderable, and input is upper-cased.
+ *
+ * 2. ⚠ BACK CANNOT CANCEL. In the host, Back cancels the field. On a canvas Back
+ *    is never claimable and always closes the WHOLE canvas — so pressing it here
+ *    would drop the user out of the module entirely, without onCancel ever
+ *    firing. Hence a fifth special the host does not need: an on-screen CANCEL.
+ */
+const TE_PAGES = [
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+  "0123456789",
+  "-_().#&+:/>"
+];
+/* Specials, indexed after the current page's characters. */
+const TE_SP_PAGE = 0, TE_SP_SPACE = 1, TE_SP_DEL = 2, TE_SP_OK = 3, TE_SP_CANCEL = 4;
+const TE_SPECIALS = ["PG", "SPC", "DEL", "OK", "ESC"];
+const TE_MAXLEN_DEFAULT = 16;
+
+/* Keep only what the font can draw, upper-cased — see note 1 above. */
+function teSanitize(str, maxLen) {
+  const up = String(str == null ? "" : str).toUpperCase();
+  const all = TE_PAGES.join("") + " ";
+  let out = "";
+  for (let i = 0; i < up.length && out.length < maxLen; i++) {
+    const c = up.charAt(i);
+    if (all.indexOf(c) >= 0) out += c;
+  }
+  return out;
+}
+
+/* Batched jog delta, same encoding the host's decodeDelta reads: a fast turn
+ * arrives as a few LARGE messages, not a stream of ±1, so scrubbing a 26-key
+ * page has to honour the magnitude or it crawls. */
+function teDelta(val) {
+  if (val >= 1 && val <= 63) return val;
+  if (val >= 65 && val <= 127) return val - 128;
+  return 0;
+}
+
+function teItemCount(te) { return TE_PAGES[te.page].length + TE_SPECIALS.length; }
+function teLabelAt(te, i) {
+  const chars = TE_PAGES[te.page];
+  return i < chars.length ? chars.charAt(i) : TE_SPECIALS[i - chars.length];
+}
+
+function teDraw(ctx, te) {
+  ctx.fillRect(0, 0, ctx.width, ctx.height, 0);
+  ctx.print(2, 1, String(te.title || "NAME").slice(0, 21), 1);
+
+  /* Buffer, boxed so an empty field still reads as a field. */
+  ctx.drawRect(1, 9, ctx.width - 2, 9, 1);
+  const shown = te.buffer.length > 19 ? te.buffer.slice(te.buffer.length - 19) : te.buffer;
+  ctx.print(3, 11, shown, 1);
+  ctx.fillRect(3 + shown.length * PF_ADVANCE, 11, 1, PF_GLYPH_H, 1);   /* caret */
+
+  /* Keyboard: characters in a grid, specials on their own row below. */
+  const chars = TE_PAGES[te.page];
+  const perRow = 13, cellW = 9, cellH = 9, gx = 2, gy = 22;
+  for (let i = 0; i < chars.length; i++) {
+    const x = gx + (i % perRow) * cellW, y = gy + ((i / perRow) | 0) * cellH;
+    if (i === te.sel) ctx.fillRect(x - 1, y - 1, cellW, cellH, 1);
+    ctx.print(x + 1, y, chars.charAt(i), i === te.sel ? 0 : 1);
+  }
+  const rows = Math.ceil(chars.length / perRow);
+  let sx = gx, sy = gy + rows * cellH + 1;
+  for (let k = 0; k < TE_SPECIALS.length; k++) {
+    const lbl = TE_SPECIALS[k], w = lbl.length * PF_ADVANCE + 3;
+    const on = te.sel === chars.length + k;
+    if (on) ctx.fillRect(sx - 1, sy - 1, w, cellH, 1);
+    ctx.print(sx + 1, sy, lbl, on ? 0 : 1);
+    sx += w + 2;
+  }
+}
+
+/* Returns true when the message was consumed. */
+function teMidi(ctx, te, status, d1, d2, s) {
+  if (status !== 0xB0) return true;              // modal: swallow notes too
+
+  if (d1 === 14) {                               // jog: scrub the keyboard
+    const delta = teDelta(d2);
+    if (delta) {
+      let n = te.sel + delta;
+      const max = teItemCount(te) - 1;
+      if (n < 0) n = 0;                          // clamp, don't wrap (host does
+      if (n > max) n = max;                      // this so you can slam to OK)
+      te.sel = n;
+    }
+    return true;
+  }
+
+  if (d1 === 3 && d2 > 0) {                      // click: select
+    const chars = TE_PAGES[te.page];
+    if (te.sel < chars.length) {
+      if (te.buffer.length < te.maxLen) te.buffer += chars.charAt(te.sel);
+      return true;
+    }
+    switch (te.sel - chars.length) {
+      case TE_SP_PAGE:
+        te.page = (te.page + 1) % TE_PAGES.length;
+        /* Keep the cursor on the page key itself — the host does the same, so a
+         * second click cycles again instead of hunting for it. */
+        te.sel = TE_PAGES[te.page].length + TE_SP_PAGE;
+        break;
+      case TE_SP_SPACE:
+        if (te.buffer.length < te.maxLen) te.buffer += " ";
+        break;
+      case TE_SP_DEL:
+        te.buffer = te.buffer.slice(0, -1);
+        break;
+      case TE_SP_OK: {
+        const v = te.buffer.replace(/\s+$/, "");
+        ctx._textEntry = null;
+        if (te.onCommit) te.onCommit(v);
+        break;
+      }
+      case TE_SP_CANCEL:
+        ctx._textEntry = null;
+        if (te.onCancel) te.onCancel();
+        break;
+    }
+    return true;
+  }
+
+  /* Delete (CC 119) as a hardware backspace, only when the module claimed the
+   * edit CCs — otherwise this CC never arrives and Move still owns the button. */
+  if (d1 === 119 && d2 > 0 && CONFIG.claims && CONFIG.claims.editCcs) {
+    te.buffer = te.buffer.slice(0, -1);
+    return true;
+  }
+
+  return true;
+}
+
 const bank_editor = {
+  /* Back is contextual (host contract: return true to consume, falsy to let the
+   * host close the canvas). The kit consumes it ONLY while a modal is actually
+   * open, which is the discipline the host docs warn about — and because the KIT
+   * owns this hook, a consumer cannot get it wrong by accident.
+   *
+   * Shift+Back never reaches here; the host keeps it as the unclaimable failsafe. */
+  handleBack(ctx) {
+    if (ctx && ctx._textEntry) {
+      const te = ctx._textEntry;
+      ctx._textEntry = null;
+      if (te.onCancel) te.onCancel();
+      return true;                    // stepped out of the field, not the canvas
+    }
+    return false;
+  },
+
   onOpen(ctx) {
     ctx.state.init = false; // force re-seed from the persisted value
     readState(ctx);
@@ -3224,27 +3440,43 @@ const bank_editor = {
 
   onMidi(ctx, payload) {
     const d = payload && payload.data;
-    if (!d || d.length < 3) return;
+    if (!d || d.length < 3) return false;
     const s = readState(ctx);
     const status = d[0] & 0xF0;
+
+    // Text entry is MODAL and runs ahead of everything, including CONFIG.onMidi:
+    // while a field is open every control belongs to it, so a stray jog cannot
+    // edit a param behind the keyboard.
+    if (ctx._textEntry) { teMidi(ctx, ctx._textEntry, status, d[1], d[2], s); return true; }
 
     // Config gets first refusal on every message. Needed because the note
     // branch below returns for ALL notes, not just the 0-7 encoder-touch ones,
     // so without this a consumer can never see performance notes — a drum
     // module cannot follow the pad you just hit. Return true to consume.
-    if (typeof CONFIG.onMidi === "function" && CONFIG.onMidi(ctx, s, payload)) return;
+    if (typeof CONFIG.onMidi === "function" && CONFIG.onMidi(ctx, s, payload)) return true;
 
     if (status === 0x90 || status === 0x80) { // capacitive touch: notes 0-7 knobs
       const note = d[1];
-      if (note <= 7) s.lastKnob = (status === 0x90 && d[2] >= 64) ? note : -1;
-      return;
+      if (note > 7) return false;          // performance notes are not ours
+      s.lastKnob = (status === 0x90 && d[2] >= 64) ? note : -1;
+      return true;
     }
-    if (status !== 0xB0) return;
+    if (status !== 0xB0) return false;
     const cc = d[1], val = d[2];
+
+    // Undo (CC 56), only for a config that claims the edit CCs — without
+    // capabilities.claims_edit_ccs this CC never reaches us anyway, and acting
+    // on it would be acting on a button Move still owns. CONFIG.onMidi already
+    // had first refusal above, so a module wanting its own undo semantics just
+    // consumes it there. Press edge only: the release would undo the undo.
+    if (cc === 56 && val > 0 && CONFIG.claims && CONFIG.claims.editCcs) {
+      if (typeof ctx.undo === "function") ctx.undo();
+      return true;
+    }
 
     // CC-49 fallback for off-device runs; on device shift arrives via the
     // shadow_get_shift_held() SHM poll (the shim doesn't forward CC 49 here).
-    if (cc === 49) { s.shift = val >= 64; s.jogAccum = 0; return; }
+    if (cc === 49) { s.shift = val >= 64; s.jogAccum = 0; return true; }
 
     if (cc === 14) { // jog turn: steps banks either way; SHIFT adds the overlay
       const jd = dirFromCC(val);
@@ -3255,7 +3487,7 @@ const bank_editor = {
           // 1:1 through every bank with no overlay.
           const nr = accumStep(s.jogAccum, jd, NAV_SENS);
           s.jogAccum = nr.accum;
-          if (!nr.fire) return;
+          if (!nr.fire) return true;
           const ni = clampBank(activeSection(s.bank) + jd, JUMP_SECTIONS.length);
           s.bank = JUMP_SECTIONS[ni].bank;
           s.sub = 0;
@@ -3278,26 +3510,29 @@ const bank_editor = {
         s.lastKnob = -1;
         s.stepSelKey = null;           // re-seed the step cursor on next edit
       }
-      return;
+      return true;
     }
 
-    if (cc < 71 || cc > 78) return;
+    /* Everything else — the jog CLICK above all — is DECLINED, so a host that
+     * offers events to the canvas first (davebox's sound mode) can fall back to
+     * its own shell gesture instead of the press vanishing into the module. */
+    if (cc < 71 || cc > 78) return false;
     const k = cc - 71;
     const dir = dirFromCC(val);
-    if (!dir) return;
+    if (!dir) return true;
     const bank = BANKS[s.bank];
     const cell = cellsFor(ctx, bank, s.sub || 0, s)[k];
-    if (!cell || cell.kind === "blank") return;   // empty slot on this bank
+    if (!cell || cell.kind === "blank") return true;   // empty slot on this bank
 
     if (cell.kind === "steplvl") {
       // Step editor: set the engine's step cursor only when the target step
       // CHANGES, track the value in state so a sustained turn is ONE
       // blocking write per fire (echidna's sel/lvl protocol).
-      if (cell.stepIdx >= stepCount(ctx, bank)) return; // inactive step
+      if (cell.stepIdx >= stepCount(ctx, bank)) return true; // inactive step
       s.lastKnob = k;
       const sr = accumStep(s.accum[k], dir, KIT_SENS);
       s.accum[k] = sr.accum;
-      if (!sr.fire) return;
+      if (!sr.fire) return true;
       const selKey = s.bank + ":" + cell.stepIdx;
       if (s.stepSelKey !== selKey) {
         ctx.setParam(bank.steps.sel, String(cell.stepIdx));
@@ -3308,7 +3543,7 @@ const bank_editor = {
       if (sv < 0) sv = 0;
       if (sv > stepsMax(bank)) sv = stepsMax(bank);
       if (sv !== s.stepVal) { ctx.setParam(bank.steps.lvl, String(sv)); s.stepVal = sv; }
-      return;
+      return true;
     }
     s.lastKnob = k;
 
@@ -3316,16 +3551,17 @@ const bank_editor = {
     // per step (knob feel + fewer blocking writes).
     const cr = accumStep(s.accum[k], dir, cell.sens || 2);
     s.accum[k] = cr.accum;
-    if (!cr.fire) return;
+    if (!cr.fire) return true;
     // Read + step in the native-int domain (getRaw applies get/parse hooks);
     // write via cell.set (local cells) or the wire format (cell.format).
     const cur = getRaw(ctx, cell);
     let nv = cur + dir * cell.step;
     if (nv < cell.min) nv = cell.min;
     if (nv > cell.max) nv = cell.max;
-    if (nv === cur) return;
+    if (nv === cur) return true;
     if (cell.set) cell.set(ctx, nv);
     else ctx.setParam(cell.key, cell.format ? String(cell.format(nv)) : String(nv));
+    return true;
   },
 
   draw(ctx) {
@@ -3352,19 +3588,115 @@ const bank_editor = {
       for (var bi = 0; bi < BANKS.length; bi++) {
         if (BANKS[bi].steps) { stepKeys[BANKS[bi].steps.sel] = BANKS[bi].steps.csv; stepKeys[BANKS[bi].steps.lvl] = BANKS[bi].steps.csv; }
       }
+      // Drop cache entries by SPEC:
+      //   true        -> flush everything
+      //   "pad_*"     -> every key starting "pad_"   (trailing * = prefix)
+      //   "pad_gain"  -> that one key
+      //   [ ...mix ]  -> each of the above
+      //
+      // Prefix scoping exists because all-or-nothing is a real cost, not a
+      // tidiness point: each getParam is a ~2.6ms blocking SHM round-trip and
+      // the layout reads one per cell every frame, so a full flush makes the
+      // next frame pay an uncached re-read of EVERYTHING. DR32 flushed the whole
+      // cache on every pad press — including presses on the already-focused pad
+      // — and measured 9 uncached reads / ~31ms per press. Dropping just the
+      // pad_* family is the same correctness with none of that.
+      function invalidate(spec) {
+        if (spec === true) { ctx._pcache = {}; return; }
+        if (!spec) return;
+        var list = typeof spec === "string" ? [spec] : spec;
+        for (var i = 0; i < list.length; i++) {
+          var pat = list[i];
+          if (typeof pat !== "string" || !pat) continue;
+          if (pat.charAt(pat.length - 1) === "*") {
+            var pre = pat.slice(0, -1);
+            for (var key in ctx._pcache) {
+              if (Object.prototype.hasOwnProperty.call(ctx._pcache, key) && key.lastIndexOf(pre, 0) === 0) {
+                delete ctx._pcache[key];
+              }
+            }
+          } else {
+            delete ctx._pcache[pat];
+          }
+        }
+      }
+      // Public: for invalidating OUTSIDE a write — e.g. a pad press changed
+      // which pad every `pad_*` cell now addresses. Use this instead of
+      // assigning ctx._pcache directly, which throws away the whole cache.
+      ctx.invalidate = invalidate;
+
+      // ---- single-level undo -------------------------------------------------
+      // For DESTRUCTIVE param edits — clear a pad, paste over one, load a slot.
+      // Continuous knob edits are self-undoing (turn it back) and deliberately
+      // not covered; snapshotting every detent would just fill the buffer with
+      // noise and bury the one thing worth reverting.
+      //
+      // The MODULE names the keys, because only it knows what "this pad" means.
+      // A prefix cannot be expanded reliably here: the cache holds whatever has
+      // been read so far, not the full key space, so `pad_*` would silently
+      // snapshot a subset and "undo" would restore part of the pad.
+      //
+      // One level, on purpose. A stack invites a matching redo, a depth policy
+      // and a UI to show where you are; the pad gestures this exists for want
+      // "put it back" and nothing more.
+      ctx._undo = null;
+      ctx.snapshot = function (keys, label) {
+        if (!keys || !keys.length) return;
+        var snap = {};
+        for (var i = 0; i < keys.length; i++) snap[keys[i]] = ctx.getParam(keys[i]);
+        ctx._undo = { values: snap, label: label || "" };
+      };
+      ctx.canUndo = function () { return !!ctx._undo; };
+
+      // Open the on-screen keyboard. Returns false (and does nothing) if the
+      // module has not claimed the jog click — without it the click closes the
+      // canvas, so there would be no way to COMMIT and the field would be a
+      // trap. Failing loudly here beats shipping a keyboard you cannot leave.
+      ctx._textEntry = null;
+      ctx.promptText = function (opts) {
+        opts = opts || {};
+        if (!(CONFIG.claims && CONFIG.claims.jogClick)) {
+          if (typeof console !== "undefined" && console.log) {
+            console.log("canvaskit: promptText needs CONFIG.claims.jogClick " +
+                        "(+ canvas_takes_click in module.json) — the click would close the canvas");
+          }
+          return false;
+        }
+        var maxLen = opts.maxLen > 0 ? opts.maxLen : TE_MAXLEN_DEFAULT;
+        ctx._textEntry = {
+          title: opts.title || "NAME",
+          buffer: teSanitize(opts.value, maxLen),
+          maxLen: maxLen,
+          page: 0,
+          sel: 0,
+          onCommit: opts.onCommit || null,
+          onCancel: opts.onCancel || null
+        };
+        return true;
+      };
+      // Restores and CONSUMES the snapshot, so a second Undo does not re-apply
+      // an old state over newer edits. Writes go through ctx.setParam, so
+      // write-through and CONFIG.writeInvalidates behave exactly as for any edit.
+      ctx.undo = function () {
+        var u = ctx._undo;
+        if (!u) return false;
+        ctx._undo = null;
+        for (var k in u.values) {
+          if (Object.prototype.hasOwnProperty.call(u.values, k)) ctx.setParam(k, u.values[k]);
+        }
+        return true;
+      };
+
       ctx.setParam = function (k, v) {
         var r = rawSet.call(ctx, k, v);
         ctx._pcache[k] = String(v);   // reflect the write now
         if (stepKeys[k]) delete ctx._pcache[stepKeys[k]];  // sel/lvl writes dirty the CSV mirror
         // CONFIG.writeInvalidates(key) -> true = flush everything (preset
-        // load), array = drop those keys (include key itself when the engine
-        // may not land on the written value — select skip-walks), else null.
+        // load), string/array = drop those keys or key families (include key
+        // itself when the engine may not land on the written value — select
+        // skip-walks), else null.
         // Caching a value the engine rewrote is the classic desync bug.
-        if (CONFIG.writeInvalidates) {
-          var inv = CONFIG.writeInvalidates(k);
-          if (inv === true) ctx._pcache = {};
-          else if (inv) for (var ii = 0; ii < inv.length; ii++) delete ctx._pcache[inv[ii]];
-        }
+        if (CONFIG.writeInvalidates) invalidate(CONFIG.writeInvalidates(k));
         return r;
       };
       ctx._cacheTick = 0;
@@ -3374,6 +3706,8 @@ const bank_editor = {
     if ((ctx._cacheTick = (ctx._cacheTick + 1) % 24) === 0) ctx._pcache = {};
 
     const s = readState(ctx);
+    // Modal: the field owns the screen while it is open.
+    if (ctx._textEntry) { teDraw(ctx, ctx._textEntry); return; }
     const bank = BANKS[s.bank];
     if (bank.steps && (s.sub || 0) >= 1) drawStepEditor(ctx, bank, s);
     else drawBankView(ctx, bank, cellsFor(ctx, bank, 0, s), s);
@@ -3386,7 +3720,8 @@ const bank_editor = {
     formatCell, DEFAULTS, kToggleLabels, mvWidth,
     drawBankIcon, BANK_ICONS, ICON_W, iconW,
     widgetFor, enumSquareLines, pf3Width, CONFIG, envSpec, filtGainAt,
-    cellsFor, headerFor, headerTextFor, nameFor, paramNames, fitHdr, hdrWidth, getRaw, subPageCount, stepCells, stepVals, shapeSample, hudCard
+    cellsFor, headerFor, headerTextFor, nameFor, paramNames, fitHdr, hdrWidth, getRaw, subPageCount, stepCells, stepVals, shapeSample, hudCard,
+    wavePeaks, drawWave, drawListOverlay, normOf
   }, CONFIG.testExports || {})
 };
 
