@@ -244,58 +244,27 @@ const PAD_BANK_SPECS = [
 ];
 
 /* The focused pad lives in the DSP (kit->ui_current_pad) because every cell
- * addresses it through the "pad_" alias, but the canvas is what WRITES it (see
- * CONFIG.onMidi). The host forwards raw hardware pad notes 68-99 to an open
- * canvas — this file's earlier claim that "the canvas never receives a pad note
- * at all" was true only of the host before that landed. */
-/* Resolve a pending "a pad was hit" into "did focus actually MOVE?".
+ * addresses it through the "pad_" alias; the canvas is what tells the DSP a
+ * physical pad was hit, via CONFIG.padSelect below.
  *
- * ⭑ CONFIG.onMidi used to flush the whole cache on every press. It cannot know
- * whether focus will move — the DSP decides that when the note arrives, via
- * note_to_pad — so it flushed preemptively, and every press paid for a full
- * uncached re-read of the page. MEASURED on device (2026-07-30, on-screen HUD
- * so the log's I/O could not skew it): **9 uncached reads per press**, press
- * frame **43-59 ms** against an idle frame of **17-33 ms**. That cost was paid
- * even when focus did NOT move — a repeated hit on the pad you are already
- * editing, or a hit on a pad the kit does not map, bought nothing at all.
+ * ⭑ The press handling, the cache discipline and the focus settle all live in
+ * the KIT now (canvaskit v38, `CONFIG.padSelect`) — this file used to carry
+ * padFocusSettle() and a CONFIG.onMidi handler and no longer needs either. The
+ * behaviour is unchanged and the reasoning moved with the code; see the kit's
+ * README "Pad select", which keeps the measurements this module paid for
+ * (9 uncached reads / ~31 ms per press when the cache was flushed
+ * unconditionally; the 58 ms vouch window).
  *
- * So: don't flush on the press, note that one happened, and settle it here with
- * ONE uncached read of `ui_current_pad`. Unchanged -> keep the whole warm cache
- * (~3 ms instead of ~31 ms). Changed -> flush, which is work the frame genuinely
- * owes. Runs from padOf, which the header and every dynamic cell call before any
- * value is read, so the flush still lands ahead of the reads it protects. */
-function padFocusSettle(ctx) {
-  if (!ctx._padCheck) return;
-  ctx._padCheck = 0;
-  const cache = ctx._pcache;
-  if (!cache) return;                       /* kit cache not installed yet */
-  const prev = cache["ui_current_pad"];
-  delete cache["ui_current_pad"];           /* force ONE real read */
-  const now = ctx.getParam("ui_current_pad");
-  if (String(now) !== String(prev)) {
-    /* Only the pad_* family is stale — every pad cell now addresses a different
-     * pad. `master`, `send*_` and `kit` are still perfectly good, and flushing
-     * them cost a full uncached re-read on the frame after every press. */
-    if (typeof ctx.invalidate === "function") ctx.invalidate("pad_*");
-    else ctx._pcache = {};      /* older kit: no scoped invalidation */
-  }
-}
-
+ * Two earlier attempts are worth not repeating: force-refreshing
+ * ui_current_pad every third frame to catch the DSP moving focus was the
+ * reported lag (a device getParam blocks ~2.6 ms, so the poll alone cost
+ * ~40 ms/sec and still trailed the press by up to a frame), and the
+ * reconciling padPoll() that replaced it became dead weight once the DSP
+ * stopped moving focus at all. */
 function padOf(ctx) {
-  /* Read through the cache; a press only invalidates it if focus MOVED. */
-  padFocusSettle(ctx);
-  const p = parseInt(ctx.getParam("ui_current_pad"), 10) | 0;
-  const c = p < 0 ? 0 : (p >= PAD_COUNT ? PAD_COUNT - 1 : p);
-  return c;
+  /* Settled + clamped by the kit; 0 on a ctx without the kit installed (tests). */
+  return typeof ctx.padIndex === "function" ? ctx.padIndex() : 0;
 }
-
-/* Focus is owned entirely by CONFIG.onMidi, which writes ui_current_pad the
- * instant a pad is hit, so nothing polls for it. Two earlier attempts are worth
- * not repeating: force-refreshing ui_current_pad every third frame to catch the
- * DSP moving focus was the reported lag (a device getParam blocks ~2.6 ms, so
- * the poll alone cost ~40 ms/sec and still trailed the press by up to a frame),
- * and the reconciling padPoll() that replaced it became dead weight once the
- * DSP stopped moving focus at all — onMidi is the only writer. */
 
 /* Header carries the target, because every cell is bound to it and getting
  * that wrong is silent: "PAD 07 - Kick01". */
@@ -551,40 +520,32 @@ const CONFIG = {
 
   /* Edit focus follows the pad you physically hit.
    *
-   * This handler contributes exactly ONE bit: "that was a finger, not the
-   * sequencer." It deliberately does NOT decide which pad — the note does, and
-   * the DSP already owns the note -> pad map, so no pad geometry lives here.
+   * ⚠⚠ These four keys are ONE contract read from two places. They are the
+   * `child_*` fields on the `pads` level of src/module.json, and dAVEBOx sound
+   * mode reads them from there to write the vouch ITSELF — under sound mode
+   * this canvas never runs. build.mjs refuses to emit if the two drift, because
+   * the failure is silent: the vouch still arrives, nothing correlates it, and
+   * focus simply stops following. See CLAUDE.md.
    *
-   * That split is the whole design, and getting it wrong cost two rounds. The
-   * host forwards raw hardware pad notes (68-99) to an open canvas (MODULES.md,
-   * "Pad presses in a canvas UI"); that is the ONLY signal separating a live hit
-   * from a sequenced one, since by the time a note reaches the DSP the two are
-   * identical — same status, channel, note, both tagged EXTERNAL (measured on
-   * device). But the grid note identifies a POSITION, not a pad, and position
-   * is not pad: only the right 4x4 plays, and davebox transposes it up 16 notes
-   * to reach pads 17-32 while sending the identical grid note. An earlier
-   * version derived the pad from the grid note and could therefore only ever
-   * address 1-16, with the rows mis-strided on top of that.
+   * ⭑ `press`, not `note`, on purpose FOR NOW. The DSP implements both, and
+   * `note` is deterministic where the vouch races a 58 ms correlation window
+   * (measured: 2 of 16 presses missed). Switching is a one-line change here —
+   * but it changes device behaviour, so it is deliberately NOT bundled with the
+   * kit lift, whose point is that the regenerated canvas is pixel- and
+   * behaviour-identical. Flip it as its own change, with its own device pass.
    *
-   * So: signal liveness, let the note say which. A press on the dead left 4x4
-   * arms nothing in practice — no note follows it, so the arm simply expires.
-   *
-   * Observation only — never sound these. The ordinary note is already on its
-   * way to the synth; playing them too would double-trigger every pad. */
-  onMidi: function (ctx, s, payload) {
-    const d = payload && payload.data;
-    if (!d || d.length < 3) return false;
-
-    if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
-    if (d[1] < PAD_NOTE_LO || d[1] > PAD_NOTE_HI) return false;
-    /* Do NOT flush here. Whether focus moves is the DSP's decision (note ->
-     * note_to_pad), made after this returns, so flushing now threw away a warm
-     * cache on every press including the ones that changed nothing — measured
-     * at 9 uncached reads / ~31 ms a press. Record that a press happened and
-     * let padFocusSettle() resolve it with one read. */
-    ctx._padCheck = 1;
-    ctx.setParam("ui_live_press", "1");
-    return true;
+   * The kit never decides WHICH pad, only that a finger was involved: the note
+   * decides and the DSP owns the note -> pad map. Getting that split wrong cost
+   * two rounds — the grid note identifies a POSITION, not a pad (only the right
+   * 4x4 plays, and davebox transposes up 16 notes to reach pads 17-32 while
+   * sending the identical grid note), so deriving the pad here could only ever
+   * address 1-16, with the rows mis-strided on top of that. */
+  padSelect: {
+    prefix: "pad",
+    select: "ui_current_pad",
+    press:  "ui_live_press",
+    count:  PAD_COUNT,
+    notes:  [PAD_NOTE_LO, PAD_NOTE_HI]
   },
 
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
