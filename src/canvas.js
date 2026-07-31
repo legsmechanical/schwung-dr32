@@ -5,6 +5,8 @@
  * schwung-movy, MIT (c) 2026 megadake; fonts via echidna/davebox mcufont).
  * Loaded by the host as canvas.js#bank_editor. Jog = banks (no overlay);
  * SHIFT+jog = section picker; knobs CC 71-78 edit the active bank. */
+import * as os from 'os';
+
 (function () {
 
 /* ==== schwung-canvaskit core: prelude ====
