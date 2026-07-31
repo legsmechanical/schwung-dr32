@@ -580,6 +580,10 @@ const CONFIG = {
    *   jogClick — the canvas's "enter"; without it the click just closes it. */
   claims: { editCcs: true, jogClick: true },
 
+  /* Use the HOST's on-screen keyboard (shared/text_entry.mjs) rather than a
+   * kit-local one — build.mjs imports it when this is set. */
+  textEntry: true,
+
   /* Each pad page is its own picker row: that is where the editing happens,
    * so it should be one SHIFT+jog away, not buried behind bank stepping. */
   sections: [

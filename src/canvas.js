@@ -6,6 +6,7 @@
  * Loaded by the host as canvas.js#bank_editor. Jog = banks (no overlay);
  * SHIFT+jog = section picker; knobs CC 71-78 edit the active bank. */
 import * as os from 'os';
+import { openTextEntry, isTextEntryActive, handleTextEntryMidi, drawTextEntry, tickTextEntry } from '/data/UserData/schwung/shared/text_entry.mjs';
 
 (function () {
 
@@ -1923,6 +1924,10 @@ const CONFIG = {
    *   jogClick — the canvas's "enter"; without it the click just closes it. */
   claims: { editCcs: true, jogClick: true },
 
+  /* Use the HOST's on-screen keyboard (shared/text_entry.mjs) rather than a
+   * kit-local one — build.mjs imports it when this is set. */
+  textEntry: true,
+
   /* Each pad page is its own picker row: that is where the editing happens,
    * so it should be one SHIFT+jog away, not buried behind bank stepping. */
   sections: [
@@ -3492,186 +3497,34 @@ function drawWave(ctx, g, cells, s, spec) {
 
 /* ---- the overlay object ---- */
 
-/* ── on-screen text entry ────────────────────────────────────────────────────
+/* ── text entry: the HOST's keyboard, not a copy of it ─────────────────────
  *
- * Naming a preset, pad or kit from a canvas was impossible: the host's
- * text_entry.mjs is host-UI, and a fullscreen canvas draws everything itself, so
- * it cannot borrow it. Open with ctx.promptText({...}).
+ * Josh, after using the kit's own reimplementation on device: "can we not just
+ * completely steal the host keyboard? i much prefer it."
  *
- * ⭑ MODELLED ON THE HOST KEYBOARD (src/shared/text_entry.mjs) so the gesture is
- * the one users already know: the jog scrubs a KEYBOARD, click types the
- * highlighted key, and the specials (page / space / delete / OK) sit after the
- * characters in the same 1-D selection. Selection CLAMPS at both ends rather
- * than wrapping — the host does this deliberately so you can slam the jog right
- * to land on OK, and slam left to land on the first character.
+ * We can. `shared/text_entry.mjs` is an ES module; a canvas is evaluated as a
+ * module in the SAME QuickJS context (verified on device); and every global it
+ * needs — print, fill_rect, clear_screen, move_midi_internal_send — a canvas
+ * already has. So the kit does not draw a keyboard at all any more. It opens
+ * the host's.
  *
- * Two things could NOT be copied, both forced by the canvas environment:
+ * Beyond looking right, that inherits Move's own font, the character pages
+ * INCLUDING lowercase, pad typing with velocity/aftertouch, the preview
+ * behaviour and the screen-reader announcements — none of which a kit-local
+ * copy would have kept in step.
  *
- * 1. ⚠ NO LOWERCASE PAGE. The host has a real font; the kit's has 48 glyphs and
- *    no lowercase at all, and the movy font's "lowercase" is literally the
- *    uppercase shapes. A lowercase page would type something that displays — and
- *    would later be saved — as uppercase. So the pages are upper / digits /
- *    symbols, every glyph verified renderable, and input is upper-cased.
+ * build.mjs emits the import only for a config declaring `textEntry: true`, for
+ * the same reason as the fs import: a static import that fails to resolve kills
+ * the whole canvas. Everything here is guarded on `typeof`, so a canvas built
+ * without it degrades to "promptText refuses" rather than throwing.
  *
- * 2. ⚠ BACK CANNOT CANCEL. In the host, Back cancels the field. On a canvas Back
- *    is never claimable and always closes the WHOLE canvas — so pressing it here
- *    would drop the user out of the module entirely, without onCancel ever
- *    firing. Hence a fifth special the host does not need: an on-screen CANCEL.
- */
-/* Two pages, mirroring the host's uppercase and digits/symbols pages.
- *
- * ⚠ NO LOWERCASE PAGE, even though the field now draws in the host font that
- * could render it. The VALUE is displayed elsewhere by kit-drawn cells and
- * headers in the 48-glyph pixel font, where lowercase renders as BLANKS — so a
- * lowercase name would type fine and then disappear from the very label it
- * names. Same reason the symbol page is limited to glyphs the kit font also has.
- * If the kit ever gains a lowercase pixel font, this is the one place to change. */
-const TE_PAGES = [
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-  "0123456789.-_()#&+:/>"
-];
-/* Specials, indexed after the current page's characters. */
-const TE_SP_PAGE = 0, TE_SP_SPACE = 1, TE_SP_DEL = 2, TE_SP_CLR = 3,
-      TE_SP_OK = 4, TE_SP_CANCEL = 5;
-const TE_SPECIALS = ["PG", "SPC", "DEL", "CLR", "OK", "ESC"];
-const TE_MAXLEN_DEFAULT = 16;
-
-/* Keep only what the font can draw, upper-cased — see note 1 above. */
-function teSanitize(str, maxLen) {
-  const up = String(str == null ? "" : str).toUpperCase();
-  const all = TE_PAGES.join("") + " ";
-  let out = "";
-  for (let i = 0; i < up.length && out.length < maxLen; i++) {
-    const c = up.charAt(i);
-    if (all.indexOf(c) >= 0) out += c;
-  }
-  return out;
+ * ⚠ Lowercase types fine and the value keeps its real case — only the kit's own
+ * labels upper-case it for display (pfPrint folds case, so nothing is blank). */
+function teAvailable() {
+  return typeof openTextEntry === "function" && typeof isTextEntryActive === "function";
 }
-
-/* Batched jog delta, same encoding the host's decodeDelta reads: a fast turn
- * arrives as a few LARGE messages, not a stream of ±1, so scrubbing a 26-key
- * page has to honour the magnitude or it crawls. */
-function teDelta(val) {
-  if (val >= 1 && val <= 63) return val;
-  if (val >= 65 && val <= 127) return val - 128;
-  return 0;
-}
-
-function teItemCount(te) { return TE_PAGES[te.page].length + TE_SPECIALS.length; }
-function teLabelAt(te, i) {
-  const chars = TE_PAGES[te.page];
-  return i < chars.length ? chars.charAt(i) : TE_SPECIALS[i - chars.length];
-}
-
-/* Text in the HOST's font (see ctx._hostPrint), falling back to the kit's if a
- * context does not provide one. */
-function tePrint(ctx, x, y, text, color) {
-  if (ctx._hostPrint) ctx._hostPrint(x, y, String(text), color);
-  else ctx.print(x, y, String(text), color);
-}
-function teWidth(ctx, text) {
-  if (ctx._hostWidth) return ctx._hostWidth(text);
-  return ctx.measureText ? ctx.measureText(String(text)) : String(text).length * PF_ADVANCE;
-}
-
-function teDraw(ctx, te) {
-  ctx.fillRect(0, 0, ctx.width, ctx.height, 0);
-  tePrint(ctx, 2, 0, String(te.title || "NAME"), 1);
-
-  /* Buffer, boxed so an empty field still reads as a field. */
-  ctx.drawRect(1, 8, ctx.width - 2, 11, 1);
-  let shown = te.buffer;
-  while (shown.length && teWidth(ctx, shown) > ctx.width - 10) shown = shown.slice(1);
-  tePrint(ctx, 3, 9, shown, 1);
-  ctx.fillRect(3 + teWidth(ctx, shown), 10, 1, 7, 1);            /* caret */
-
-  /* Keyboard: proportional, so lay each row out by measured width rather than a
-   * fixed cell. Wraps to the next row when it runs out of screen. */
-  const chars = TE_PAGES[te.page];
-  const items = [];
-  for (let i = 0; i < chars.length; i++) items.push(chars.charAt(i));
-  for (let k = 0; k < TE_SPECIALS.length; k++) items.push(TE_SPECIALS[k]);
-
-  /* ⚠ Every key MUST be drawn. Selection is a 1-D scroll over `items`, so a key
-   * that does not fit is still selectable but invisible — the user scrolls onto
-   * something they cannot see. Sized so all 32 (26 letters + 6 specials) fit in
-   * four rows even at the widest plausible advance; the last row is clamped
-   * rather than dropped, so a font wider than expected degrades to overlap
-   * instead of to unreachable keys. */
-  const rowH = 10, gy = 20, pad = 2;
-  const maxY = ctx.height - rowH;
-  let x = 2, y = gy;
-  for (let i = 0; i < items.length; i++) {
-    const label = items[i];
-    const w = teWidth(ctx, label) + pad * 2;
-    if (x + w > ctx.width - 1) { x = 2; if (y < maxY) y += rowH; }
-    const on = i === te.sel;
-    if (on) ctx.fillRect(x, y, w, rowH - 1, 1);
-    tePrint(ctx, x + pad, y + 1, label, on ? 0 : 1);
-    x += w + 1;
-  }
-}
-
-/* Returns true when the message was consumed. */
-function teMidi(ctx, te, status, d1, d2, s) {
-  if (status !== 0xB0) return true;              // modal: swallow notes too
-
-  if (d1 === 14) {                               // jog: scrub the keyboard
-    const delta = teDelta(d2);
-    if (delta) {
-      let n = te.sel + delta;
-      const max = teItemCount(te) - 1;
-      if (n < 0) n = 0;                          // clamp, don't wrap (host does
-      if (n > max) n = max;                      // this so you can slam to OK)
-      te.sel = n;
-    }
-    return true;
-  }
-
-  if (d1 === 3 && d2 > 0) {                      // click: select
-    const chars = TE_PAGES[te.page];
-    if (te.sel < chars.length) {
-      if (te.buffer.length < te.maxLen) te.buffer += chars.charAt(te.sel);
-      return true;
-    }
-    switch (te.sel - chars.length) {
-      case TE_SP_PAGE:
-        te.page = (te.page + 1) % TE_PAGES.length;
-        /* Keep the cursor on the page key itself — the host does the same, so a
-         * second click cycles again instead of hunting for it. */
-        te.sel = TE_PAGES[te.page].length + TE_SP_PAGE;
-        break;
-      case TE_SP_SPACE:
-        if (te.buffer.length < te.maxLen) te.buffer += " ";
-        break;
-      case TE_SP_DEL:
-        te.buffer = te.buffer.slice(0, -1);
-        break;
-      case TE_SP_CLR:
-        te.buffer = "";
-        break;
-      case TE_SP_OK: {
-        const v = te.buffer.replace(/\s+$/, "");
-        ctx._textEntry = null;
-        if (te.onCommit) te.onCommit(v);
-        break;
-      }
-      case TE_SP_CANCEL:
-        ctx._textEntry = null;
-        if (te.onCancel) te.onCancel();
-        break;
-    }
-    return true;
-  }
-
-  /* Delete (CC 119) as a hardware backspace, only when the module claimed the
-   * edit CCs — otherwise this CC never arrives and Move still owns the button. */
-  if (d1 === 119 && d2 > 0 && CONFIG.claims && CONFIG.claims.editCcs) {
-    te.buffer = te.buffer.slice(0, -1);
-    return true;
-  }
-
-  return true;
+function teActive() {
+  return teAvailable() && isTextEntryActive();
 }
 
 const bank_editor = {
@@ -3682,11 +3535,12 @@ const bank_editor = {
    *
    * Shift+Back never reaches here; the host keeps it as the unclaimable failsafe. */
   handleBack(ctx) {
-    if (ctx && ctx._textEntry) {
-      const te = ctx._textEntry;
-      ctx._textEntry = null;
-      if (te.onCancel) te.onCancel();
-      return true;                    // stepped out of the field, not the canvas
+    /* The host keyboard cancels on Back itself, but the host steals Back before
+     * a canvas's onMidi ever sees it — so route it here rather than duplicating
+     * the behaviour. */
+    if (teActive()) {
+      handleTextEntryMidi([0xB0, 51, 127]);   // CC_BACK: the keyboard's own cancel
+      return true;                            // stepped out of the field, not the canvas
     }
     return false;
   },
@@ -3705,7 +3559,7 @@ const bank_editor = {
     // Text entry is MODAL and runs ahead of everything, including CONFIG.onMidi:
     // while a field is open every control belongs to it, so a stray jog cannot
     // edit a param behind the keyboard.
-    if (ctx._textEntry) { teMidi(ctx, ctx._textEntry, status, d[1], d[2], s); return true; }
+    if (teActive()) { handleTextEntryMidi(d); return true; }
 
     // Config gets first refusal on every message. Needed because the note
     // branch below returns for ALL notes, not just the 0-7 encoder-touch ones,
@@ -3934,11 +3788,10 @@ const bank_editor = {
       };
       ctx.canUndo = function () { return !!ctx._undo; };
 
-      // Open the on-screen keyboard. Returns false (and does nothing) if the
-      // module has not claimed the jog click — without it the click closes the
-      // canvas, so there would be no way to COMMIT and the field would be a
-      // trap. Failing loudly here beats shipping a keyboard you cannot leave.
-      ctx._textEntry = null;
+      /* Opens the HOST's keyboard (see the text-entry note above). Refuses
+       * rather than half-working in two cases: without the jog click there is no
+       * way to COMMIT so the field would be a trap, and without the import there
+       * is no keyboard to open. */
       ctx.promptText = function (opts) {
         opts = opts || {};
         if (!(CONFIG.claims && CONFIG.claims.jogClick)) {
@@ -3948,21 +3801,22 @@ const bank_editor = {
           }
           return false;
         }
-        var maxLen = opts.maxLen > 0 ? opts.maxLen : TE_MAXLEN_DEFAULT;
-        ctx._textEntry = {
-          title: opts.title || "NAME",
-          buffer: teSanitize(opts.value, maxLen),
-          maxLen: maxLen,
-          page: 0,
-          sel: 0,
-          onCommit: opts.onCommit || null,
+        if (!teAvailable()) {
+          if (typeof console !== "undefined" && console.log) {
+            console.log("canvaskit: promptText needs CONFIG.textEntry: true so the build " +
+                        "imports the host keyboard");
+          }
+          return false;
+        }
+        openTextEntry({
+          title: opts.title || "",
+          initialText: opts.value == null ? "" : String(opts.value),
+          onConfirm: opts.onCommit || null,
           onCancel: opts.onCancel || null
-        };
+        });
         return true;
       };
-      // Restores and CONSUMES the snapshot, so a second Undo does not re-apply
-      // an old state over newer edits. Writes go through ctx.setParam, so
-      // write-through and CONFIG.writeInvalidates behave exactly as for any edit.
+
       ctx.undo = function () {
         var u = ctx._undo;
         if (!u) return false;
@@ -3992,8 +3846,13 @@ const bank_editor = {
     if ((ctx._cacheTick = (ctx._cacheTick + 1) % 24) === 0) ctx._pcache = {};
 
     const s = readState(ctx);
-    // Modal: the field owns the screen while it is open.
-    if (ctx._textEntry) { teDraw(ctx, ctx._textEntry); return; }
+    // Modal: the host keyboard owns the screen while open. A canvas has no tick
+    // of its own, so the draw pass is where its preview timeout gets serviced.
+    if (teActive()) {
+      if (typeof tickTextEntry === "function") tickTextEntry();
+      drawTextEntry();
+      return;
+    }
     const bank = BANKS[s.bank];
     if (bank.steps && (s.sub || 0) >= 1) drawStepEditor(ctx, bank, s);
     else drawBankView(ctx, bank, cellsFor(ctx, bank, 0, s), s);
