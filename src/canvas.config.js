@@ -508,7 +508,42 @@ function busBank() {
  * so a kit insert duplicated a facility the host provides — and only DR32 could
  * reach or persist it. The Drum Bus above is the one fixed stage, and it is not
  * a selectable insert either. */
-const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), busBank()]);
+
+/* ══════════ TEMPORARY — kit-feature test rig (2026-07-31) ══════════════════
+ * REMOVE AFTER TESTING. Exists only because nothing in DR32 yet calls the new
+ * canvaskit features, so there would be nothing to press. None of this is a
+ * DR32 feature and none of it should survive the test.
+ *   KITTEST bank  — directory browser on a scratch key (writes nowhere real)
+ *   Copy   (60)   — opens the on-screen keyboard
+ *   Delete (119)  — snapshots pad_volume then slams it to -36 dB; Undo restores
+ * The scratch key `kit_test_path` is not a DR32 param: the DSP ignores writes
+ * to it, which is the point — browsing must not touch the user's kit. */
+function kitTestBank() {
+  const c = count(`kit_test_path`, "Dir", 0, 0);
+  c.name = "Directory Browser (kit test)";
+  c.dir = {
+    root: "/data/UserData",
+    start: "/data/UserData/UserLibrary",
+    filter: [".wav", ".aif", ".ablpreset", ".json"]
+  };
+  c.text = (ctx) => {
+    const v = String(ctx.getParam(`kit_test_path`) || "");
+    const i = v.lastIndexOf("/");
+    return v ? (i >= 0 ? v.slice(i + 1) : v).slice(0, 4) : "--";
+  };
+  return { label: "KitTest", icon: "pulse", cells: [c] };
+}
+
+let kitTestText = "";
+function drawKitTestHud(ctx, cells, s) {
+  if (!kitTestText) return;
+  ctx.fillRect(0, 0, 128, 9, 0);
+  ctx.drawRect(0, 0, 128, 9, 1);
+  mvPrint(ctx, 2, 1, "TXT:" + kitTestText, 1);
+}
+/* ══════════ END TEMPORARY ═════════════════════════════════════════════════ */
+
+const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), busBank(), kitTestBank()]);
 
 /* There is deliberately NO pad-map overlay. A 4x8 map of the kit used to be
  * drawn over the parameters whenever focus moved, because focus could move
@@ -573,6 +608,26 @@ const CONFIG = {
   onMidi: function (ctx, s, payload) {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
+
+    /* TEMPORARY kit-test triggers — remove with kitTestBank(). */
+    if ((d[0] & 0xF0) === 0xB0 && d[2] > 0) {
+      if (d[1] === 60) {                       /* Copy -> on-screen keyboard */
+        ctx.promptText({
+          title: "KIT TEST",
+          value: kitTestText || "HELLO",
+          onCommit: (t) => { kitTestText = t || "(empty)"; },
+          onCancel: () => { kitTestText = "(cancelled)"; }
+        });
+        return true;
+      }
+      if (d[1] === 119) {                      /* Delete -> destructive edit */
+        ctx.snapshot([`pad_volume`], "kit test");
+        ctx.setParam(`pad_volume`, "-36");     /* Undo (CC 56) restores it */
+        return true;
+      }
+      /* CC 56 deliberately NOT consumed — the kit's own undo handles it. */
+    }
+
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
     if (d[1] < PAD_NOTE_LO || d[1] > PAD_NOTE_HI) return false;
     /* Do NOT flush here. Whether focus moves is the DSP's decision (note ->
@@ -588,6 +643,8 @@ const CONFIG = {
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the
    * classic display-desync. */
+
+  overlays: [drawKitTestHud],   /* TEMPORARY */
 
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;

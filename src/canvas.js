@@ -5,6 +5,8 @@
  * schwung-movy, MIT (c) 2026 megadake; fonts via echidna/davebox mcufont).
  * Loaded by the host as canvas.js#bank_editor. Jog = banks (no overlay);
  * SHIFT+jog = section picker; knobs CC 71-78 edit the active bank. */
+import * as os from 'os';
+
 (function () {
 
 /* ==== schwung-canvaskit core: prelude ====
@@ -1849,7 +1851,42 @@ function busBank() {
  * so a kit insert duplicated a facility the host provides — and only DR32 could
  * reach or persist it. The Drum Bus above is the one fixed stage, and it is not
  * a selectable insert either. */
-const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), busBank()]);
+
+/* ══════════ TEMPORARY — kit-feature test rig (2026-07-31) ══════════════════
+ * REMOVE AFTER TESTING. Exists only because nothing in DR32 yet calls the new
+ * canvaskit features, so there would be nothing to press. None of this is a
+ * DR32 feature and none of it should survive the test.
+ *   KITTEST bank  — directory browser on a scratch key (writes nowhere real)
+ *   Copy   (60)   — opens the on-screen keyboard
+ *   Delete (119)  — snapshots pad_volume then slams it to -36 dB; Undo restores
+ * The scratch key `kit_test_path` is not a DR32 param: the DSP ignores writes
+ * to it, which is the point — browsing must not touch the user's kit. */
+function kitTestBank() {
+  const c = count(`kit_test_path`, "Dir", 0, 0);
+  c.name = "Directory Browser (kit test)";
+  c.dir = {
+    root: "/data/UserData",
+    start: "/data/UserData/UserLibrary",
+    filter: [".wav", ".aif", ".ablpreset", ".json"]
+  };
+  c.text = (ctx) => {
+    const v = String(ctx.getParam(`kit_test_path`) || "");
+    const i = v.lastIndexOf("/");
+    return v ? (i >= 0 ? v.slice(i + 1) : v).slice(0, 4) : "--";
+  };
+  return { label: "KitTest", icon: "pulse", cells: [c] };
+}
+
+let kitTestText = "";
+function drawKitTestHud(ctx, cells, s) {
+  if (!kitTestText) return;
+  ctx.fillRect(0, 0, 128, 9, 0);
+  ctx.drawRect(0, 0, 128, 9, 1);
+  mvPrint(ctx, 2, 1, "TXT:" + kitTestText, 1);
+}
+/* ══════════ END TEMPORARY ═════════════════════════════════════════════════ */
+
+const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), busBank(), kitTestBank()]);
 
 /* There is deliberately NO pad-map overlay. A 4x8 map of the kit used to be
  * drawn over the parameters whenever focus moved, because focus could move
@@ -1914,6 +1951,26 @@ const CONFIG = {
   onMidi: function (ctx, s, payload) {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
+
+    /* TEMPORARY kit-test triggers — remove with kitTestBank(). */
+    if ((d[0] & 0xF0) === 0xB0 && d[2] > 0) {
+      if (d[1] === 60) {                       /* Copy -> on-screen keyboard */
+        ctx.promptText({
+          title: "KIT TEST",
+          value: kitTestText || "HELLO",
+          onCommit: (t) => { kitTestText = t || "(empty)"; },
+          onCancel: () => { kitTestText = "(cancelled)"; }
+        });
+        return true;
+      }
+      if (d[1] === 119) {                      /* Delete -> destructive edit */
+        ctx.snapshot([`pad_volume`], "kit test");
+        ctx.setParam(`pad_volume`, "-36");     /* Undo (CC 56) restores it */
+        return true;
+      }
+      /* CC 56 deliberately NOT consumed — the kit's own undo handles it. */
+    }
+
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
     if (d[1] < PAD_NOTE_LO || d[1] > PAD_NOTE_HI) return false;
     /* Do NOT flush here. Whether focus moves is the DSP's decision (note ->
@@ -1929,6 +1986,8 @@ const CONFIG = {
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the
    * classic display-desync. */
+
+  overlays: [drawKitTestHud],   /* TEMPORARY */
 
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;
@@ -3109,6 +3168,7 @@ function drawBankView(ctx, bank, cells, s) {
   }
   drawEnumOverlay(ctx, cells, s);
   drawListOverlay(ctx, cells, s);
+  drawDirOverlay(ctx, cells, s);
   // Module hooks: transient value-HUDs etc. Each fn(ctx, cells, s) draws on
   // top of the bank view (use hudCard for the standard popup frame).
   if (CONFIG.overlays) for (const fn of CONFIG.overlays) fn(ctx, cells, s);
@@ -3151,9 +3211,16 @@ function drawListOverlay(ctx, cells, s) {
   const raw = String(ctx.getParam(cell.list.names) || "");
   if (!raw) return;                        /* nothing to show (e.g. empty pad) */
   const names = raw.split("\n");
-  const n = names.length;
   const sel = parseInt(ctx.getParam(cell.key), 10);
-  if (!n || !isFinite(sel) || sel < 0) return;
+  if (!names.length || !isFinite(sel) || sel < 0) return;
+  drawPickList(ctx, names, sel);
+}
+
+/* The shared frame + scrolling window, used by the flat list picker and the
+ * directory browser alike so the two are visually the same control. */
+function drawPickList(ctx, names, sel) {
+  const n = names.length;
+  if (!n) return;
 
   const X = LIST_X, Y = LIST_Y, W = LIST_W, H = LIST_H;
   ctx.fillRect(X, Y, W, H, 0);
@@ -3189,6 +3256,152 @@ function drawListOverlay(ctx, cells, s) {
     ctx.fillRect(X + W - 2, listTop, 1, trackH, 1);
     ctx.fillRect(X + W - 3, thumbY, 2, thumbH, 1);
   }
+}
+
+/* ── directory browser ───────────────────────────────────────────────────────
+ *
+ * The list picker, plus directory navigation. Same single-knob feel as a flat
+ * picker — hold the knob, turn to scroll — with ".." and subdirectories in the
+ * list and a jog CLICK to step into or out of them.
+ *
+ *   const c = count("sample", "Smpl", 0, 0);
+ *   c.dir = { root: "/data/UserData", start: "/data/UserData/Samples",
+ *             filter: [".wav", ".aif"] };
+ *   // the cell's KEY receives the selected file's full PATH
+ *
+ * ⭑ LIVE PREVIEW is preserved: scrolling onto a FILE writes its path to the
+ * cell's key immediately, so a DSP that loads on write sounds it as you turn —
+ * the same behaviour as scrolling a flat index picker. Scrolling onto a
+ * DIRECTORY writes nothing, so whatever you last previewed stays loaded.
+ *
+ * ⭑ A PATH, not an index. An index only means something alongside "which
+ * directory was open at the time", so it cannot be resolved after a reload and
+ * does not round-trip through a preset. The path does.
+ *
+ * ⚠ `root` is a floor: ".." never appears at root, so a module cannot be
+ * navigated out of the tree it opened.
+ *
+ * ⚠ Needs `os`, which build.mjs imports ABOVE the IIFE when a config declares a
+ * `dir` cell. Guarded so a canvas built without it degrades to an empty
+ * listing instead of throwing on every frame. */
+function dirFsAvailable() {
+  return typeof os !== "undefined" && os && typeof os.readdir === "function";
+}
+
+function dirParentOf(path) {
+  const i = path.lastIndexOf("/");
+  if (i <= 0) return "/";
+  return path.slice(0, i);
+}
+
+function dirJoin(base, name) {
+  return base === "/" ? "/" + name : base + "/" + name;
+}
+
+function dirMatchesFilter(name, filter) {
+  if (!filter || !filter.length) return true;
+  const lower = name.toLowerCase();
+  for (let i = 0; i < filter.length; i++) {
+    const f = String(filter[i]).toLowerCase();
+    if (lower.length >= f.length && lower.lastIndexOf(f) === lower.length - f.length) return true;
+  }
+  return false;
+}
+
+/* Entries for `cwd`: [".." if above root] + subdirectories + matching files.
+ * ⚠ os.readdir returns [entries, errno] — NOT an array. Treating it as one
+ * yields "no entries" silently, which reads as an empty folder. */
+function dirList(cwd, spec) {
+  const out = [];
+  /* ".." only when cwd is genuinely BELOW root. Testing lengths (or even
+   * startsWith(root)) is not containment: "/rootabc" is longer than "/root" and
+   * starts with it, but is a sibling — offering ".." there walks the user out of
+   * the tree the module opened. Require the separator. */
+  if (spec.root && cwd !== spec.root && cwd.lastIndexOf(spec.root + "/", 0) === 0) {
+    out.push({ name: "..", dir: true, path: dirParentOf(cwd) });
+  }
+  if (!dirFsAvailable()) return out;
+  let names = [];
+  try {
+    const res = os.readdir(cwd);
+    names = (res && res[0]) || [];
+  } catch (e) { return out; }
+
+  const dirs = [], files = [];
+  for (let i = 0; i < names.length; i++) {
+    const n = names[i];
+    if (n === "." || n === "..") continue;
+    const full = dirJoin(cwd, n);
+    let isDir = false;
+    try {
+      const st = os.stat(full);
+      const mode = st && st[0] && st[0].mode;
+      isDir = !!(mode && (mode & 0xF000) === 0x4000);   /* S_IFDIR */
+    } catch (e) { isDir = false; }
+    if (isDir) dirs.push({ name: n, dir: true, path: full });
+    else if (dirMatchesFilter(n, spec.filter)) files.push({ name: n, dir: false, path: full });
+  }
+  dirs.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return out.concat(dirs, files);
+}
+
+/* Per-cell browse state, rebuilt when the directory changes. */
+function dirState(ctx, cell, s) {
+  let st = s._dir;
+  if (!st || st.key !== cell.key) {
+    const cur = String(ctx.getParam(cell.key) || "");
+    const start = cur && cur.indexOf("/") >= 0 ? dirParentOf(cur)
+                                               : (cell.dir.start || cell.dir.root || "/");
+    st = s._dir = { key: cell.key, cwd: start, cursor: 0, entries: null };
+    /* Land on the current file so opening the browser shows where you are. */
+    st.entries = dirList(st.cwd, cell.dir);
+    for (let i = 0; i < st.entries.length; i++) {
+      if (st.entries[i].path === cur) { st.cursor = i; break; }
+    }
+  }
+  if (!st.entries) st.entries = dirList(st.cwd, cell.dir);
+  return st;
+}
+
+function dirGoto(ctx, cell, s, cwd) {
+  const st = dirState(ctx, cell, s);
+  st.cwd = cwd;
+  st.entries = dirList(cwd, cell.dir);
+  st.cursor = 0;
+}
+
+/* Knob movement: scroll, and PREVIEW files by writing the path. */
+function dirScroll(ctx, cell, s, delta) {
+  const st = dirState(ctx, cell, s);
+  const n = st.entries.length;
+  if (!n) return;
+  let c = st.cursor + delta;
+  if (c < 0) c = 0;
+  if (c > n - 1) c = n - 1;
+  if (c === st.cursor) return;
+  st.cursor = c;
+  const e = st.entries[c];
+  if (!e.dir) ctx.setParam(cell.key, e.path);      /* live preview */
+}
+
+/* Click: enter a directory / go up. Returns true only when it CONSUMED the
+ * press — over a file it declines, so the click stays available to the host or
+ * to davebox's shell menu. */
+function dirClick(ctx, cell, s) {
+  const st = dirState(ctx, cell, s);
+  const e = st.entries[st.cursor];
+  if (!e || !e.dir) return false;
+  dirGoto(ctx, cell, s, e.path);
+  return true;
+}
+
+function drawDirOverlay(ctx, cells, s) {
+  const k = s.lastKnob;
+  const cell = k >= 0 ? cells[k] : null;
+  if (!cell || !cell.dir) return;
+  const st = dirState(ctx, cell, s);
+  drawPickList(ctx, st.entries.map((e) => (e.dir ? e.name + "/" : e.name)), st.cursor);
 }
 
 /* ── sample waveform ─────────────────────────────────────────────────────────
@@ -3513,6 +3726,15 @@ const bank_editor = {
       return true;
     }
 
+    /* Jog CLICK while a directory browser is open: step into the highlighted
+     * directory, or up via "..". CONTEXT-SENSITIVE — over a FILE this declines,
+     * so the click stays available to the host / davebox's shell menu. That is
+     * the same consume-only-when-meaningful rule as handleBack. */
+    if (cc === 3 && val > 0) {
+      const dcell = s.lastKnob >= 0 ? cellsFor(ctx, BANKS[s.bank], 0, s)[s.lastKnob] : null;
+      if (dcell && dcell.dir && dirClick(ctx, dcell, s)) return true;
+    }
+
     /* Everything else — the jog CLICK above all — is DECLINED, so a host that
      * offers events to the canvas first (davebox's sound mode) can fall back to
      * its own shell gesture instead of the press vanishing into the module. */
@@ -3523,6 +3745,15 @@ const bank_editor = {
     const bank = BANKS[s.bank];
     const cell = cellsFor(ctx, bank, s.sub || 0, s)[k];
     if (!cell || cell.kind === "blank") return true;   // empty slot on this bank
+
+    /* A directory cell's knob moves the BROWSER cursor; it never writes an
+     * index to the cell key, because the wire value is a path. */
+    if (cell.dir) {
+      const dr = accumStep(s.cellAccum || 0, dir, KIT_PICK_SENS);
+      s.cellAccum = dr.accum;
+      if (dr.fire) dirScroll(ctx, cell, s, dir);
+      return true;
+    }
 
     if (cell.kind === "steplvl") {
       // Step editor: set the engine's step cursor only when the target step
@@ -3721,7 +3952,8 @@ const bank_editor = {
     drawBankIcon, BANK_ICONS, ICON_W, iconW,
     widgetFor, enumSquareLines, pf3Width, CONFIG, envSpec, filtGainAt,
     cellsFor, headerFor, headerTextFor, nameFor, paramNames, fitHdr, hdrWidth, getRaw, subPageCount, stepCells, stepVals, shapeSample, hudCard,
-    wavePeaks, drawWave, drawListOverlay, normOf
+    wavePeaks, drawWave, drawListOverlay, normOf,
+    dirList, dirState, dirScroll, dirClick, drawDirOverlay, dirParentOf, dirMatchesFilter
   }, CONFIG.testExports || {})
 };
 
