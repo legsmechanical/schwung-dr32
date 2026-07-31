@@ -536,10 +536,22 @@ function kitTestBank() {
 
 let kitTestText = "";
 function drawKitTestHud(ctx, cells, s) {
-  if (!kitTestText) return;
+  /* TEMPORARY diagnostic: is the `os` module actually live inside a canvas?
+   * The directory browser showed only ".." and then went blank, which is
+   * exactly what happens when os is undefined — dirList returns early, and an
+   * empty list draws nothing at all. Report it rather than keep guessing. */
+  let diag = "OS:" + (typeof os);
+  try {
+    if (typeof os !== "undefined" && os && os.readdir) {
+      const r = os.readdir("/data/UserData/UserLibrary");
+      const arr = (r && r[0]) || [];
+      diag += " N:" + (arr.length | 0) + " T:" + (Array.isArray(r) ? "tup" : typeof r);
+    }
+  } catch (e) { diag += " ERR"; }
+  const line = kitTestText ? diag + " " + kitTestText : diag;
   ctx.fillRect(0, 0, 128, 9, 0);
   ctx.drawRect(0, 0, 128, 9, 1);
-  mvPrint(ctx, 2, 1, "TXT:" + kitTestText, 1);
+  mvPrint(ctx, 2, 1, line, 1);
 }
 /* ══════════ END TEMPORARY ═════════════════════════════════════════════════ */
 
@@ -616,7 +628,9 @@ const CONFIG = {
           title: "KIT TEST",
           value: kitTestText || "HELLO",
           onCommit: (t) => { kitTestText = t || "(empty)"; },
-          onCancel: () => { kitTestText = "(cancelled)"; }
+          /* Cancel must leave the value ALONE — writing a marker here meant the
+           * next open seeded the field with "(cancelled)". */
+          onCancel: () => {}
         });
         return true;
       }

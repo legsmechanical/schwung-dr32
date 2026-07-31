@@ -1877,10 +1877,22 @@ function kitTestBank() {
 
 let kitTestText = "";
 function drawKitTestHud(ctx, cells, s) {
-  if (!kitTestText) return;
+  /* TEMPORARY diagnostic: is the `os` module actually live inside a canvas?
+   * The directory browser showed only ".." and then went blank, which is
+   * exactly what happens when os is undefined — dirList returns early, and an
+   * empty list draws nothing at all. Report it rather than keep guessing. */
+  let diag = "OS:" + (typeof os);
+  try {
+    if (typeof os !== "undefined" && os && os.readdir) {
+      const r = os.readdir("/data/UserData/UserLibrary");
+      const arr = (r && r[0]) || [];
+      diag += " N:" + (arr.length | 0) + " T:" + (Array.isArray(r) ? "tup" : typeof r);
+    }
+  } catch (e) { diag += " ERR"; }
+  const line = kitTestText ? diag + " " + kitTestText : diag;
   ctx.fillRect(0, 0, 128, 9, 0);
   ctx.drawRect(0, 0, 128, 9, 1);
-  mvPrint(ctx, 2, 1, "TXT:" + kitTestText, 1);
+  mvPrint(ctx, 2, 1, line, 1);
 }
 /* ══════════ END TEMPORARY ═════════════════════════════════════════════════ */
 
@@ -1957,7 +1969,9 @@ const CONFIG = {
           title: "KIT TEST",
           value: kitTestText || "HELLO",
           onCommit: (t) => { kitTestText = t || "(empty)"; },
-          onCancel: () => { kitTestText = "(cancelled)"; }
+          /* Cancel must leave the value ALONE — writing a marker here meant the
+           * next open seeded the field with "(cancelled)". */
+          onCancel: () => {}
         });
         return true;
       }
@@ -3502,14 +3516,22 @@ function drawWave(ctx, g, cells, s, spec) {
  *    would drop the user out of the module entirely, without onCancel ever
  *    firing. Hence a fifth special the host does not need: an on-screen CANCEL.
  */
+/* Two pages, mirroring the host's uppercase and digits/symbols pages.
+ *
+ * ⚠ NO LOWERCASE PAGE, even though the field now draws in the host font that
+ * could render it. The VALUE is displayed elsewhere by kit-drawn cells and
+ * headers in the 48-glyph pixel font, where lowercase renders as BLANKS — so a
+ * lowercase name would type fine and then disappear from the very label it
+ * names. Same reason the symbol page is limited to glyphs the kit font also has.
+ * If the kit ever gains a lowercase pixel font, this is the one place to change. */
 const TE_PAGES = [
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-  "0123456789",
-  "-_().#&+:/>"
+  "0123456789.-_()#&+:/>"
 ];
 /* Specials, indexed after the current page's characters. */
-const TE_SP_PAGE = 0, TE_SP_SPACE = 1, TE_SP_DEL = 2, TE_SP_OK = 3, TE_SP_CANCEL = 4;
-const TE_SPECIALS = ["PG", "SPC", "DEL", "OK", "ESC"];
+const TE_SP_PAGE = 0, TE_SP_SPACE = 1, TE_SP_DEL = 2, TE_SP_CLR = 3,
+      TE_SP_OK = 4, TE_SP_CANCEL = 5;
+const TE_SPECIALS = ["PG", "SPC", "DEL", "CLR", "OK", "ESC"];
 const TE_MAXLEN_DEFAULT = 16;
 
 /* Keep only what the font can draw, upper-cased — see note 1 above. */
@@ -3539,32 +3561,52 @@ function teLabelAt(te, i) {
   return i < chars.length ? chars.charAt(i) : TE_SPECIALS[i - chars.length];
 }
 
+/* Text in the HOST's font (see ctx._hostPrint), falling back to the kit's if a
+ * context does not provide one. */
+function tePrint(ctx, x, y, text, color) {
+  if (ctx._hostPrint) ctx._hostPrint(x, y, String(text), color);
+  else ctx.print(x, y, String(text), color);
+}
+function teWidth(ctx, text) {
+  if (ctx._hostWidth) return ctx._hostWidth(text);
+  return ctx.measureText ? ctx.measureText(String(text)) : String(text).length * PF_ADVANCE;
+}
+
 function teDraw(ctx, te) {
   ctx.fillRect(0, 0, ctx.width, ctx.height, 0);
-  ctx.print(2, 1, String(te.title || "NAME").slice(0, 21), 1);
+  tePrint(ctx, 2, 0, String(te.title || "NAME"), 1);
 
   /* Buffer, boxed so an empty field still reads as a field. */
-  ctx.drawRect(1, 9, ctx.width - 2, 9, 1);
-  const shown = te.buffer.length > 19 ? te.buffer.slice(te.buffer.length - 19) : te.buffer;
-  ctx.print(3, 11, shown, 1);
-  ctx.fillRect(3 + shown.length * PF_ADVANCE, 11, 1, PF_GLYPH_H, 1);   /* caret */
+  ctx.drawRect(1, 8, ctx.width - 2, 11, 1);
+  let shown = te.buffer;
+  while (shown.length && teWidth(ctx, shown) > ctx.width - 10) shown = shown.slice(1);
+  tePrint(ctx, 3, 9, shown, 1);
+  ctx.fillRect(3 + teWidth(ctx, shown), 10, 1, 7, 1);            /* caret */
 
-  /* Keyboard: characters in a grid, specials on their own row below. */
+  /* Keyboard: proportional, so lay each row out by measured width rather than a
+   * fixed cell. Wraps to the next row when it runs out of screen. */
   const chars = TE_PAGES[te.page];
-  const perRow = 13, cellW = 9, cellH = 9, gx = 2, gy = 22;
-  for (let i = 0; i < chars.length; i++) {
-    const x = gx + (i % perRow) * cellW, y = gy + ((i / perRow) | 0) * cellH;
-    if (i === te.sel) ctx.fillRect(x - 1, y - 1, cellW, cellH, 1);
-    ctx.print(x + 1, y, chars.charAt(i), i === te.sel ? 0 : 1);
-  }
-  const rows = Math.ceil(chars.length / perRow);
-  let sx = gx, sy = gy + rows * cellH + 1;
-  for (let k = 0; k < TE_SPECIALS.length; k++) {
-    const lbl = TE_SPECIALS[k], w = lbl.length * PF_ADVANCE + 3;
-    const on = te.sel === chars.length + k;
-    if (on) ctx.fillRect(sx - 1, sy - 1, w, cellH, 1);
-    ctx.print(sx + 1, sy, lbl, on ? 0 : 1);
-    sx += w + 2;
+  const items = [];
+  for (let i = 0; i < chars.length; i++) items.push(chars.charAt(i));
+  for (let k = 0; k < TE_SPECIALS.length; k++) items.push(TE_SPECIALS[k]);
+
+  /* ⚠ Every key MUST be drawn. Selection is a 1-D scroll over `items`, so a key
+   * that does not fit is still selectable but invisible — the user scrolls onto
+   * something they cannot see. Sized so all 32 (26 letters + 6 specials) fit in
+   * four rows even at the widest plausible advance; the last row is clamped
+   * rather than dropped, so a font wider than expected degrades to overlap
+   * instead of to unreachable keys. */
+  const rowH = 10, gy = 20, pad = 2;
+  const maxY = ctx.height - rowH;
+  let x = 2, y = gy;
+  for (let i = 0; i < items.length; i++) {
+    const label = items[i];
+    const w = teWidth(ctx, label) + pad * 2;
+    if (x + w > ctx.width - 1) { x = 2; if (y < maxY) y += rowH; }
+    const on = i === te.sel;
+    if (on) ctx.fillRect(x, y, w, rowH - 1, 1);
+    tePrint(ctx, x + pad, y + 1, label, on ? 0 : 1);
+    x += w + 1;
   }
 }
 
@@ -3602,6 +3644,9 @@ function teMidi(ctx, te, status, d1, d2, s) {
         break;
       case TE_SP_DEL:
         te.buffer = te.buffer.slice(0, -1);
+        break;
+      case TE_SP_CLR:
+        te.buffer = "";
         break;
       case TE_SP_OK: {
         const v = te.buffer.replace(/\s+$/, "");
@@ -3799,6 +3844,16 @@ const bank_editor = {
       // (1) Text via the 5x5 pixel-font (the host's native OLED font has
       // different glyphs/metrics). Override print + measureText -> the layout
       // code routes every string through these.
+      /* Stash the HOST's own text renderer before overriding it. That is the
+       * font Move's native keyboard uses, and it is markedly more readable at
+       * this size than the kit's 5x5 pixel font — so the on-screen keyboard
+       * draws with it while everything else keeps the kit's look.
+       * `text_width` is a host global registered alongside `print`; guarded,
+       * because a context without it must degrade rather than throw. */
+      ctx._hostPrint = ctx.print;
+      ctx._hostWidth = (typeof text_width === "function")
+        ? function (str) { return text_width(String(str)); }
+        : null;
       ctx.print = function (x, y, text, color) { pfPrint(ctx, x, y, text, color ? 1 : 0); };
       ctx.measureText = function (str) { return pfWidth(str); };
       // (2) getParam cache. On device each ctx.getParam is a ~2.6ms blocking
