@@ -545,7 +545,20 @@ const CONFIG = {
     select: "ui_current_pad",
     press:  "ui_live_press",
     count:  PAD_COUNT,
-    notes:  [PAD_NOTE_LO, PAD_NOTE_HI]
+    notes:  [PAD_NOTE_LO, PAD_NOTE_HI],
+    /* Hold Copy + tap a pad to take it, tap more to paste; hold Delete + tap to
+     * clear. Undo puts back whatever was overwritten. Needs claims.editCcs
+     * (declared above) — build.mjs refuses without it, because missing the claim
+     * is silent AND destructive: no gesture, and Copy/Delete still act on the
+     * user's real Move set.
+     *
+     * ⭑ Copies WHAT THE EDITOR SHOWS — every `pad_` cell across the three pad
+     * banks. Not the pad's full DSP state: the kit cannot enumerate that, and
+     * copying an unstated subset silently would be worse than copying a stated
+     * one. Sample, start/length, transpose, detune, choke, the amp envelope,
+     * volume/pan, punch, filter and both sends all ride along; anything the
+     * pages do not expose does not. */
+    gestures: true
   },
 
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
