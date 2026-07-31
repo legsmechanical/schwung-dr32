@@ -5,9 +5,6 @@
  * schwung-movy, MIT (c) 2026 megadake; fonts via echidna/davebox mcufont).
  * Loaded by the host as canvas.js#bank_editor. Jog = banks (no overlay);
  * SHIFT+jog = section picker; knobs CC 71-78 edit the active bank. */
-import * as os from 'os';
-import { openTextEntry, isTextEntryActive, handleTextEntryMidi, drawTextEntry, tickTextEntry } from '/data/UserData/schwung/shared/text_entry.mjs';
-
 (function () {
 
 /* ==== schwung-canvaskit core: prelude ====
@@ -1853,51 +1850,7 @@ function busBank() {
  * reach or persist it. The Drum Bus above is the one fixed stage, and it is not
  * a selectable insert either. */
 
-/* ══════════ TEMPORARY — kit-feature test rig (2026-07-31) ══════════════════
- * REMOVE AFTER TESTING. Exists only because nothing in DR32 yet calls the new
- * canvaskit features, so there would be nothing to press. None of this is a
- * DR32 feature and none of it should survive the test.
- *   KITTEST bank  — directory browser on a scratch key (writes nowhere real)
- *   Copy   (60)   — opens the on-screen keyboard
- *   Delete (119)  — snapshots pad_volume then slams it to -36 dB; Undo restores
- * The scratch key `kit_test_path` is not a DR32 param: the DSP ignores writes
- * to it, which is the point — browsing must not touch the user's kit. */
-function kitTestBank() {
-  const c = count(`kit_test_path`, "Dir", 0, 0);
-  c.name = "Directory Browser (kit test)";
-  c.dir = {
-    /* Confined to the User Library — root is a floor, so ".." can never walk
-     * out of it into /data/UserData and the rest of the filesystem. */
-    root: "/data/UserData/UserLibrary",
-    start: "/data/UserData/UserLibrary",
-    filter: [".wav", ".aif", ".ablpreset", ".json"]
-  };
-  /* No cell.text — the kit's own "3/17" face for a dir cell is what we want. */
-  return { label: "KitTest", icon: "pulse", knobs: [c] };   /* knobs, NOT cells — see cellsFor() */
-}
-
-let kitTestText = "";
-function drawKitTestHud(ctx, cells, s) {
-  /* TEMPORARY diagnostic: is the `os` module actually live inside a canvas?
-   * The directory browser showed only ".." and then went blank, which is
-   * exactly what happens when os is undefined — dirList returns early, and an
-   * empty list draws nothing at all. Report it rather than keep guessing. */
-  let diag = "OS:" + (typeof os);
-  try {
-    if (typeof os !== "undefined" && os && os.readdir) {
-      const r = os.readdir("/data/UserData/UserLibrary");
-      const arr = (r && r[0]) || [];
-      diag += " N:" + (arr.length | 0) + " T:" + (Array.isArray(r) ? "tup" : typeof r);
-    }
-  } catch (e) { diag += " ERR"; }
-  const line = kitTestText ? diag + " " + kitTestText : diag;
-  ctx.fillRect(0, 0, 128, 9, 0);
-  ctx.drawRect(0, 0, 128, 9, 1);
-  mvPrint(ctx, 2, 1, line, 1);
-}
-/* ══════════ END TEMPORARY ═════════════════════════════════════════════════ */
-
-const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), busBank(), kitTestBank()]);
+const DR32_BANKS = padBanks.concat([sendBank(1), sendBank(2), busBank()]);
 
 /* There is deliberately NO pad-map overlay. A 4x8 map of the kit used to be
  * drawn over the parameters whenever focus moved, because focus could move
@@ -1921,10 +1874,6 @@ const CONFIG = {
    *   editCcs  — Undo/Copy/Delete for pad copy/paste/clear gestures.
    *   jogClick — the canvas's "enter"; without it the click just closes it. */
   claims: { editCcs: true, jogClick: true },
-
-  /* Use the HOST's on-screen keyboard (shared/text_entry.mjs) rather than a
-   * kit-local one — build.mjs imports it when this is set. */
-  textEntry: true,
 
   /* Each pad page is its own picker row: that is where the editing happens,
    * so it should be one SHIFT+jog away, not buried behind bank stepping. */
@@ -1967,27 +1916,6 @@ const CONFIG = {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
 
-    /* TEMPORARY kit-test triggers — remove with kitTestBank(). */
-    if ((d[0] & 0xF0) === 0xB0 && d[2] > 0) {
-      if (d[1] === 60) {                       /* Copy -> on-screen keyboard */
-        ctx.promptText({
-          title: "KIT TEST",
-          value: kitTestText || "HELLO",
-          onCommit: (t) => { kitTestText = t || "(empty)"; },
-          /* Cancel must leave the value ALONE — writing a marker here meant the
-           * next open seeded the field with "(cancelled)". */
-          onCancel: () => {}
-        });
-        return true;
-      }
-      if (d[1] === 119) {                      /* Delete -> destructive edit */
-        ctx.snapshot([`pad_volume`], "kit test");
-        ctx.setParam(`pad_volume`, "-36");     /* Undo (CC 56) restores it */
-        return true;
-      }
-      /* CC 56 deliberately NOT consumed — the kit's own undo handles it. */
-    }
-
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
     if (d[1] < PAD_NOTE_LO || d[1] > PAD_NOTE_HI) return false;
     /* Do NOT flush here. Whether focus moves is the DSP's decision (note ->
@@ -2003,8 +1931,6 @@ const CONFIG = {
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the
    * classic display-desync. */
-
-  overlays: [drawKitTestHud],   /* TEMPORARY */
 
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;
