@@ -1522,38 +1522,6 @@ function browseCell() {
 const PICK_X = 2, PICK_Y = 10, PICK_W = 124, PICK_H = 54;
 const PICK_ROW_H = 7;                    /* 5px movy glyph + 2px leading */
 
-/* ══ TEMPORARY — REMOVE AFTER VERIFICATION (added 2026-07-31) ══════════════════
- * Device check for the host's `claims_edit_ccs` FORWARD half: do Undo (56),
- * Copy (60) and Delete (119) actually reach this canvas now that module.json
- * declares the capability?
- *
- * ⚠⚠ **Press the physical buttons.** Do NOT verify with `inject-ui.py` or the
- * E2E `INJECT_MIDI` — both write into the MIDI stream DOWNSTREAM of the shim
- * filter under test (`shadow_drain_midi_inject()` runs at schwung_shim.c:6769,
- * after the filter loop at ~6400), so an injected CC bypasses the routing
- * entirely and reports a false pass. This exact mistake was made on 2026-07-30
- * and produced a measurement that looked conclusive and proved nothing.
- *
- * The BLOCK half needs no code at all — it is an absence: hold Copy, tap two
- * pads, and confirm no NATIVE Move drum pad gets copied.
- * See _worklogs/schwung.md (2026-07-31). */
-const EDIT_CC_NAMES = { 56: "UNDO", 60: "COPY", 119: "DEL" };
-let editCcSeen = [];
-function noteEditCc(d) {
-  if ((d[0] & 0xF0) !== 0xB0) return;
-  const nm = EDIT_CC_NAMES[d[1]];
-  if (!nm) return;
-  editCcSeen.unshift(nm + (d[2] > 0 ? "" : "^"));   /* ^ = release edge */
-  if (editCcSeen.length > 6) editCcSeen.length = 6;
-}
-function drawEditCcHud(ctx, cells, s) {
-  if (!editCcSeen.length) return;
-  ctx.fillRect(0, 0, 128, 9, 0);
-  ctx.drawRect(0, 0, 128, 9, 1);
-  mvPrint(ctx, 2, 1, editCcSeen.join(" "), 1);
-}
-/* ══ END TEMPORARY ════════════════════════════════════════════════════════════ */
-
 function drawBrowsePicker(ctx, cells, s) {
   const k = s.lastKnob;
   const cell = k >= 0 ? cells[k] : null;
@@ -2042,7 +2010,6 @@ const CONFIG = {
   onMidi: function (ctx, s, payload) {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
-    noteEditCc(d);   /* TEMPORARY — remove with drawEditCcHud (2026-07-31) */
     if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;
     if (d[1] < PAD_NOTE_LO || d[1] > PAD_NOTE_HI) return false;
     /* Do NOT flush here. Whether focus moves is the DSP's decision (note ->
@@ -2058,7 +2025,7 @@ const CONFIG = {
   /* Loading a kit rewrites all 32 pads and both FX chains; changing an FX type
    * reloads that slot's whole parameter set. Caching through either is the
    * classic display-desync. */
-  overlays: [drawBrowsePicker, drawEditCcHud],   /* drawEditCcHud TEMPORARY (2026-07-31) */
+  overlays: [drawBrowsePicker],
 
   writeInvalidates: (key) => {
     if (/^kit(_move|_user)?$/.test(key)) return true;
