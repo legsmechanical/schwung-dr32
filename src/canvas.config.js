@@ -531,7 +531,7 @@ function kitTestBank() {
     const i = v.lastIndexOf("/");
     return v ? (i >= 0 ? v.slice(i + 1) : v).slice(0, 4) : "--";
   };
-  return { label: "KitTest", icon: "pulse", cells: [c] };
+  return { label: "KitTest", icon: "pulse", knobs: [c] };   /* knobs, NOT cells — see cellsFor() */
 }
 
 let kitTestText = "";

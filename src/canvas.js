@@ -5,8 +5,6 @@
  * schwung-movy, MIT (c) 2026 megadake; fonts via echidna/davebox mcufont).
  * Loaded by the host as canvas.js#bank_editor. Jog = banks (no overlay);
  * SHIFT+jog = section picker; knobs CC 71-78 edit the active bank. */
-import * as os from 'os';
-
 (function () {
 
 /* ==== schwung-canvaskit core: prelude ====
@@ -1874,7 +1872,7 @@ function kitTestBank() {
     const i = v.lastIndexOf("/");
     return v ? (i >= 0 ? v.slice(i + 1) : v).slice(0, 4) : "--";
   };
-  return { label: "KitTest", icon: "pulse", cells: [c] };
+  return { label: "KitTest", icon: "pulse", knobs: [c] };   /* knobs, NOT cells — see cellsFor() */
 }
 
 let kitTestText = "";
