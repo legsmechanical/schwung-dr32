@@ -1866,7 +1866,9 @@ function kitTestBank() {
   const c = count(`kit_test_path`, "Dir", 0, 0);
   c.name = "Directory Browser (kit test)";
   c.dir = {
-    root: "/data/UserData",
+    /* Confined to the User Library — root is a floor, so ".." can never walk
+     * out of it into /data/UserData and the rest of the filesystem. */
+    root: "/data/UserData/UserLibrary",
     start: "/data/UserData/UserLibrary",
     filter: [".wav", ".aif", ".ablpreset", ".json"]
   };
@@ -3419,20 +3421,22 @@ function dirClick(ctx, cell, s) {
   return true;
 }
 
-/* "3/17" — where the cursor sits, and how many entries this directory holds.
- * ".." is excluded from both: it is a way out, not an item in the folder. A
- * module may still supply its own cell.text to override this. */
+/* "3/17" — position among the FILES, over how many files this directory holds.
+ * Directories and ".." are excluded from both: the number answers "which sample
+ * am I on, of how many", and folders are navigation rather than choices. While
+ * the cursor sits ON a folder there is no file position, so only the total is
+ * shown ("-/17"). A module may still supply its own cell.text to override this. */
 function dirFaceText(ctx, cell) {
   const st = ctx._dirBrowse && ctx._dirBrowse[cell.key];
   if (!st || !st.entries) return "--";
   let total = 0, pos = 0;
   for (let i = 0; i < st.entries.length; i++) {
-    if (st.entries[i].name === "..") continue;
+    if (st.entries[i].dir) continue;              /* skips ".." too */
     total++;
     if (i === st.cursor) pos = total;
   }
   if (!total) return "0/0";
-  return pos + "/" + total;
+  return (pos ? pos : "-") + "/" + total;
 }
 
 function drawDirOverlay(ctx, cells, s) {

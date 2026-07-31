@@ -522,7 +522,9 @@ function kitTestBank() {
   const c = count(`kit_test_path`, "Dir", 0, 0);
   c.name = "Directory Browser (kit test)";
   c.dir = {
-    root: "/data/UserData",
+    /* Confined to the User Library — root is a floor, so ".." can never walk
+     * out of it into /data/UserData and the rest of the filesystem. */
+    root: "/data/UserData/UserLibrary",
     start: "/data/UserData/UserLibrary",
     filter: [".wav", ".aif", ".ablpreset", ".json"]
   };
