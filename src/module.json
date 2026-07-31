@@ -16,6 +16,8 @@
     "midi_out": false,
     "aftertouch": false,
     "chainable": true,
+    "_comment_claims_edit_ccs": "Undo(56)/Copy(60)/Delete(119) reach this module and are withheld from Move firmware while its UI is on screen. Needed for hold-Copy/Delete + tap-pad drum-pad copy/paste/clear. Requires host claims_edit_ccs support (2026-07-31); on an older host this key is ignored and the buttons stay with Move.",
+    "claims_edit_ccs": true,
     "component_type": "sound_generator",
     "chain_params": [
       {
@@ -65,6 +67,7 @@
         "name": "Pad Editor",
         "type": "canvas",
         "canvas_script": "canvas.js#bank_editor",
+        "canvas_takes_click": true,
         "show_footer": false,
         "show_value": false
       }
@@ -80,6 +83,7 @@
               "type": "canvas",
               "canvas_script": "canvas.js#bank_editor",
               "canvas_overlay": "bank_editor",
+              "canvas_takes_click": true,
               "show_footer": false,
               "show_value": false
             },
