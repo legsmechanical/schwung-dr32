@@ -1906,7 +1906,31 @@ const CONFIG = {
      * not in the kit at all". A path is the only self-contained way to say
      * which sample. It leads the write order, because loading a sample resets
      * everything derived from it. */
-    copyKeys: ["pad_sample"],
+    copyKeys: [
+      "pad_sample",
+      /* ⚠⚠ EVERYTHING BELOW HAS NO CANVAS CELL, so "copies what the editor
+       * shows" silently missed it. Found on device: a pasted pad was QUIETER
+       * than its source at fixed velocity while every visible parameter matched
+       * — because `gain`, `cell_volume` and `vel_vol` all scale level and none
+       * of them is on a page.
+       *
+       * The DSP's per-pad set_param list is the authority here, not the UI.
+       * Audited against it 2026-08-01; the exclusions below are deliberate. */
+      "pad_gain", "pad_cell_volume", "pad_vel_vol",   /* level */
+      "pad_filter_on", "pad_pitch_env",               /* voicing */
+      "pad_mod_amount", "pad_mod_target",             /* modulation */
+      /* Playback ignores these (effects were dropped 2026-07-26) but they are
+       * still parsed and preserved on save, so copying them keeps a duplicated
+       * pad lossless when the kit is written back out. */
+      "pad_fx_type", "pad_fx_p1", "pad_fx_p2"
+      /* DELIBERATELY NOT COPIED:
+       *   note, sending_note  — the pad's IDENTITY and routing. Copying would
+       *                         re-point the destination at the source's note.
+       *   browse, browse_*    — a position in THIS pad's folder (see above).
+       *   frames, loaded, waveform, peak_gain — derived, read-only.
+       *   play, speaker_on    — transient actions, not state.
+       *   sample_move/_user   — alternate roots for `sample`, already copied. */
+    ],
     gestures: true
   },
 
