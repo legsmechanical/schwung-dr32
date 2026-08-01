@@ -3502,7 +3502,7 @@ function padNoteRange(p) {
   return (p.notes && p.notes.length === 2) ? p.notes : [68, 99];
 }
 
-function padSelectMidi(ctx, d) {
+function padSelectMidi(ctx, s, d) {
   const p = padSpec();
   if (!p) return false;
   if ((d[0] & 0xF0) !== 0x90 || d[2] === 0) return false;   // note-on, real velocity
@@ -3515,6 +3515,9 @@ function padSelectMidi(ctx, d) {
    * are already editing. Record that a press happened; padFocusSettle() then
    * resolves it with ONE read. */
   ctx._padCheck = 1;
+  /* Standalone, the kit sees the note itself. Under a HOST that owns the pad
+   * notes this never fires — the host calls bank_editor.padTap() instead. */
+  padTap(ctx, s);
   if (p.note) ctx.setParam(p.note, String(d[1]));
   else if (p.press) ctx.setParam(p.press, "1");
   return true;
@@ -3627,29 +3630,9 @@ function padElementKeys() {
   return out;
 }
 
-/* Take the CURRENTLY FOCUSED element as the copy source. Reads through the
- * alias, which points at whatever is on screen. Called on Copy's press edge, so
- * the family is dropped first: the cache may still hold the previous element's
- * values if focus moved without the kit doing the invalidating (a host shell
- * moves it under us). */
-function padGestureCapture(ctx, s) {
-  if (!padGesturesOn()) return;
-  const keys = padElementKeys();
-  if (!keys.length) return;
-  const p = padSpec();
-  if (typeof ctx.invalidate === "function") ctx.invalidate(p.prefix + "_*");
-  else if (ctx._pcache) ctx._pcache = {};
-  const clip = {};
-  for (let i = 0; i < keys.length; i++) clip[keys[i]] = ctx.getParam(keys[i]);
-  s.padClip = clip;
-  s.padGestureMsg = "COPIED";
-  s.padPrev = padIndex(ctx);        /* the source is not also a paste target */
-}
-
-/* Resolve "focus moved" into a gesture step. Called from draw(), i.e. after the
- * focus settle, so the index and the alias both already point at the new
- * element — which is the whole reason this is not done from the MIDI handler. */
-function padGestureOnFocusChange(ctx, s) {
+/* Act on a settled tap. Called from draw(), never from the MIDI handler, so the
+ * index and the alias both already point at the tapped element. */
+function padGestureAct(ctx, s) {
   if (!padGesturesOn()) return;
   const keys = padElementKeys();
   if (!keys.length) return;
@@ -3676,10 +3659,20 @@ function padGestureOnFocusChange(ctx, s) {
     return;
   }
 
-  if (!s.copyHeld || !s.padClip) return;
+  if (!s.copyHeld) return;
 
-  /* Every focus change pastes. Snapshot the destination first, so Undo puts back
-   * the pad that was overwritten rather than the one that was copied. */
+  if (!s.padClip) {
+    /* FIRST tap under a held Copy names the SOURCE. Read through the alias,
+     * which now points at the pad just tapped. */
+    const clip = {};
+    for (let i = 0; i < keys.length; i++) clip[keys[i]] = ctx.getParam(keys[i]);
+    s.padClip = clip;
+    s.padGestureMsg = "COPIED";
+    return;
+  }
+
+  /* Every tap after that pastes. Snapshot the destination first, so Undo puts
+   * back the pad that was overwritten rather than the one that was copied. */
   if (typeof ctx.snapshot === "function") ctx.snapshot(keys, "paste");
   for (let i = 0; i < keys.length; i++) {
     const v = s.padClip[keys[i]];
@@ -3700,21 +3693,35 @@ function padGestureOnFocusChange(ctx, s) {
  * ⭑ Gated on a modifier being HELD, which is the only time any of this matters,
  * so the ~2.6 ms uncached read is paid during a deliberate two-handed gesture
  * and never at rest. */
+/* ⭑⭑ The trigger is a pad TAP, not a focus change — and the difference is the
+ * whole usability of the gesture. Watching focus cannot see a tap on the pad
+ * already on screen (it moves nothing), so the source could never be the pad you
+ * were looking at, and the first tap of every gesture silently did nothing.
+ *
+ * So: the tap says WHEN, and focus — settled, because the module moves it in
+ * response to that same tap — says WHICH. */
 function padGestureTick(ctx, s) {
   if (!padGesturesOn()) return;
+  if (!s.padTap) return;
+  s.padTap = 0;
+  if (!s.copyHeld && !s.delHeld) return;
+  /* Force ONE real read: the module has just moved focus in response to this
+   * tap, and the cached value still describes the previous element. */
   const p = padSpec();
-  if (!s.copyHeld && !s.delHeld) {
-    /* Track focus while idle too, or the first tap under a newly-held modifier
-     * reads as a "change" from whatever was current when the page opened. */
-    s.padPrev = padIndex(ctx);
-    return;
-  }
-  if (ctx._pcache) delete ctx._pcache[p.select];   /* force ONE real read */
-  const cur = padIndex(ctx);
-  if (s.padPrev === undefined) { s.padPrev = cur; return; }
-  if (cur === s.padPrev) return;
-  s.padPrev = cur;
-  padGestureOnFocusChange(ctx, s);
+  if (ctx._pcache) delete ctx._pcache[p.select];
+  padIndex(ctx);
+  padGestureAct(ctx, s);
+}
+
+/* A pad was physically tapped. Called from the kit's own note handler when the
+ * canvas runs standalone, and by a HOST (davebox) that owns the pad notes and
+ * therefore has to say so on the canvas's behalf. Ignored unless a modifier is
+ * held, so a host can call it on every live press without thinking about it. */
+function padTap(ctx, s) {
+  if (!padGesturesOn()) return false;
+  if (!s.copyHeld && !s.delHeld) return false;
+  s.padTap = 1;
+  return true;
 }
 
 /* ---- the overlay object ---- */
@@ -3772,6 +3779,15 @@ const bank_editor = {
     readState(ctx);
   },
 
+  /* A live pad was tapped. For a HOST that owns the pad notes and never forwards
+   * them (davebox writes the focus key itself, and replaying the note would make
+   * us vouch a second time on top of that — re-arming a press it already
+   * resolved). Safe to call on every live press: ignored unless a modifier is
+   * held. Returns true when it armed a gesture step. */
+  padTap(ctx) {
+    return padTap(ctx, readState(ctx));
+  },
+
   onMidi(ctx, payload) {
     const d = payload && payload.data;
     if (!d || d.length < 3) return false;
@@ -3793,7 +3809,7 @@ const bank_editor = {
     // branch, which returns for every note above 7 — a performance note would
     // otherwise never get here. CONFIG.onMidi had first refusal, so a module
     // wanting different focus semantics simply consumes the note itself.
-    if (padSelectMidi(ctx, d)) return true;
+    if (padSelectMidi(ctx, s, d)) return true;
 
     if (status === 0x90 || status === 0x80) { // capacitive touch: notes 0-7 knobs
       const note = d[1];
@@ -3819,18 +3835,15 @@ const bank_editor = {
       const held = val > 0;
       if (cc === 60) {
         s.copyHeld = held;
-        /* ⭑⭑ The SOURCE is taken the moment Copy goes down — the element on
-         * screen right now — not on a first tap.
+        /* Holding Copy ARMS the gesture — it does not take a source. The first
+         * pad you TAP becomes the source; every tap after that pastes into the
+         * pad you tapped.
          *
-         * The watcher only sees focus CHANGE, so "tap the source, then tap the
-         * destination" cannot work when the source is the element you are
-         * already looking at: that tap moves nothing, so the gesture silently
-         * did nothing and the NEXT tap became the source. Measured on device as
-         * "the copy gesture shows nothing, the paste gesture says COPIED" — an
-         * off-by-one that also put the clipboard one pad behind what the user
-         * meant. Taking the source on the press edge removes the ambiguity:
-         * what you can see is what you copied. */
-        if (held) padGestureCapture(ctx, s);
+         * ⭑ Deliberately NOT "copy whatever is on screen when Copy goes down"
+         * (which is what this did briefly): that silently pulls from the last
+         * pad you happened to be looking at, which is not what holding a
+         * modifier means. */
+        if (held) { s.padClip = null; s.padGestureMsg = "TAP TO COPY"; }
         else { s.padClip = null; s.padGestureMsg = ""; }
       } else {
         s.delHeld = held;
@@ -4150,7 +4163,7 @@ const bank_editor = {
     dirList, dirState, dirScroll, dirClick, drawDirOverlay, dirParentOf, dirMatchesFilter,
     dirFaceText, dirGotoForTest: dirGoto,
     padSpec, padSelectMidi, padFocusSettle, padIndex, padNoteRange,
-    padGesturesOn, padElementKeys, padGestureTick, padGestureCapture
+    padGesturesOn, padElementKeys, padGestureTick, padTap
   }, CONFIG.testExports || {})
 };
 
