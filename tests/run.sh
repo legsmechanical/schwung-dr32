@@ -13,7 +13,7 @@ for src in tests/test_*.c; do
   for c in dsp/*.c; do
     cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$c" -o "dist/tests/$(basename "${c%.c}").o"
   done
-  c++ -o "dist/tests/$name" "dist/tests/$name.o" dist/tests/dr32_*.o dist/tests/wav.o -lm
+  c++ -o "dist/tests/$name" "dist/tests/$name.o" dist/tests/dr32.o dist/tests/dr32_*.o dist/tests/wav.o -lm
   "./dist/tests/$name" "$@" || fail=1
 done
 # module.json must satisfy the host's constraints (duplicate keys reject the

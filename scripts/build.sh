@@ -90,7 +90,7 @@ mkdir -p build/obj
 # structs (dsp/vendor/SOURCES.md). Compile each with its own front end and link
 # with g++ so the C++ runtime bits resolve.
 for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
-           dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/wav.c; do
+           dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/dr32_state.c dsp/wav.c; do
     $CC -O2 -fPIC $ARCH -DNDEBUG -std=c11 -Wall -Wextra -Idsp \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done

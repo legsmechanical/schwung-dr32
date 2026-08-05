@@ -12,6 +12,7 @@
 #include "dr32_kit.h"
 #include "dr32_params.h"
 #include "dr32_preset.h"
+#include "dr32_state.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -167,6 +168,16 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     }
 }
 
+/* State restore loads its kit through the ordinary "kit" entry point below,
+ * rather than calling dr32_preset_load itself. That path already owns preset
+ * loading, kit_path bookkeeping, the error string, the dirty flag and the
+ * timing log — a second copy would drift from it, and the drift would be
+ * invisible until a restored slot behaved subtly unlike a freshly loaded one. */
+static void set_param(void *instance, const char *key, const char *val);
+static void dr32_state_load_kit_cb(void *ctx, const char *path) {
+    set_param(ctx, "kit", path);
+}
+
 static void set_param(void *instance, const char *key, const char *val) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || !key || !val) return;
@@ -241,6 +252,14 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    if (!strcmp(key, "state")) {
+        // Schwung restoring a saved slot. The kit is loaded through the same
+        // path set_param("kit") uses (via the callback below) so preset loading
+        // and kit_path bookkeeping stay in ONE place.
+        dr32_state_read(&in->kit, val, dr32_state_load_kit_cb, in);
+        return;
+    }
+
     dr32_apply_param(&in->kit, key, val);
 }
 
@@ -259,6 +278,10 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     // real bound, so clamping is deliberately generous.
     if (!strcmp(key, "editor"))    return snprintf(buf, buf_len, "%d", in->editor_bank);
     if (!strcmp(key, "kit_dirty")) return snprintf(buf, buf_len, "%d", in->kit_dirty);
+    // The blob Schwung stores in the set's slot_N.json. Without this the host
+    // has nothing to persist and a DR32 slot comes back empty after a reboot.
+    if (!strcmp(key, "state"))
+        return dr32_state_write(&in->kit, in->kit_path, buf, buf_len);
 
     return dr32_read_param(&in->kit, key, buf, buf_len);
 }
