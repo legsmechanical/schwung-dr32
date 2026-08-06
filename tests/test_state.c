@@ -63,7 +63,7 @@ int main(void) {
         dr32_apply_param(&a, "bus_crunch",     "0.7");
 
         int n = dr32_state_write(&a, "/data/UserData/Kits/MyKit.ablpreset",
-                                 blob, (int)sizeof(blob));
+                                 blob, (int)sizeof(blob), NULL);
         CHECK(n > 0, "state_write returned %d (expected > 0)", n);
         CHECK(strstr(blob, "\"kit\":\"/data/UserData/Kits/MyKit.ablpreset\"") != NULL,
               "blob does not carry the kit path");
@@ -91,7 +91,7 @@ int main(void) {
         dr32_kit a; dr32_kit_init(&a);
         occupy(&a, 1, "/s.wav");
         dr32_apply_param(&a, "pad1_transpose", "-5");
-        CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob)) > 0, "write failed");
+        CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob), NULL) > 0, "write failed");
 
         dr32_kit b; dr32_kit_init(&b);
         occupy(&b, 1, "/s.wav");
@@ -107,7 +107,7 @@ int main(void) {
         /* A quote in a kit path made the whole blob unparseable before escaping
          * existed — and the slot then failed to restore in SILENCE. */
         CHECK(dr32_state_write(&a, "/kits/He said \"hi\"/k.ablpreset",
-                               blob, (int)sizeof(blob)) > 0, "write failed on quoted path");
+                               blob, (int)sizeof(blob), NULL) > 0, "write failed on quoted path");
         dr32_kit b; dr32_kit_init(&b);
         CHECK(dr32_state_read(&b, blob, NULL, NULL) == 1,
               "a quote in the kit path made the blob unparseable");
@@ -127,8 +127,54 @@ int main(void) {
         char tiny[80];
         dr32_kit a; dr32_kit_init(&a);
         for (int p = 0; p < DR32_PADS; p++) occupy(&a, p, "/some/long/sample/path.wav");
-        CHECK(dr32_state_write(&a, "/kit.ablpreset", tiny, (int)sizeof(tiny)) == 0,
+        CHECK(dr32_state_write(&a, "/kit.ablpreset", tiny, (int)sizeof(tiny), NULL) == 0,
               "a truncated blob was returned instead of failing");
+    }
+
+    /* ---- 4b. Baseline delta: the blob carries ONLY the user's edits ----- */
+    {
+        /* Why size matters: the host chain caps the state it reads back, and a
+         * full dump PRETTY-PRINTED into the set file crossed a host's cap in
+         * the field (2026-08-06) — the kit then restored at defaults. */
+        dr32_kit a; dr32_kit_init(&a);
+        occupy(&a, 0, "/s0.wav"); occupy(&a, 1, "/s1.wav");
+
+        /* Baseline = the kit as loaded, before any edit. */
+        static char base[65536];
+        CHECK(dr32_state_write(&a, "/kit.ablpreset", base, (int)sizeof(base), NULL) > 0,
+              "baseline write failed");
+
+        /* One edit; a delta blob must carry it and no unedited siblings. */
+        dr32_apply_param(&a, "pad0_transpose", "-5");
+        int n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), base);
+        CHECK(n > 0, "delta write failed");
+        CHECK(strstr(blob, "pad0_transpose") != NULL, "delta blob omits the edit");
+        CHECK(strstr(blob, "pad1_") == NULL,
+              "delta blob carries unedited pad1 fields: %.200s", blob);
+        CHECK(n < 512, "delta blob is %d bytes — not a delta", n);
+
+        /* An edit reverted to its baseline value drops back out. */
+        char orig[64]; rd(&a, "pad0_transpose", orig, sizeof(orig));
+        (void)orig;
+        dr32_kit c; dr32_kit_init(&c);
+        occupy(&c, 0, "/s0.wav");
+        char base_v[64]; rd(&c, "pad0_transpose", base_v, sizeof(base_v));
+        dr32_apply_param(&a, "pad0_transpose", base_v);
+        n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), base);
+        CHECK(n > 0 && strstr(blob, "pad0_transpose") == NULL,
+              "a reverted edit still appears in the delta blob");
+
+        /* A baseline for a DIFFERENT kit path must be IGNORED — comparing
+         * against another kit's values would silently drop real edits. */
+        dr32_apply_param(&a, "pad0_transpose", "-5");
+        n = dr32_state_write(&a, "/OTHER.ablpreset", blob, (int)sizeof(blob), base);
+        CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
+              "a mismatched-kit baseline was honoured (blob still a delta)");
+
+        /* A garbage baseline degrades to the full dump, never an error. */
+        n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), "not json");
+        CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
+              "a malformed baseline did not fall back to the full dump");
     }
 
     /* ---- 5. The plugin must actually EXPOSE state ---------------------- */

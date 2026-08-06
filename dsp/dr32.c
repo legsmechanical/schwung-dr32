@@ -47,7 +47,28 @@ typedef struct {
     // empty — an empty path cannot be loaded, so the previewed kit used to
     // stick after backing out.
     char     kit_saved[DR32_MAX_PATH];
+    // Full state blob captured right after each successful kit load — the
+    // "unedited" reference. get_param("state") hands it to dr32_state_write so
+    // the persisted blob carries ONLY the user's edits; the kit path restores
+    // the rest. Kept as the serialized blob (not a struct copy) so the compare
+    // uses the exact same read path as the write. NULL = no baseline = full
+    // dump, which is always a correct fallback.
+    char    *state_baseline;
 } dr32_instance;
+
+/** Capture the freshly-loaded kit as the state baseline. Called after every
+ *  successful kit load (default kit, picker, preview-cancel restore, state
+ *  restore via the same picker path). Failure just leaves no baseline, which
+ *  degrades to the full state dump — never an error. */
+static void dr32_capture_baseline(dr32_instance *in) {
+    free(in->state_baseline);
+    in->state_baseline = NULL;
+    char *tmp = malloc(65536);
+    if (!tmp) return;
+    int n = dr32_state_write(&in->kit, in->kit_path, tmp, 65536, NULL);
+    if (n > 0) in->state_baseline = strdup(tmp);
+    free(tmp);
+}
 
 /** Pull the ui_hierarchy object out of our own module.json, so the UI contract
  *  has exactly one source. Returns a malloc'd string or NULL. */
@@ -128,6 +149,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     dr32_preset_report rep;
     if (dr32_preset_load(&in->kit, DR32_DEFAULT_KIT, &rep)) {
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", DR32_DEFAULT_KIT);
+        dr32_capture_baseline(in);
         char msg[DR32_MAX_PATH + 120];
         snprintf(msg, sizeof(msg), "dr32: default kit loaded — %d pads, %d samples",
                  rep.pads, rep.loaded);
@@ -141,6 +163,7 @@ static void destroy_instance(void *instance) {
     if (!in) return;
     dr32_kit_free(&in->kit);
     free(in->ui_hierarchy);
+    free(in->state_baseline);
     free(in);
 }
 
@@ -217,6 +240,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             // a "could not load kit" warning on the synth forever, including on
             // every later re-entry into the module.
             in->err[0] = '\0';
+            dr32_capture_baseline(in);
             snprintf(msg, sizeof(msg),
                      "dr32: kit '%s' loaded in %.1f ms — %d pads, %d samples, %d empty, %d unresolved, %d failed",
                      val, ms, rep.pads, rep.loaded, rep.empty, rep.unresolved, rep.failed);
@@ -243,6 +267,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             snprintf(saved, sizeof(saved), "%s", in->kit_saved);
             if (dr32_preset_load(&in->kit, saved, &rep)) {
                 snprintf(in->kit_path, sizeof(in->kit_path), "%s", saved);
+                dr32_capture_baseline(in);
                 char msg[DR32_MAX_PATH + 200];
                 snprintf(msg, sizeof(msg), "dr32: kit preview cancelled — restored '%s'", saved);
                 logmsg(msg);
@@ -280,8 +305,11 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     if (!strcmp(key, "kit_dirty")) return snprintf(buf, buf_len, "%d", in->kit_dirty);
     // The blob Schwung stores in the set's slot_N.json. Without this the host
     // has nothing to persist and a DR32 slot comes back empty after a reboot.
+    // The baseline keeps the blob to the user's EDITS — see dr32_state.h for
+    // why size matters here (a host-side cap has silently dropped a full dump).
     if (!strcmp(key, "state"))
-        return dr32_state_write(&in->kit, in->kit_path, buf, buf_len);
+        return dr32_state_write(&in->kit, in->kit_path, buf, buf_len,
+                                in->state_baseline);
 
     return dr32_read_param(&in->kit, key, buf, buf_len);
 }

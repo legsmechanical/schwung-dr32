@@ -95,12 +95,22 @@ static int json_escape(char *dst, int cap, const char *src) {
 
 /* Append `"key":"value",` using the live value from dr32_read_param.
  * Unknown or empty values are skipped rather than written as "", so a blob
- * never asserts a value the engine did not actually report. */
+ * never asserts a value the engine did not actually report.
+ *
+ * `baseline` (may be NULL) is the parsed `params` object of a blob captured
+ * right after the kit loaded. A live value equal to its baseline value is
+ * NOT emitted — the kit path restores it — so the blob carries only edits. */
 static int emit_param(const dr32_kit *kit, const char *key,
+                      const dr32_json *baseline,
                       char *buf, int cap, int n, int *first) {
     char val[DR32_MAX_PATH + 8];
     int len = dr32_read_param(kit, key, val, (int)sizeof(val));
     if (len <= 0 || !val[0]) return n;
+
+    if (baseline) {
+        const char *base = dr32_json_str(baseline, key, NULL);
+        if (base && strcmp(base, val) == 0) return n;   /* unedited — kit restores it */
+    }
 
     char esc[DR32_MAX_PATH * 2 + 8];
     json_escape(esc, (int)sizeof(esc), val);
@@ -113,8 +123,24 @@ static int emit_param(const dr32_kit *kit, const char *key,
  *  `kit_path` may be NULL/empty — a hand-built kit with no preset file still
  *  persists its per-pad state, it simply has no baseline to reload. */
 int dr32_state_write(const dr32_kit *kit, const char *kit_path,
-                     char *buf, int buf_len) {
+                     char *buf, int buf_len, const char *baseline_json) {
     if (!kit || !buf || buf_len < 64) return 0;
+
+    /* Parse the baseline once; its `params` object is the compare table.
+     * A baseline that fails to parse degrades to the full dump, never to an
+     * error — the full dump is always a correct (if fat) answer. Only honour
+     * a baseline written for the SAME kit path: comparing against another
+     * kit's values would silently drop real edits. */
+    dr32_json *base_root = NULL;
+    const dr32_json *base_params = NULL;
+    if (baseline_json && baseline_json[0]) {
+        base_root = dr32_json_parse(baseline_json);
+        if (base_root) {
+            const char *base_kit = dr32_json_str(base_root, "kit", "");
+            if (base_kit && kit_path && strcmp(base_kit, kit_path) == 0)
+                base_params = dr32_json_get(base_root, "params");
+        }
+    }
 
     int n = 0, first = 1;
     char esc[DR32_MAX_PATH * 2 + 8];
@@ -122,7 +148,7 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
     n += snprintf(buf + n, buf_len - n, "{\"v\":1,\"kit\":\"%s\",\"params\":{", esc);
 
     for (int i = 0; GLOBAL_FIELDS[i]; i++)
-        n = emit_param(kit, GLOBAL_FIELDS[i], buf, buf_len, n, &first);
+        n = emit_param(kit, GLOBAL_FIELDS[i], base_params, buf, buf_len, n, &first);
 
     for (int pad = 0; pad < DR32_PADS; pad++) {
         /* Skip pads with nothing loaded. A silent pad carries no sound the user
@@ -132,11 +158,12 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
         for (int f = 0; PAD_FIELDS[f]; f++) {
             char key[64];
             snprintf(key, sizeof(key), "pad%d_%s", pad, PAD_FIELDS[f]);
-            n = emit_param(kit, key, buf, buf_len, n, &first);
-            if (n >= buf_len - 8) return 0;   /* truncated — better none than half */
+            n = emit_param(kit, key, base_params, buf, buf_len, n, &first);
+            if (n >= buf_len - 8) { dr32_json_free(base_root); return 0; }   /* truncated — better none than half */
         }
     }
 
+    dr32_json_free(base_root);
     n += snprintf(buf + n, buf_len - n, "}}");
     return (n < buf_len) ? n : 0;
 }
