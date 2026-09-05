@@ -52,7 +52,29 @@ for (const [lname, level] of Object.entries(levels)) {
     }
 }
 
-// 5. the host refuses module.json larger than 64 KB
+// 5. the pads level must keep the drum-surface contract AND the splice anchor.
+//    dsp/dr32.c inserts the loaded kit's pad names into the served hierarchy
+//    immediately before `"child_index_param"`; lose that key and the DSP
+//    silently serves module.json verbatim — pages still plan, focus just
+//    stops following and every voice is "Pad N" again.
+{
+    const pads = levels.pads || {};
+    if (caps.ui_hierarchy && caps.ui_hierarchy.pad_layout !== 'drums')
+        errors.push('ui_hierarchy.pad_layout must be "drums" (upstream 1.2 drum-surface contract)');
+    if (pads.child_index_param !== 'ui_current_pad')
+        errors.push('levels.pads.child_index_param must be "ui_current_pad" — it is also the child_names splice anchor in dsp/dr32.c');
+    if (pads.child_note_base !== 36)
+        errors.push('levels.pads.child_note_base must be 36 (DR32_FIRST_NOTE)');
+    if (pads.child_count !== 32 || pads.child_prefix !== 'pad')
+        errors.push('levels.pads must declare child_prefix "pad" and child_count 32 — dr32_params.c speaks pad<N>_<key>');
+    for (const k of ['child_select_param', 'child_press_param', 'child_press_note_param'])
+        if (!pads[k]) errors.push(`levels.pads.${k} missing — dAVEBOx sound mode reads it (see CLAUDE.md)`);
+    const raw = readFileSync(path, 'utf8');
+    const n = (raw.match(/"child_index_param"/g) || []).length;
+    if (n !== 1) errors.push(`"child_index_param" appears ${n} times; the splice anchor must be unique`);
+}
+
+// 6. the host refuses module.json larger than 64 KB
 const size = readFileSync(path).length;
 if (size > 65536) errors.push(`module.json is ${size} bytes; the host rejects > 65536`);
 

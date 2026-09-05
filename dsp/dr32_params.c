@@ -228,6 +228,16 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "detune"))      return snprintf(buf, buf_len, "%g", (double)p->detune);
         if (!strcmp(sub, "start"))       return snprintf(buf, buf_len, "%g", (double)p->play_start);
         if (!strcmp(sub, "length"))      return snprintf(buf, buf_len, "%g", (double)p->play_length);
+        /* `end` is a UI ALIAS of length: the host's wave editor draws a trim
+         * region as start..end (`wav_position` mode "end"), while Move's own
+         * format — and therefore the kit on disk — stores a LENGTH. Read as
+         * start+length, written back as length = end-start; nothing changes in
+         * the .ablpreset. Clamped to 1 so a picture never runs past the file. */
+        if (!strcmp(sub, "end")) {
+            float e = p->play_start + p->play_length;
+            if (e > 1.0f) e = 1.0f;
+            return snprintf(buf, buf_len, "%g", (double)e);
+        }
         if (!strcmp(sub, "gain"))        return snprintf(buf, buf_len, "%g", (double)p->gain);
         if (!strcmp(sub, "volume"))      return snprintf(buf, buf_len, "%g", (double)p->volume_db);
         if (!strcmp(sub, "cell_volume")) return snprintf(buf, buf_len, "%g", (double)p->cell_volume_db);
@@ -350,6 +360,12 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
         else if (!strcmp(sub, "start"))         p->play_start = f;
         else if (!strcmp(sub, "length"))        p->play_length = f;
+        else if (!strcmp(sub, "end")) {          /* alias — see dr32_read_param */
+            float len = f - p->play_start;
+            if (len < 0.0f) len = 0.0f;
+            if (len > 1.0f) len = 1.0f;
+            p->play_length = len;
+        }
         else if (!strcmp(sub, "transpose"))     p->transpose = f;
         else if (!strcmp(sub, "detune"))        p->detune = f;
         else if (!strcmp(sub, "gain"))          p->gain = f;

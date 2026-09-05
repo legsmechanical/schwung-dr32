@@ -231,10 +231,11 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
     if (note < 0 || note > 127) return;
     int pad = k->note_to_pad[note];
     if (pad < 0) return;
-    /* Focus follows this note ONLY if the canvas vouched that a finger caused
-     * it. A note alone cannot: a live hit and a sequenced one are identical
+    /* Focus follows this note if nothing is sequencing (see transport_running),
+     * or if a host vouched that a finger caused it. A note alone, with a
+     * transport running, cannot: a live hit and a sequenced one are identical
      * here (measured on device), so following every note let playback drag the
-     * editor around. The canvas supplies the missing bit via ui_live_press.
+     * editor around. The vouch (ui_live_press) supplies the missing bit.
      *
      * Record the hit either way — the press signal may still be in flight, and
      * set_param("ui_live_press") looks back at this. (An earlier attempt to
@@ -242,8 +243,16 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
      * the gate removed; that plumbing was reverted. Don't re-tread it.) */
     k->last_hit_pad = pad;
     k->last_hit_block = k->block;
-    if (k->live_armed && k->ui_auto_select_pad &&
-        (k->block - k->live_arm_block) <= DR32_LIVE_MATCH_BLOCKS) {
+    if (k->ui_auto_select_pad && !k->transport_running) {
+        /* Nothing is sequencing, so this note came from a hand. Follow it
+         * outright — no vouch needed, on any host. (See transport_running in
+         * dr32_kit.h.) A vouch that is still in flight for this same press is
+         * consumed too, so it cannot re-arm for the next sequenced note. */
+        k->ui_current_pad = pad;
+        k->live_armed = 0;
+        k->last_hit_pad = -1;
+    } else if (k->live_armed && k->ui_auto_select_pad &&
+               (k->block - k->live_arm_block) <= DR32_LIVE_MATCH_BLOCKS) {
         k->ui_current_pad = pad;
         k->live_armed = 0;
         k->last_hit_pad = -1;   /* consumed — see the note in dr32_params.c */

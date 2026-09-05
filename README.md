@@ -1,8 +1,8 @@
 # DR32 — Drum Rack 32
 
-> ⚠️ **WORK IN PROGRESS.** Usable but unfinished, and not released. Version `0.1.0`,
+> ⚠️ **WORK IN PROGRESS.** Usable but unfinished, and not released. Version `0.2.0`,
 > no catalog entry, and several behaviours below are still open questions rather
-> than decisions. Expect breaking changes.
+> than decisions. Expect breaking changes. **Requires Schwung ≥ 1.2.0.**
 
 A clone of Ableton Move's native **Drum Rack**, extended from 16 pads to **32**, running as a
 [Schwung](https://github.com/charlesvestal/schwung) sound-generator module.
@@ -25,9 +25,13 @@ groups, velocity modulation, pan and volume, sends, and Punch. Two envelope mode
 and `Native` reverb/delay types; the bus has compression, crunch, attack/sustain shaping and
 dry/wet.
 
-**A canvas pad editor** — the module declares `host_canvas_ui`, so the 32-pad grid is drawn by the
-module itself rather than adapted from a parameter list. It is also hostable: dAVEBOx runs DR32 in
-a chain slot and edits it in place.
+**Native Schwung pages, no custom UI.** Since 0.2.0 every page is the host's own knob grid, planned
+from the hierarchy the module serves: the pads are one 32-instance child level with `pad_layout:
+"drums"`, so the header shows a pad map, the grid follows the pad you hit, and each pad's page draws
+the sample waveform with a trim editor, the amp envelope, the filter curve and a fader. Pad names
+come from the loaded kit. Hitting a pad moves the editor to it while the transport is stopped; with
+a pattern running, focus only moves on a host that vouches for a live press (dAVEBOx does; an
+upstream contract for it is in progress).
 
 ## Status — what is not finished
 
@@ -62,7 +66,8 @@ Check for `==> done:` before trusting an install.
 ## Testing
 
 ```sh
-tests/run.sh                # off-device: WAV loader, voice, kit parsing, JSON round-trip
+tests/run.sh                # off-device: WAV loader, voice, kit parsing, state, JSON round-trip
+node tools/pages_check.mjs  # upstream's own validator over the SERVED hierarchy; writes a preview fixture
 tools/fx_suite.sh           # null-test report, per effect
 ```
 
@@ -83,7 +88,7 @@ and wrong), and velocity→volume is a dB law centred on velocity 70, not a line
 | path | |
 |---|---|
 | `dsp/` | the DSP: voice, kit loader, `.ablpreset` parsing, effects, state |
-| `src/` | `module.json` and the canvas UI |
+| `src/` | `module.json` (the served hierarchy) and the play-view `ui.js` |
 | `lib/` | `.ablpreset` reading/writing |
 | `tests/` | off-device unit tests |
 | `tools/` | the null-test harness and capture scripts |

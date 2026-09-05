@@ -193,6 +193,10 @@ int main(void) {
     {
         dr32_kit t;
         dr32_kit_init(&t);
+        // Everything in this block is the TRANSPORT-RUNNING regime, where a
+        // note cannot be trusted on its own. dr32_kit_init leaves the flag 0
+        // (= stopped), which is the follow-freely regime tested further down.
+        t.transport_running = 1;
 
         // Sequenced note alone: no press signal, focus must not move.
         t.ui_current_pad = 3;
@@ -243,6 +247,79 @@ int main(void) {
         dr32_apply_param(&t, "ui_live_press", "1");
         dr32_kit_note_on(&t, DR32_FIRST_NOTE + 30, 100);
         CHECK(t.ui_current_pad == 1, "focus moved while auto-select off: %d", t.ui_current_pad);
+
+        dr32_kit_free(&t);
+    }
+
+    // ---- transport STOPPED: a note IS a hand, so focus follows it with no vouch
+    //
+    // This is what makes pad-follow work on a host that has no vouch mechanism
+    // at all (upstream Schwung 1.2, whose param pages never tell a synth about a
+    // physical press). The running-transport rules above are unchanged.
+    {
+        dr32_kit t;
+        dr32_kit_init(&t);
+        CHECK(t.transport_running == 0, "kit_init must start STOPPED (got %d)", t.transport_running);
+
+        t.ui_current_pad = 3;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 9, 100);
+        CHECK(t.ui_current_pad == 9, "stopped: bare note did not move focus (%d)", t.ui_current_pad);
+
+        // Reaches the upper bank too.
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 29, 100);
+        CHECK(t.ui_current_pad == 29, "stopped: upper-bank note focused %d, want 29", t.ui_current_pad);
+
+        // An unmapped note is not a pad and moves nothing.
+        dr32_kit_note_on(&t, 100, 100);
+        CHECK(t.ui_current_pad == 29, "stopped: unmapped note moved focus to %d", t.ui_current_pad);
+
+        // A vouch that arrived for this same press is consumed, not left armed:
+        // otherwise, the moment the transport started, that stale arm would
+        // claim the first SEQUENCED note inside the window.
+        dr32_apply_param(&t, "ui_live_press", "1");
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 2, 100);
+        CHECK(t.ui_current_pad == 2 && t.live_armed == 0,
+              "stopped: vouch not consumed (pad %d, armed %d)", t.ui_current_pad, t.live_armed);
+        t.transport_running = 1;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 11, 100);
+        CHECK(t.ui_current_pad == 2, "stale arm claimed a sequenced note (%d)", t.ui_current_pad);
+        t.transport_running = 0;
+
+        // Follow Pads off still means off.
+        t.ui_auto_select_pad = 0;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 20, 100);
+        CHECK(t.ui_current_pad == 2, "stopped: focus moved while auto-select off (%d)", t.ui_current_pad);
+
+        dr32_kit_free(&t);
+    }
+
+    // ---- `end` is an alias of length (start + length), for the host's trim editor
+    {
+        dr32_kit t;
+        dr32_kit_init(&t);
+        char buf[32];
+        dr32_apply_param(&t, "pad4_start", "0.25");
+        dr32_apply_param(&t, "pad4_length", "0.5");
+        dr32_read_param(&t, "pad4_end", buf, sizeof(buf));
+        CHECK(!strcmp(buf, "0.75"), "end read %s, want 0.75", buf);
+
+        dr32_apply_param(&t, "pad4_end", "0.6");
+        dr32_read_param(&t, "pad4_length", buf, sizeof(buf));
+        CHECK(!strcmp(buf, "0.35"), "length after end write %s, want 0.35", buf);
+
+        // The alias follows the focused pad too.
+        t.ui_current_pad = 4;
+        dr32_read_param(&t, "pad_end", buf, sizeof(buf));
+        CHECK(!strcmp(buf, "0.6"), "aliased end read %s, want 0.6", buf);
+
+        // Clamped: an end before the start is an empty region, never negative,
+        // and start + length never reads past the file.
+        dr32_apply_param(&t, "pad4_end", "0.1");
+        dr32_read_param(&t, "pad4_length", buf, sizeof(buf));
+        CHECK(!strcmp(buf, "0"), "end before start gave length %s, want 0", buf);
+        dr32_apply_param(&t, "pad4_length", "1");
+        dr32_read_param(&t, "pad4_end", buf, sizeof(buf));
+        CHECK(!strcmp(buf, "1"), "overlong region read end %s, want 1", buf);
 
         dr32_kit_free(&t);
     }

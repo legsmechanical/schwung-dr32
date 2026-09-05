@@ -15,14 +15,10 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
     echo "==> validating module.json"
     node tools/check_module_json.mjs src/module.json || exit 1
 
-    echo "==> bundling ui.js"
-    # lib/ablpreset.mjs is the CANONICAL parser; src/ gets a build-time copy so
-    # the bundle has a single source of truth to import.
-    cp lib/ablpreset.mjs src/ablpreset.mjs
-    ESBUILD="$(command -v esbuild || echo ../schwung-davebox/node_modules/.bin/esbuild)"
-    "$ESBUILD" src/ui.js --bundle --format=esm --outfile=build/ui.js \
-        --external:'/data/UserData/schwung/*' --log-level=warning
-    rm -f src/ablpreset.mjs
+    # ui.js is the play view only and imports nothing but the host's shared
+    # base, so there is no longer a bundle step — it ships as written.
+    mkdir -p build
+    cp src/ui.js build/ui.js
 
     echo "==> building dsp in Docker"
     # Reuse the existing toolchain image if present. Rebuilding it on an arm64
@@ -106,10 +102,6 @@ mkdir -p "dist/${MODULE_ID}"
 cp build/dsp.so     "dist/${MODULE_ID}/"
 cp build/ui.js      "dist/${MODULE_ID}/"
 cp src/module.json  "dist/${MODULE_ID}/"
-# The canvas Pad Editor. Generated from src/canvas.config.js by the canvaskit
-# build and COMMITTED, so the repo stays self-contained; the host re-reads it
-# on every editor open, so a UI-only change needs no restart.
-cp src/canvas.js    "dist/${MODULE_ID}/"
 
 tar -czf "dist/${MODULE_ID}-module.tar.gz" -C dist "${MODULE_ID}"
 echo "==> done: dist/${MODULE_ID}-module.tar.gz"

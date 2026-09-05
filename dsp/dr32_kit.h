@@ -77,6 +77,16 @@ typedef struct {
     int           last_hit_pad;    // pad of the most recent note-on, -1 = none
     unsigned      last_hit_block;  // block that note-on landed on
 
+    // Is a transport running? Mirrored from the host every render block
+    // (host_api get_beat_position / get_clock_status; dr32.c). While it is NOT,
+    // every note-on is a hand on a pad or a key — there is nothing else that
+    // could produce one — so focus follows the note without a vouch. While it
+    // IS, a live hit and a sequenced one are indistinguishable here and only a
+    // vouch (ui_live_press) or a host that names the note (ui_live_note) moves
+    // focus. Upstream Schwung's own rule for the same reason: "a sequencer
+    // plays notes", so following every note dragged the editor around the bar.
+    int           transport_running;
+
     // Folder browse: the loadable samples sitting NEXT TO the focused pad's
     // sample, so a knob can walk them without opening the file browser. Only
     // the host does file I/O, and only one directory is ever held — the user

@@ -4,9 +4,10 @@
 
 // dr32.c — Schwung plugin entry (API v2) for DR32.
 //
-// The JS side parses .ablpreset files (lib/ablpreset.mjs) and pushes the kit
-// down as flat params: pad<N>_<key>. The DSP never parses JSON — that keeps the
-// format knowledge in one place and the audio side dumb and fast.
+// Kits load HERE (dr32_preset.c parses the .ablpreset on the host thread) and
+// every pad parameter is a flat param, pad<N>_<key> (dr32_params.c). The UI is
+// the host's own param-pages grid, planned from the hierarchy this file serves
+// — DR32 ships no UI code of its own beyond ui.js's play view.
 
 #include "host/plugin_api_v1.h"
 #include "dr32_kit.h"
@@ -25,20 +26,19 @@ typedef struct {
     dr32_kit kit;
     float    scratch[2 * 1024];   // float mix before int16 conversion
     char     err[256];
-    // The kit path is set by the host's file browser (chain_params "kit"),
-    // which calls set_param on the DSP. The DSP does NOT parse JSON — it just
-    // records the path and raises kit_dirty; the UI polls that, parses the
-    // .ablpreset with lib/ablpreset.mjs, and pushes the pads back down as
-    // flat params. One place knows the format, and it isn't the audio side.
+    // The kit path is set by the host's file browser (the `kit` / `kit_move` /
+    // `kit_user` filepath params), which calls set_param on the DSP; the load
+    // happens right there, on the host thread.
     char     kit_path[DR32_MAX_PATH];
-    int      kit_dirty;
-    // Persisted active bank of the canvas Pad Editor. The canvas owns the real
-    // bound; this only has to survive a close/reopen.
-    int      editor_bank;
     // The Shadow UI asks the DSP for "ui_hierarchy" FIRST and only parses
     // module.json if we return <= 2 bytes (shadow_chain_mgmt.c). Serving it
     // ourselves takes that fallback — and any doubt about its brace-matching
-    // extraction — out of the picture.
+    // extraction — out of the picture. `ui_hierarchy_src` is module.json's
+    // text verbatim; `ui_hierarchy` is what we serve: the same text with the
+    // loaded kit's pad names spliced in as `child_names` (see
+    // dr32_refresh_hierarchy), so the host's voice list and header say
+    // "Kick 707" rather than "Pad 1".
+    char    *ui_hierarchy_src;
     char    *ui_hierarchy;
     int      ui_hierarchy_len;
     // Snapshot taken when the kit browser opens, so cancelling can put the
@@ -60,6 +60,7 @@ typedef struct {
  *  successful kit load (default kit, picker, preview-cancel restore, state
  *  restore via the same picker path). Failure just leaves no baseline, which
  *  degrades to the full state dump — never an error. */
+static void dr32_refresh_hierarchy(dr32_instance *in);
 static void dr32_capture_baseline(dr32_instance *in) {
     free(in->state_baseline);
     in->state_baseline = NULL;
@@ -68,6 +69,93 @@ static void dr32_capture_baseline(dr32_instance *in) {
     int n = dr32_state_write(&in->kit, in->kit_path, tmp, 65536, NULL);
     if (n > 0) in->state_baseline = strdup(tmp);
     free(tmp);
+    /* Every kit load lands here, so this is the one place the pad names can
+     * change. Not in load_sample: a per-pad swap keeps the rest of the kit and
+     * the host re-reads the hierarchy only on a contract settle anyway. */
+    dr32_refresh_hierarchy(in);
+}
+
+/** Append one pad's display name to `out` as a JSON string: the sample's
+ *  basename without extension, escaped; "" for an empty pad, which the host
+ *  falls back PER ITEM to "Pad N". Returns bytes written, 0 if it would not
+ *  fit — the caller then serves the hierarchy without names, which is the
+ *  same page with worse labels rather than no page. */
+static int append_pad_name(const dr32_pad_slot *s, char *out, int cap) {
+    const char *base = s->path[0] ? strrchr(s->path, '/') : NULL;
+    base = base ? base + 1 : s->path;
+    const char *dot = strrchr(base, '.');
+    int len = (dot && dot != base) ? (int)(dot - base) : (int)strlen(base);
+    int n = 0;
+    if (n + 1 >= cap) return 0;
+    out[n++] = '"';
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)base[i];
+        const char *esc = NULL;
+        if (c == '"') esc = "\\\"";
+        else if (c == '\\') esc = "\\\\";
+        else if (c < 0x20) esc = " ";
+        int w = esc ? (int)strlen(esc) : 1;
+        if (n + w + 1 >= cap) return 0;
+        if (esc) { memcpy(out + n, esc, (size_t)w); n += w; }
+        else out[n++] = (char)c;
+    }
+    out[n++] = '"';
+    out[n] = '\0';
+    return n;
+}
+
+/** Rebuild the served hierarchy from module.json's text with the current kit's
+ *  pad names spliced in as `child_names` on the pads level. The anchor is the
+ *  level's `child_index_param` declaration (module.json is ours, so the key is
+ *  guaranteed present); the array is inserted immediately before it. String
+ *  surgery rather than a JSON writer: the document is otherwise verbatim, and
+ *  a re-serialised copy would be a second thing that could drift from the
+ *  file the tests and the docs read. */
+static void dr32_refresh_hierarchy(dr32_instance *in) {
+    if (!in->ui_hierarchy_src) return;
+    const char *src = in->ui_hierarchy_src;
+    const char *anchor = strstr(src, "\"child_index_param\"");
+    size_t src_len = strlen(src);
+    /* 32 names × up to DR32_MAX_PATH is the pathological bound; real kits are
+     * ~20 bytes a name. The value channel is 64 KB, so cap the whole thing
+     * there and fall back to the plain document if names would not fit. */
+    const size_t cap = 65536;
+    char *out = malloc(cap);
+    if (!out) return;
+    size_t n = 0;
+    int ok = 0;
+    if (anchor && src_len < cap) {
+        size_t head = (size_t)(anchor - src);
+        memcpy(out, src, head);
+        n = head;
+        int w = snprintf(out + n, cap - n, "\"child_names\": [");
+        if (w > 0 && n + (size_t)w < cap) {
+            n += (size_t)w;
+            ok = 1;
+            for (int i = 0; i < DR32_PADS && ok; i++) {
+                if (i && n + 2 < cap) { out[n++] = ','; out[n++] = ' '; }
+                int m = append_pad_name(&in->kit.pads[i], out + n, (int)(cap - n));
+                if (m <= 0) ok = 0; else n += (size_t)m;
+            }
+            if (ok) {
+                w = snprintf(out + n, cap - n, "], ");
+                if (w <= 0 || n + (size_t)w >= cap) ok = 0; else n += (size_t)w;
+            }
+            if (ok) {
+                size_t tail = src_len - head;
+                if (n + tail >= cap) ok = 0;
+                else { memcpy(out + n, anchor, tail); n += tail; out[n] = '\0'; }
+            }
+        }
+    }
+    if (!ok) {
+        if (src_len >= cap) { free(out); return; }
+        memcpy(out, src, src_len + 1);
+        n = src_len;
+    }
+    free(in->ui_hierarchy);
+    in->ui_hierarchy = out;
+    in->ui_hierarchy_len = (int)n;
 }
 
 /** Pull the ui_hierarchy object out of our own module.json, so the UI contract
@@ -136,7 +224,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     dr32_instance *in = (dr32_instance *)calloc(1, sizeof(dr32_instance));
     if (!in) return NULL;
     dr32_kit_init(&in->kit);
-    in->ui_hierarchy = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
+    in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
+    dr32_refresh_hierarchy(in);
     if (in->ui_hierarchy) {
         char msg[128];
         snprintf(msg, sizeof(msg), "dr32: instance created (ui_hierarchy %d bytes)",
@@ -162,6 +251,7 @@ static void destroy_instance(void *instance) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
     dr32_kit_free(&in->kit);
+    free(in->ui_hierarchy_src);
     free(in->ui_hierarchy);
     free(in->state_baseline);
     free(in);
@@ -210,11 +300,6 @@ static void set_param(void *instance, const char *key, const char *val) {
     // The Kit menu is a PICKER of two roots: "Move" browses the Core Library's
     // drum kits, "User" the user library. The filepath type takes exactly one
     // root, so they are two params that mean the same thing.
-    if (!strcmp(key, "editor")) {
-        int b = atoi(val);
-        in->editor_bank = (b < 0) ? 0 : (b > 63 ? 63 : b);
-        return;
-    }
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user")) {
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
         // Load HERE, on the host thread. This used to raise a dirty flag for
@@ -249,10 +334,8 @@ static void set_param(void *instance, const char *key, const char *val) {
             snprintf(in->err, sizeof(in->err), "could not load kit: %s", val);
         }
         logmsg(msg);
-        in->kit_dirty = 0;
         return;
     }
-    if (!strcmp(key, "kit_dirty")) { in->kit_dirty = atoi(val); return; }
 
     if (!strcmp(key, "kit_mark")) {
         // Browser opened: remember what was loaded. Cleared on commit.
@@ -286,6 +369,16 @@ static void set_param(void *instance, const char *key, const char *val) {
     }
 
     dr32_apply_param(&in->kit, key, val);
+
+    /* A per-pad sample swap (browser, or a browse step) renames that pad in
+     * the served hierarchy. Cheap — one 32 KB copy — and the host only re-reads
+     * the contract on a settle, so this is never per-frame work. */
+    size_t kl = strlen(key);
+    if ((kl >= 7 && !strcmp(key + kl - 7, "_sample")) ||
+        (kl >= 12 && !strcmp(key + kl - 12, "_sample_move")) ||
+        (kl >= 12 && !strcmp(key + kl - 12, "_sample_user")) ||
+        (kl >= 7 && !strcmp(key + kl - 7, "_browse")))
+        dr32_refresh_hierarchy(in);
 }
 
 static int get_param(void *instance, const char *key, char *buf, int buf_len) {
@@ -299,10 +392,6 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     }
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user"))
         return snprintf(buf, buf_len, "%s", in->kit_path);
-    // The canvas editor persists only its active bank; the canvas owns the
-    // real bound, so clamping is deliberately generous.
-    if (!strcmp(key, "editor"))    return snprintf(buf, buf_len, "%d", in->editor_bank);
-    if (!strcmp(key, "kit_dirty")) return snprintf(buf, buf_len, "%d", in->kit_dirty);
     // The blob Schwung stores in the set's slot_N.json. Without this the host
     // has nothing to persist and a DR32 slot comes back empty after a reboot.
     // The baseline keeps the blob to the user's EDITS — see dr32_state.h for
@@ -330,6 +419,24 @@ static void render_block(void *instance, int16_t *out, int frames) {
      * host, so it is guarded — and the kit early-outs on an unchanged value, so
      * this is a float compare per block rather than a recompute. */
     if (g_host && g_host->get_bpm) dr32_kit_set_bpm(&in->kit, g_host->get_bpm());
+
+    /* Is anything sequencing? Decides whether a bare note-on may move the
+     * editor's focus (dr32_kit.h, transport_running). get_beat_position is
+     * < 0 whenever no transport runs and is the drift-free source; the clock
+     * status is the fallback for a host that predates it. Both pointers may be
+     * NULL on an old host, in which case we assume STOPPED — the follow then
+     * behaves as the canvas era's "every note" did, which is the state DR32
+     * shipped in for weeks; the alternative (assume running) would leave focus
+     * dead on such a host with no vouch to move it. */
+    {
+        int running = 0;
+        if (g_host && g_host->get_beat_position) {
+            running = g_host->get_beat_position() >= 0.0;
+        } else if (g_host && g_host->get_clock_status) {
+            running = g_host->get_clock_status() == MOVE_CLOCK_STATUS_RUNNING;
+        }
+        in->kit.transport_running = running;
+    }
 
     dr32_kit_render(&in->kit, in->scratch, frames);
 

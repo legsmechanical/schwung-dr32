@@ -44,6 +44,22 @@ static void occupy(dr32_kit *k, int pad, const char *path) {
     snprintf(k->pads[pad].path, sizeof(k->pads[pad].path), "%s", path);
 }
 
+/* One second of silence, 16-bit mono 44.1 kHz — enough for a pad to count as
+ * loaded, which is all the hierarchy test needs. */
+static void put16(FILE *f, unsigned v) { fputc(v & 0xff, f); fputc((v >> 8) & 0xff, f); }
+static void put32(FILE *f, unsigned v) { put16(f, v & 0xffff); put16(f, v >> 16); }
+static void make_wav(const char *path) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    const unsigned sr = 44100, data = sr * 2;
+    fputs("RIFF", f); put32(f, 4 + 24 + 8 + data); fputs("WAVE", f);
+    fputs("fmt ", f); put32(f, 16); put16(f, 1); put16(f, 1); put32(f, sr);
+    put32(f, sr * 2); put16(f, 2); put16(f, 16);
+    fputs("data", f); put32(f, data);
+    for (unsigned i = 0; i < sr; i++) put16(f, 0);
+    fclose(f);
+}
+
 int main(void) {
     printf("test_state\n");
 
@@ -218,6 +234,42 @@ int main(void) {
                 }
                 api->destroy_instance(inst);
             }
+        }
+    }
+
+    /* ---- 6. The served hierarchy carries the kit's pad names ------------ */
+    {
+        /* The host plans every page from get_param("ui_hierarchy"), which is
+         * module.json's object with `child_names` spliced in (dr32.c). Drive it
+         * from src/ so the real file is what gets spliced, load two samples so
+         * two names are real, and hand the result to tests/run.sh, which
+         * JSON-parses it and runs upstream's own voice resolver over it. A
+         * splice that breaks the JSON would otherwise show up as "the module
+         * has no pages", with nothing logged. */
+        plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+        void *inst = api ? api->create_instance("src", NULL) : NULL;
+        CHECK(inst != NULL, "create_instance(\"src\") returned NULL");
+        if (inst) {
+            const char *wa = "/tmp/dr32_state_kick.wav", *wb = "/tmp/dr32_state_snare.wav";
+            make_wav(wa);
+            make_wav(wb);
+            api->set_param(inst, "pad0_sample", wa);
+            api->set_param(inst, "pad1_sample", wb);
+            static char h[65536];
+            int n = api->get_param(inst, "ui_hierarchy", h, (int)sizeof(h));
+            CHECK(n > 2, "ui_hierarchy not served (%d bytes)", n);
+            CHECK(strstr(h, "\"pad_layout\": \"drums\"") != NULL, "pad_layout missing");
+            CHECK(strstr(h, "\"child_index_param\": \"ui_current_pad\"") != NULL,
+                  "child_index_param missing — the splice anchor is gone");
+            const char *names = strstr(h, "\"child_names\": [");
+            CHECK(names != NULL, "child_names not spliced in");
+            CHECK(names && strstr(names, "\"dr32_state_kick\", \"dr32_state_snare\", \"\"") != NULL,
+                  "pad names wrong: %.80s", names ? names : "");
+            FILE *f = fopen("dist/tests/served_hierarchy.json", "w");
+            if (f) { fputs(h, f); fclose(f); }
+            api->destroy_instance(inst);
+            remove(wa);
+            remove(wb);
         }
     }
 

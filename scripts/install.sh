@@ -23,9 +23,12 @@ ssh "ableton@${HOST}" "mkdir -p '${DEST}'"
 # temp-name + mv dodges ETXTBSY if the .so is currently loaded
 scp "$HERE/dist/${MODULE_ID}/dsp.so" "ableton@${HOST}:${DEST}/.dsp.so.new"
 ssh "ableton@${HOST}" "mv -f '${DEST}/.dsp.so.new' '${DEST}/dsp.so'"
-for f in module.json ui.js canvas.js; do
+for f in module.json ui.js; do
     scp "$HERE/dist/${MODULE_ID}/$f" "ableton@${HOST}:${DEST}/"
 done
+# The canvas Pad Editor is gone (0.2.0); a stale canvas.js left on the device
+# is harmless to the host but misleading to anyone reading the module dir.
+ssh "ableton@${HOST}" "rm -f '${DEST}/canvas.js'"
 ssh "ableton@${HOST}" "chmod -R a+rw '${DEST}'"
 echo "==> installed"
 
