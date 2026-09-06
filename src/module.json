@@ -118,6 +118,38 @@
           "child_select_param": "ui_current_pad",
           "child_press_param": "ui_live_press",
           "child_press_note_param": "ui_live_note",
+          "child_copy_keys": [
+            "sample_move",
+            "start",
+            "end",
+            "transpose",
+            "detune",
+            "choke",
+            "gain",
+            "cell_volume",
+            "vel_vol",
+            "attack",
+            "hold",
+            "decay",
+            "env_mode",
+            "volume",
+            "pan",
+            "punch",
+            "punch_time",
+            "filter_on",
+            "filter_type",
+            "cutoff",
+            "resonance",
+            "peak_gain",
+            "mod_target",
+            "mod_amount",
+            "pitch_env",
+            "send1",
+            "send2",
+            "fx_type",
+            "fx_p1",
+            "fx_p2"
+          ],
           "params": [
             {
               "key": "sample_move",
@@ -175,7 +207,8 @@
               "short_name": "STRT",
               "mode": "start",
               "display_unit": "percent",
-              "filepath_param": "sample_move"
+              "filepath_param": "sample_move",
+              "default": 0.0
             },
             {
               "key": "end",
@@ -187,7 +220,8 @@
               "filepath_param": "sample_move",
               "min": 0.0,
               "max": 1.0,
-              "step": 0.01
+              "step": 0.01,
+              "default": 1.0
             },
             {
               "key": "transpose",
@@ -196,7 +230,8 @@
               "min": -48,
               "max": 48,
               "unit": "st",
-              "short_name": "TRSP"
+              "short_name": "TRSP",
+              "default": 0
             },
             {
               "key": "detune",
@@ -206,7 +241,8 @@
               "max": 50.0,
               "step": 1.0,
               "unit": "ct",
-              "short_name": "DETN"
+              "short_name": "DETN",
+              "default": 0
             },
             {
               "key": "choke",
@@ -214,7 +250,8 @@
               "type": "int",
               "min": 0,
               "max": 16,
-              "short_name": "CHOKE"
+              "short_name": "CHOKE",
+              "default": 0
             },
             {
               "key": "browse",
@@ -222,7 +259,8 @@
               "short_name": "BRWS",
               "type": "int",
               "min": 0,
-              "max": 511
+              "max": 511,
+              "default": 0
             },
             {
               "key": "attack",
@@ -236,7 +274,8 @@
               "viz": {
                 "group": "amp",
                 "role": "attack"
-              }
+              },
+              "default": 0.0001
             },
             {
               "key": "decay",
@@ -250,7 +289,8 @@
               "viz": {
                 "group": "amp",
                 "role": "decay"
-              }
+              },
+              "default": 1.0
             },
             {
               "key": "hold",
@@ -260,7 +300,8 @@
               "max": 60.0,
               "step": 0.01,
               "unit": "s",
-              "short_name": "HOLD"
+              "short_name": "HOLD",
+              "default": 0.3
             },
             {
               "key": "env_mode",
@@ -270,7 +311,8 @@
                 "A-H-D",
                 "A-S-R"
               ],
-              "short_name": "ENV"
+              "short_name": "ENV",
+              "default": "A-H-D"
             },
             {
               "key": "volume",
@@ -283,7 +325,8 @@
               "short_name": "VOL",
               "viz": {
                 "kind": "fader"
-              }
+              },
+              "default": 0.0
             },
             {
               "key": "pan",
@@ -292,7 +335,8 @@
               "min": -50.0,
               "max": 50.0,
               "step": 1.0,
-              "short_name": "PAN"
+              "short_name": "PAN",
+              "default": 0.0
             },
             {
               "key": "punch",
@@ -327,7 +371,8 @@
               "viz": {
                 "group": "flt",
                 "role": "cutoff"
-              }
+              },
+              "default": 22000.0
             },
             {
               "key": "resonance",
@@ -340,7 +385,8 @@
               "viz": {
                 "group": "flt",
                 "role": "resonance"
-              }
+              },
+              "default": 0.0
             },
             {
               "key": "filter_type",
@@ -356,7 +402,8 @@
               "viz": {
                 "group": "flt",
                 "role": "mode"
-              }
+              },
+              "default": "Lowpass"
             },
             {
               "key": "filter_on",
@@ -367,7 +414,8 @@
               "max": 1,
               "viz": {
                 "kind": "switch"
-              }
+              },
+              "default": 0
             },
             {
               "key": "send1",
@@ -377,7 +425,8 @@
               "max": 6.0,
               "step": 0.5,
               "unit": "dB",
-              "short_name": "SEND1"
+              "short_name": "SEND1",
+              "default": -70.0
             },
             {
               "key": "send2",
@@ -387,7 +436,8 @@
               "max": 6.0,
               "step": 0.5,
               "unit": "dB",
-              "short_name": "SEND2"
+              "short_name": "SEND2",
+              "default": -70.0
             }
           ],
           "knobs": [
