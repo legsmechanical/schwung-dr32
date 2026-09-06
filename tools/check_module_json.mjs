@@ -67,7 +67,7 @@ for (const [lname, level] of Object.entries(levels)) {
         errors.push('levels.pads.child_note_base must be 36 (DR32_FIRST_NOTE)');
     if (pads.child_count !== 32 || pads.child_prefix !== 'pad')
         errors.push('levels.pads must declare child_prefix "pad" and child_count 32 — dr32_params.c speaks pad<N>_<key>');
-    for (const k of ['child_select_param', 'child_press_param', 'child_press_note_param'])
+    for (const k of ['child_press_param', 'child_press_note_param'])
         if (!pads[k]) errors.push(`levels.pads.${k} missing — dAVEBOx sound mode reads it (see CLAUDE.md)`);
     const raw = readFileSync(path, 'utf8');
     const n = (raw.match(/"child_index_param"/g) || []).length;

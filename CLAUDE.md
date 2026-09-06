@@ -53,27 +53,30 @@ time it reaches `on_midi` (measured on device: identical status/channel/note/sou
   hand, so `dr32_kit_note_on` moves `ui_current_pad` outright. Works on any host.
 - **Transport running**: only a host vouch moves it — `ui_live_press` ("a finger did that",
   correlated with the last/next note inside `DR32_LIVE_MATCH_BLOCKS` = 20 × 2.902 ms = **58.0 ms**)
-  or `ui_live_note` (a host that emits the note names it outright, no race). Stock upstream 1.2
-  has neither; **a PR making `child_press_param` an upstream contract is the planned fix**
-  (`_worklogs/NEXT-PROMPT-dr32.md`).
+  or `ui_live_note` (a host that emits the note names it outright, no race). Stock upstream 1.2.0
+  has neither; **upstream PR #426 makes `child_press_param` the host's contract** (open 2026-09-06).
+- A host that has vouched even once OWNS liveness from then on (`dr32_kit.host_vouches`): bare
+  notes never move focus again, whatever the transport says — davebox's sequencer dragged focus
+  because davebox reports no transport to the plugin.
 - `ui_auto_select_pad` ("Follow Pads") gates both. The kit browser suspends it via
   `browser_hooks` while open.
 
 Pinned by `tests/test_kit.c` (both regimes, vouch consumption across a transport start, the
 upper bank). **Before changing any of this, say so**: dAVEBOx sound mode depends on it.
 
-## ⚠⚠ dAVEBOx sound mode reads three keys from the `pads` level — keep them
+## ⚠⚠ dAVEBOx sound mode reads two keys from the `pads` level — keep them
 
 ```json
-"child_select_param":     "ui_current_pad",   /* read: which pad is focused */
-"child_press_param":      "ui_live_press",    /* write "1": a finger did that */
-"child_press_note_param": "ui_live_note"      /* write the note: a host that knows it */
+"child_press_param":      "ui_live_press",    /* write "1": a finger did that (also upstream #426) */
+"child_press_note_param": "ui_live_note"      /* write the note: a host that EMITS it names the pad outright */
 ```
 
-davebox (`dbxhost/davebox/ui/ui_discover.mjs`) hosts DR32 in a chain slot and writes the vouch
-itself from its own pad handler. Upstream ignores unknown keys, so they cost nothing there.
-**They are not cruft — do not remove them** until davebox has moved to `child_index_param`
-(dbxhost's 1.2.0 survey lists that as "pull, assess"). `check_module_json.mjs` pins them.
+davebox (`dbxhost/davebox/ui/ui_discover.mjs`) hosts DR32 in a chain slot. Since 2026-09-06 it
+reads focus through upstream's `child_index_param` (so `child_select_param` is gone from here),
+and `child_press_param` is the same key upstream #426 adopted. `child_press_note_param` is
+davebox-only and deliberately kept: a sequencer that emits the note can name the pad exactly,
+where the vouch can only race a 58 ms window. Upstream ignores unknown keys.
+**Do not remove them.** `check_module_json.mjs` pins both.
 
 ## ⚠ The engine is a reconstruction, not a design
 
