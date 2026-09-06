@@ -75,6 +75,45 @@ itself from its own pad handler. Upstream ignores unknown keys, so they cost not
 **They are not cruft — do not remove them** until davebox has moved to `child_index_param`
 (dbxhost's 1.2.0 survey lists that as "pull, assess"). `check_module_json.mjs` pins them.
 
+## 🚌 Schwung buses: the 32 pads are 32 voices (`split_voices` + `render_split`)
+
+DR32 is the first module on upstream's per-voice render contract, so a slot can put the
+kick on one insert chain and the snare on another. Two opt-ins, both additive:
+
+- **`get_param("split_voices")`** — a flat ordered array, one entry per pad, built by
+  `dr32_split_voices_json` (`dsp/dr32_kit.c`). **Entry *i* is buffer *i*** in the render
+  below, so the order is the pad order and never changes.
+- **`move_plugin_render_split`** (`dsp/dr32.c`) — dlsym'd off `dsp.so`, never a field on
+  `plugin_api_v2_t`. A host that does not know about it calls `render_block` and gets
+  exactly what it always got.
+
+**The ids are POSITIONAL (`pad1`..`pad32`) and that is the whole design.** A bus stores
+voice *ids*; loading a kit changes all 32 samples and no pad's position, so an id keyed to
+a sample name would orphan every bus assignment on the next kit. The **label** carries the
+sample name. They are 1-based while `dr32_params`' keys are 0-based (`pad0_attack`) —
+different namespaces that never meet; the host treats an id as opaque.
+
+**The render ACCUMULATES and its destinations ALIAS.** The host clears them, then hands
+two pads on one bus the *same* pointer. So nothing in the split path may `memset` a
+destination — that is the carry-over mistake from a single-output render, and it deletes
+another bus's audio with no error anywhere. `dr32_kit_render_voice` / `_render_main` fill
+a *private* float scratch (`dr32_instance::scratch`, reused per pad) and `dr32.c` converts
+and sums into the int16 destination; summing in int16 is forced by the aliasing, since
+there is no per-bus float buffer to sum into.
+
+**In split mode the send returns and the Drum Bus go to `main_out`**, and the Drum Bus
+therefore sees only the returns where `dr32_kit_render` gives it the whole mix. That is
+the one audible difference between the two entry points, and it is a consequence of the
+pads having already left for separate destinations. The internal sends stay exactly as
+they are — dropping them for the platform's would cost DR32 its 64 per-pad send levels
+against a bus's 8 (upstream `docs/CHAIN.md`, "Per-voice sends").
+
+`dr32_kit_render_main` runs every block whether or not the caller wants the audio: it is
+what drains the send buses. Skipping it replays a block's sends on top of the next.
+
+Pinned by `tests/test_split.c` — the untouched destination, the aliased sum, parity with
+`render_block`, and the 4096-byte ceiling the host reads the list through.
+
 ## ⚠ The engine is a reconstruction, not a design
 
 The DSP laws come from `../move original reconstruct/analysis/native-instruments/`

@@ -328,6 +328,9 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (bidx >= 0) return snprintf(buf, buf_len, "%g", (double)kit->bus_p[bidx]);
     }
 
+    if (!strcmp(key, "split_voices"))
+        return dr32_split_voices_json(kit, buf, buf_len);
+
     if (!strcmp(key, "ui_current_pad"))
         return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
     if (!strcmp(key, "ui_auto_select_pad"))

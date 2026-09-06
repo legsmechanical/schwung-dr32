@@ -149,6 +149,75 @@ void dr32_kit_set_bpm(dr32_kit *k, float bpm);
 /** Render `frames` of interleaved stereo. Overwrites `out` (does not add). */
 void dr32_kit_render(dr32_kit *k, float *out, int frames);
 
+// ---------------------------------------------------------------- split render
+//
+// The three calls below are the same block of audio as dr32_kit_render, taken
+// apart: one buffer per pad, plus one for everything that belongs to no pad.
+// They exist for Schwung's per-voice render contract (move_plugin_render_split
+// in dsp/dr32.c), which hands the module one int16 destination per voice and
+// may hand the SAME destination to several of them.
+//
+// Nothing here writes to a shared destination — each call fills a caller-owned
+// float scratch buffer that the caller then converts and accumulates. That is
+// what keeps the aliasing rule the plugin layer's problem rather than the
+// kit's.
+//
+// Per block, in this order: begin_block, then render_voice for every pad, then
+// render_main. The order is not cosmetic — dr32_fxbus_process consumes and
+// clears what the pads fed into the send buses, so calling it before a pad has
+// rendered loses that pad's send for the block.
+
+/** One block boundary (the choke-simultaneity counter). Call once per block,
+ *  before any dr32_kit_render_voice. dr32_kit_render does this itself. */
+void dr32_kit_begin_block(dr32_kit *k);
+
+/** Render pad `pad` alone into `dst` (2 * frames interleaved floats) and feed
+ *  its post-fader share to whichever send buses it is on.
+ *
+ *  `dst` is OVERWRITTEN, which is safe only because it is the caller's private
+ *  scratch — never one of the split contract's shared destinations.
+ *
+ *  Returns 1 if the pad produced audio, 0 if it is silent, in which case `dst`
+ *  is left untouched and the caller must not accumulate it. */
+int dr32_kit_render_voice(dr32_kit *k, int pad, float *dst, int frames);
+
+/** Render the audio that belongs to no pad — the two send returns and the
+ *  always-on Drum Bus — into `dst`, overwriting it (private scratch again).
+ *
+ *  ⚠ The Drum Bus here sees ONLY the send returns, where dr32_kit_render gives
+ *  it the whole mix (dry + returns). It cannot see the dry in split mode: the
+ *  pads have already gone to separate destinations by the time this runs, and
+ *  re-summing them would put the dry through the bus twice. So a kit with a
+ *  non-neutral Drum Bus does not sound the same split as mixed. Master gain is
+ *  applied on both sides of the split, so the two paths differ in that stage
+ *  and in nothing else. */
+void dr32_kit_render_main(dr32_kit *k, float *dst, int frames);
+
+/** How long a voice label may be, in bytes, before it is truncated.
+ *
+ *  32 entries have to fit the 4096-byte buffer the chain host parses the id
+ *  table out of, and a truncated read is silently short — so this is a budget,
+ *  not a style choice. See the static assert in dr32_split_voices_json. */
+#define DR32_SPLIT_LABEL_MAX 24
+
+/** Publish the flat ordered voice list Schwung's bus routing is built on:
+ *
+ *      [{"id":"pad1","label":"Kick 707"}, ...]      32 entries, always
+ *
+ *  ENTRY i IS BUFFER i in move_plugin_render_split, so the order is the pad
+ *  order and never changes. The ids are POSITIONAL for the same reason: a kit
+ *  change swaps every pad's sample but no pad's position, and an id keyed to a
+ *  sample name would orphan every bus assignment on the next kit. A bus on a
+ *  drum rack means "the third pad".
+ *
+ *  ⚠ These ids are 1-BASED (`pad1`..`pad32`) while dr32_params' keys are
+ *  0-based (`pad0_attack`). They are not the same namespace and never meet —
+ *  the host treats an id as opaque — and 1-based matches what the user is shown
+ *  ("Pad 1"). Do not "fix" one to match the other.
+ *
+ *  Returns bytes written, or 0 (and an empty buffer) if it would not fit. */
+int dr32_split_voices_json(const dr32_kit *k, char *buf, int buf_len);
+
 /** Number of currently sounding voices — for the CPU/debug readout. */
 int dr32_kit_active_voices(const dr32_kit *k);
 
