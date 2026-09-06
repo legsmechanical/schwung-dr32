@@ -205,6 +205,30 @@ static void logmsg(const char *s) {
     if (g_host && g_host->log) g_host->log(s);
 }
 
+/* Is anything sequencing? Decides whether a bare note-on may move the editor's
+ * focus (dr32_kit.h, transport_running). get_beat_position is < 0 whenever no
+ * transport runs and is the drift-free source; the clock status is the
+ * fallback for a host that predates it. Both pointers may be NULL on an old
+ * host, in which case we assume STOPPED -- the follow then behaves as the
+ * canvas era's "every note" did, which is the state DR32 shipped in for weeks;
+ * the alternative (assume running) would leave focus dead on such a host with
+ * no vouch to move it.
+ *
+ * Asked at EVERY note-on, not only per render block: the host hands a block's
+ * MIDI to on_midi BEFORE rendering it, and a slot parked as idle during
+ * silence renders nothing at all -- so a value mirrored only in render_block
+ * was a block, or a whole rest, stale on exactly the note that mattered (the
+ * first hit after Play). Two function calls, no I/O; fine on the audio thread. */
+static void dr32_sync_transport(dr32_instance *in) {
+    int running = 0;
+    if (g_host && g_host->get_beat_position) {
+        running = g_host->get_beat_position() >= 0.0;
+    } else if (g_host && g_host->get_clock_status) {
+        running = g_host->get_clock_status() == MOVE_CLOCK_STATUS_RUNNING;
+    }
+    in->kit.transport_running = running;
+}
+
 // ------------------------------------------------------------------ helpers
 
 /* Kit loaded on a fresh instance, so the module arrives making a sound rather
@@ -266,8 +290,9 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
     uint8_t status = msg[0] & 0xF0;
 
     if (status == 0x90 && msg[2] > 0) {
-        /* Focus-follow is decided inside dr32_kit_note_on, and only for a note
-         * the canvas has vouched for. MEASURED on device: a live pad hit and a
+        dr32_sync_transport(in);
+        /* Focus-follow is decided inside dr32_kit_note_on: outright while no
+         * transport runs, otherwise only for a note a host has vouched for. MEASURED on device: a live pad hit and a
          * sequenced note reach on_midi with identical status, channel, note and
          * source (both report EXTERNAL, not INTERNAL — an earlier version gated
          * on INTERNAL and silently killed focus-follow entirely). The canvas
@@ -420,23 +445,7 @@ static void render_block(void *instance, int16_t *out, int frames) {
      * this is a float compare per block rather than a recompute. */
     if (g_host && g_host->get_bpm) dr32_kit_set_bpm(&in->kit, g_host->get_bpm());
 
-    /* Is anything sequencing? Decides whether a bare note-on may move the
-     * editor's focus (dr32_kit.h, transport_running). get_beat_position is
-     * < 0 whenever no transport runs and is the drift-free source; the clock
-     * status is the fallback for a host that predates it. Both pointers may be
-     * NULL on an old host, in which case we assume STOPPED — the follow then
-     * behaves as the canvas era's "every note" did, which is the state DR32
-     * shipped in for weeks; the alternative (assume running) would leave focus
-     * dead on such a host with no vouch to move it. */
-    {
-        int running = 0;
-        if (g_host && g_host->get_beat_position) {
-            running = g_host->get_beat_position() >= 0.0;
-        } else if (g_host && g_host->get_clock_status) {
-            running = g_host->get_clock_status() == MOVE_CLOCK_STATUS_RUNNING;
-        }
-        in->kit.transport_running = running;
-    }
+    dr32_sync_transport(in);
 
     dr32_kit_render(&in->kit, in->scratch, frames);
 
