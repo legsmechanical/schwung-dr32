@@ -243,7 +243,7 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
      * the gate removed; that plumbing was reverted. Don't re-tread it.) */
     k->last_hit_pad = pad;
     k->last_hit_block = k->block;
-    if (k->ui_auto_select_pad && !k->transport_running) {
+    if (k->ui_auto_select_pad && !k->transport_running && !k->host_vouches) {
         /* Nothing is sequencing, so this note came from a hand. Follow it
          * outright — no vouch needed, on any host. (See transport_running in
          * dr32_kit.h.) A vouch that is still in flight for this same press is

@@ -86,6 +86,15 @@ typedef struct {
     // focus. Upstream Schwung's own rule for the same reason: "a sequencer
     // plays notes", so following every note dragged the editor around the bar.
     int           transport_running;
+    // A host has VOUCHED at least once (ui_live_press or ui_live_note), so it
+    // owns liveness from here on and a bare note-on never moves focus again,
+    // whatever the transport says. Needed because a host that vouches is a
+    // host with its own sequencer -- dAVEBOx -- and such a host may not report
+    // its transport to us at all: DR32 saw "stopped", followed every sequenced
+    // note, and the sequencer dragged the editor around the bar. Under a host
+    // that never vouches (stock without the live-press contract) the stopped
+    // regime stays, which is the only follow such a host can offer.
+    int           host_vouches;
 
     // Folder browse: the loadable samples sitting NEXT TO the focused pad's
     // sample, so a knob can walk them without opening the file browser. Only

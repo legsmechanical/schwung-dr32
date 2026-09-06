@@ -293,6 +293,43 @@ int main(void) {
         dr32_kit_free(&t);
     }
 
+    // ---- a host that VOUCHES owns liveness: bare notes never follow again
+    //
+    // dAVEBOx vouches for its live presses and runs its own sequencer, and it
+    // may never tell us its transport is running -- so "stopped" followed every
+    // sequenced note and the sequencer dragged the editor. Once a vouch has
+    // been seen, the transport flag no longer buys a bare note anything.
+    {
+        dr32_kit t;
+        dr32_kit_init(&t);
+        CHECK(t.host_vouches == 0, "kit_init must start with no host vouch");
+
+        // Before any vouch, stopped-regime follow works as above.
+        t.ui_current_pad = 0;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 6, 100);
+        CHECK(t.ui_current_pad == 6, "pre-vouch stopped follow broken (%d)", t.ui_current_pad);
+
+        // The host vouches once (davebox's press path, or the grid's).
+        dr32_apply_param(&t, "ui_live_press", "1");
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 9, 100);
+        CHECK(t.ui_current_pad == 9, "vouched press did not focus (%d)", t.ui_current_pad);
+
+        // From now on a bare note -- the sequencer -- moves nothing, even with
+        // the transport reported stopped.
+        t.block += DR32_LIVE_MATCH_BLOCKS + 1;
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 14, 100);
+        CHECK(t.ui_current_pad == 9, "sequenced note dragged focus after a vouch (%d)", t.ui_current_pad);
+
+        // ...while a vouched press, and a named note, still do.
+        dr32_apply_param(&t, "ui_live_note", "40");
+        CHECK(t.ui_current_pad == 4, "ui_live_note ignored after vouch mode (%d)", t.ui_current_pad);
+        dr32_apply_param(&t, "ui_live_press", "1");
+        dr32_kit_note_on(&t, DR32_FIRST_NOTE + 22, 100);
+        CHECK(t.ui_current_pad == 22, "vouched press ignored after vouch mode (%d)", t.ui_current_pad);
+
+        dr32_kit_free(&t);
+    }
+
     // ---- `end` is an alias of length (start + length), for the host's trim editor
     {
         dr32_kit t;

@@ -496,6 +496,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
      * Sequenced notes never reach here: davebox calls it only from its live
      * pad-press paths, which its playback path does not go through. */
     if (!strcmp(key, "ui_live_note")) {
+        kit->host_vouches = 1;              /* see dr32_kit.h */
         if (!kit->ui_auto_select_pad) return 1;
         int n = atoi(val);
         if (n < 0 || n > 127) return 1;
@@ -531,6 +532,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
          * MIDI stream, while this crosses a process boundary), so look back
          * first and only arm forward if nothing recent matches. Handling just
          * one order would drop roughly half the presses. */
+        kit->host_vouches = 1;              /* see dr32_kit.h */
         if (!kit->ui_auto_select_pad) return 1;
         if (kit->last_hit_pad >= 0 &&
             (kit->block - kit->last_hit_block) <= DR32_LIVE_MATCH_BLOCKS) {
