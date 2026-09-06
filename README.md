@@ -25,6 +25,13 @@ groups, velocity modulation, pan and volume, sends, and Punch. Two envelope mode
 and `Native` reverb/delay types; the bus has compression, crunch, attack/sustain shaping and
 dry/wet.
 
+**Every pad is a Schwung bus voice**, so a slot can send the kick to one insert chain and the snare
+to another. **Routing a pad to a bus takes it off DR32's own drum bus** — the same thing routing a
+channel to a subgroup does on a desk. Pads you leave alone stay on the main output and are glued as
+always; the routed ones are glued by whatever you put on their bus. (If you want the compressor over
+the whole kit again, the slot's own FX see the buses summed back into main.) The pad's send levels
+still feed DR32's two internal sends either way, and those returns stay on main.
+
 **Native Schwung pages, no custom UI.** Since 0.2.0 every page is the host's own knob grid, planned
 from the hierarchy the module serves: the pads are one 32-instance child level with `pad_layout:
 "drums"`, so the header shows a pad map, the grid follows the pad you hit, and each pad's page draws

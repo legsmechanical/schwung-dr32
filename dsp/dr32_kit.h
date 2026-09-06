@@ -157,15 +157,21 @@ void dr32_kit_render(dr32_kit *k, float *out, int frames);
 // in dsp/dr32.c), which hands the module one int16 destination per voice and
 // may hand the SAME destination to several of them.
 //
-// Nothing here writes to a shared destination — each call fills a caller-owned
-// float scratch buffer that the caller then converts and accumulates. That is
-// what keeps the aliasing rule the plugin layer's problem rather than the
-// kit's.
+// Nothing here writes to a shared destination — each call works on a
+// caller-owned float scratch buffer that the caller then converts and
+// accumulates. That is what keeps the aliasing rule the plugin layer's problem
+// rather than the kit's.
 //
-// Per block, in this order: begin_block, then render_voice for every pad, then
-// render_main. The order is not cosmetic — dr32_fxbus_process consumes and
-// clears what the pads fed into the send buses, so calling it before a pad has
-// rendered loses that pad's send for the block.
+// Per block, in this order: begin_block, then render_voice for EVERY pad, then
+// dr32_kit_finish_main. The order is load-bearing twice over:
+//
+//   - dr32_fxbus_process consumes and clears what the pads fed into the send
+//     buses, so running it before a pad has rendered loses that pad's send for
+//     the block; and
+//   - the Drum Bus runs over the main buffer IN PLACE, so every unassigned
+//     pad must already be in that buffer or the glue misses it. Running the
+//     finish twice, or running it before the pads, is the way to get audio
+//     through the compressor twice or not at all.
 
 /** One block boundary (the choke-simultaneity counter). Call once per block,
  *  before any dr32_kit_render_voice. dr32_kit_render does this itself. */
@@ -181,17 +187,31 @@ void dr32_kit_begin_block(dr32_kit *k);
  *  is left untouched and the caller must not accumulate it. */
 int dr32_kit_render_voice(dr32_kit *k, int pad, float *dst, int frames);
 
-/** Render the audio that belongs to no pad — the two send returns and the
- *  always-on Drum Bus — into `dst`, overwriting it (private scratch again).
+/** Finish the kit's MAIN output, IN PLACE: add the two send returns to `mix`
+ *  and then run the always-on Drum Bus over the result.
  *
- *  ⚠ The Drum Bus here sees ONLY the send returns, where dr32_kit_render gives
- *  it the whole mix (dry + returns). It cannot see the dry in split mode: the
- *  pads have already gone to separate destinations by the time this runs, and
- *  re-summing them would put the dry through the bus twice. So a kit with a
- *  non-neutral Drum Bus does not sound the same split as mixed. Master gain is
- *  applied on both sides of the split, so the two paths differ in that stage
- *  and in nothing else. */
-void dr32_kit_render_main(dr32_kit *k, float *dst, int frames);
+ *  `mix` is NOT cleared. On entry it must already hold every pad that has no
+ *  destination of its own — the unassigned voices — at the same post-master-
+ *  gain level dr32_kit_render_voice produced them at. So:
+ *
+ *      A VOICE YOU ROUTE TO A BUS LEAVES THE KIT'S DRUM BUS.
+ *
+ *  Exactly as routing a channel to a subgroup takes it out of the main mix on
+ *  a desk. What is left on main — the unrouted pads plus the returns — is
+ *  glued as it always was; the routed pads never meet the glue, because you
+ *  routed them elsewhere. Glue over everything including the buses is the
+ *  chain host's job one tier up: it sums buses into main BEFORE the slot's own
+ *  FX, "so a slot compressor sees the whole kit".
+ *
+ *  Call it once per block whether or not anyone wants the audio: this is what
+ *  drains the send buses, and skipping it replays a block's sends on top of
+ *  the next.
+ *
+ *  The returns are added at master gain, and the glue is run in the PRE-gain
+ *  domain (the buffer is scaled down, processed and scaled back) so the
+ *  compressor sees the same level dr32_kit_render's does. That keeps the two
+ *  entry points' only difference the one sentence above. */
+void dr32_kit_finish_main(dr32_kit *k, float *mix, int frames);
 
 /** How long a voice label may be, in bytes, before it is truncated.
  *

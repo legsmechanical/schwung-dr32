@@ -96,23 +96,57 @@ different namespaces that never meet; the host treats an id as opaque.
 **The render ACCUMULATES and its destinations ALIAS.** The host clears them, then hands
 two pads on one bus the *same* pointer. So nothing in the split path may `memset` a
 destination — that is the carry-over mistake from a single-output render, and it deletes
-another bus's audio with no error anywhere. `dr32_kit_render_voice` / `_render_main` fill
-a *private* float scratch (`dr32_instance::scratch`, reused per pad) and `dr32.c` converts
-and sums into the int16 destination; summing in int16 is forced by the aliasing, since
-there is no per-bus float buffer to sum into.
+another bus's audio with no error anywhere. `dr32_kit_render_voice` fills a *private*
+float scratch (`dr32_instance::scratch`, reused per pad) and `dr32.c` converts and sums
+into the int16 destination; summing in int16 is forced by the aliasing, since there is no
+per-bus float buffer to sum into.
 
-**In split mode the send returns and the Drum Bus go to `main_out`**, and the Drum Bus
-therefore sees only the returns where `dr32_kit_render` gives it the whole mix. That is
-the one audible difference between the two entry points, and it is a consequence of the
-pads having already left for separate destinations. The internal sends stay exactly as
-they are — dropping them for the platform's would cost DR32 its 64 per-pad send levels
-against a bus's 8 (upstream `docs/CHAIN.md`, "Per-voice sends").
+### 🥁 Routing a pad to a bus takes it OFF the drum bus
 
-`dr32_kit_render_main` runs every block whether or not the caller wants the audio: it is
+One sentence, and it is the user-facing behaviour: **a voice you route to a bus leaves the
+kit's drum bus**, exactly as routing a channel to a subgroup takes it out of the main mix
+on a desk. Pads you do not route stay on main and are glued as they always were.
+
+So the order inside `move_plugin_render_split` is load-bearing:
+
+1. **all 32 voices** — an unrouted pad's destination *is* `main_out`, so it lands there by
+   the same aliasing everything else uses;
+2. **the send returns**, added to `main_out`;
+3. **the Drum Bus over `main_out` IN PLACE** (`dr32_kit_finish_main`), so it glues the
+   unrouted pads plus the returns — the same signal mixed mode gives it, minus exactly the
+   pads the user routed away.
+
+Get that order wrong and the glue either misses the kit (the first cut started the main
+section from silence, so the Drum Bus compressed the *reverb returns* the moment any pad
+was routed — a surprising, audible change triggered by an unrelated action) or processes
+the unrouted pads twice. If every pad is routed, main holds only the returns and the glue
+processes just those; that is correct under this semantic, not a bug.
+
+Want glue over everything *including* the buses? The platform already does it one tier up:
+the chain host sums buses into main **before** the slot's own 8 FX, "so a slot compressor
+sees the whole kit". Nothing for DR32 to do about that case.
+
+**The in-place glue costs an int16 round trip.** The Drum Bus is float DSP and `main_out`
+is int16, so `dr32.c` reads the destination back (`dr32_from_i16`), runs the finish, and
+writes it back — one extra quantisation, ~-90 dBFS under the unrouted pads, forced by a
+contract whose destinations alias and therefore have no float buffer to live in. The
+write-back ROUNDS (`dr32_to_i16_round`) rather than truncating, so a neutral bus with no
+sends is an exact identity instead of shaving an LSB off every pad every block. The glue
+itself runs in the **pre-master-gain domain**, matching `dr32_kit_render`, because a
+compressor is level-dependent.
+
+The internal sends stay exactly as they are — dropping them for the platform's would cost
+DR32 its 64 per-pad send levels against a bus's 8 (upstream `docs/CHAIN.md`, "Per-voice
+sends").
+
+`dr32_kit_finish_main` runs every block whether or not the caller wants the audio: it is
 what drains the send buses. Skipping it replays a block's sends on top of the next.
 
-Pinned by `tests/test_split.c` — the untouched destination, the aliased sum, parity with
-`render_block`, and the 4096-byte ceiling the host reads the list through.
+Pinned by `tests/test_split.c` — the untouched destination, the aliased sum, an unrouted
+pad reaching the glue, a routed one never landing on main, the all-bused case, parity with
+`render_block` under a live Drum Bus, and the 4096-byte ceiling the host reads the list
+through. The mixed path is unchanged and stays hashed: a 400-block score FNVs to
+`634c6afc892c35f0` before and after.
 
 ## ⚠ The engine is a reconstruction, not a design
 

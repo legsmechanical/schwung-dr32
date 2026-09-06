@@ -386,20 +386,38 @@ int dr32_kit_render_voice(dr32_kit *k, int pad, float *dst, int frames) {
     return 1;
 }
 
-void dr32_kit_render_main(dr32_kit *k, float *dst, int frames) {
-    if (!k || !dst || frames <= 0) return;
+void dr32_kit_finish_main(dr32_kit *k, float *mix, int frames) {
+    if (!k || !mix || frames <= 0) return;
     if (frames > DR32_KIT_MAX_BLOCK) frames = DR32_KIT_MAX_BLOCK;
 
-    memset(dst, 0, sizeof(float) * 2 * (size_t)frames);
-    // Starting from silence is what makes this the send returns ALONE (see the
-    // Drum Bus warning in dr32_kit.h). It also has to run every block whether
-    // or not the caller wants the audio: dr32_fxbus_process is what clears the
-    // send buses, so skipping it would leave one block's sends to be replayed
-    // on top of the next.
-    if (k->fx) dr32_fxbus_process(k->fx, dst, frames);
+    // NO memset. `mix` arrives holding the unassigned voices, and clearing it
+    // would delete exactly the audio the Drum Bus exists to glue.
+    //
+    // The returns and the glue both belong in the pre-master-gain domain,
+    // because that is where dr32_kit_render runs them (it applies the gain
+    // last, over everything). The voices in `mix` have already been through
+    // that gain, so the buffer is scaled back down, the shared
+    // dr32_fxbus_process — send returns, then the Drum Bus in place — runs on
+    // it exactly as in the mixed path, and the gain goes back on. A compressor
+    // is level-dependent, so doing this rather than gluing the gained signal
+    // is what keeps the two entry points comparable.
+    //
+    // A gain of 0 cannot be undone, and does not need to be: every voice in
+    // `mix` is already silent, and the final scaling silences the returns too,
+    // which is what the mixed path does with the same gain.
+    const float g = k->master_gain;
+    const float inv = (g != 0.0f) ? 1.0f / g : 0.0f;
+    if (g != 1.0f) {
+        for (int i = 0; i < 2 * frames; i++) mix[i] *= inv;
+    }
 
-    if (k->master_gain != 1.0f) {
-        for (int i = 0; i < 2 * frames; i++) dst[i] *= k->master_gain;
+    // Runs every block whether or not the caller wants the audio:
+    // dr32_fxbus_process is what clears the send buses, so skipping it would
+    // leave one block's sends to be replayed on top of the next.
+    if (k->fx) dr32_fxbus_process(k->fx, mix, frames);
+
+    if (g != 1.0f) {
+        for (int i = 0; i < 2 * frames; i++) mix[i] *= g;
     }
 }
 
