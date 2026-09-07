@@ -91,10 +91,17 @@ for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
 
-$CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
-    -c dsp/dr32_fxbus.cpp -o build/obj/dr32_fxbus.o
+for src in dsp/dr32_fxbus.cpp dsp/dr32_efx_names.cpp; do
+    $CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
+        -c "$src" -o "build/obj/$(basename "${src%.cpp}").o"
+done
 
-$CXX -shared -o build/dsp.so build/obj/*.o -lm
+# -Wl,--no-undefined on BOTH links. A shared library links clean with undefined
+# symbols by default, so a call to a function whose translation unit was never
+# added succeeds here and fails at dlopen on the device -- which the host shows
+# as an insert stuck on "Loading..." with nothing logged as an error. That is
+# exactly what shipped once; the link is the only place it can be caught.
+$CXX -shared -Wl,--no-undefined -o build/dsp.so build/obj/*.o -lm
 
 # The EFFECTS module: the same Drum Buss stages, as ordinary chain inserts.
 # One binary, four effects chosen by `effect` -- audio_fx_api_v2 is
@@ -103,21 +110,24 @@ $CXX -shared -o build/dsp.so build/obj/*.o -lm
 FX_ID=dr32-fx
 $CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -I. -Idsp -Ifx \
     -c fx/dr32_fx.cpp -o build/obj/dr32_fx.o
-$CXX -shared -o build/dr32-fx.so build/obj/dr32_fx.o -lm
+$CXX -shared -Wl,--no-undefined -o build/dr32-fx.so \
+    build/obj/dr32_fx.o build/obj/dr32_efx_names.o -lm
 
 echo "==> packaging dist/"
 rm -rf "dist/${MODULE_ID}" "dist/${FX_ID}"
 mkdir -p "dist/${MODULE_ID}" "dist/${FX_ID}"
-cp build/dsp.so     "dist/${MODULE_ID}/"
-cp build/ui.js      "dist/${MODULE_ID}/"
+# `cat` and not `cp` for anything BUILT: on an ExtFS volume cp attempts a clone
+# and fails with "error deallocating", which under `set -e` aborts the script
+# after the .so is half-written -- a truncated dsp.so and no tarball, reported
+# as a copy error rather than as a build failure. The fx .so below learned this
+# first; the kit's did not, and started failing the day dsp.so grew.
+cat build/dsp.so > "dist/${MODULE_ID}/dsp.so"
+chmod 755 "dist/${MODULE_ID}/dsp.so"
+cat build/ui.js > "dist/${MODULE_ID}/ui.js"
 cp src/module.json  "dist/${MODULE_ID}/"
 
 # The host loads an audio FX by the path in its module.json; dsp.so is the name
 # every other module uses, so it is dsp.so here too.
-# `cat` and not `cp`: on an ExtFS volume cp attempts a clone and fails with
-# "error deallocating", which under `set -e` aborts the script AFTER the .so is
-# in place but BEFORE the tarball is made -- a build that looks like it worked
-# and ships nothing.
 # <id>/<id>.so, NOT dsp.so.
 #
 # A bus insert is loaded by chain_bus.c with a hardcoded

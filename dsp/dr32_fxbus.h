@@ -35,6 +35,8 @@
 #ifndef DR32_FXBUS_H
 #define DR32_FXBUS_H
 
+#include <string.h>   /* dr32_send_slot_index compares knob names */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -181,6 +183,45 @@ void dr32_fxbus_native_raw_commit(dr32_fxbus *fx, int slot);
 /** Name for a type, for UI readback. */
 const char *dr32_efx_name(dr32_efx_type type);
 dr32_efx_type dr32_efx_from_name(const char *name);
+
+/** Which of a send's eight generic slots a knob name addresses, -1 if none.
+ *
+ *  Several names mean the same underlying slot, because the eight are generic
+ *  and each type reads them differently. The names have to be DISTINCT keys --
+ *  the host rejects a hierarchy containing a duplicate -- so this is the one
+ *  table every reader uses. It lives in the header rather than in
+ *  dr32_params.c because `dr32-fx` hosts the same `Slot` and must agree with
+ *  the kit about which knob is which; two copies is how a key ends up settable
+ *  but not readable, and a knob that reads zero looks like dead UI rather than
+ *  a missing case.
+ *
+ *  WARNING Slot 0 and 1 are 0..1 for the reverbs and a count of SIXTEENTHS
+ *  (1..16) for the Delay. Slot 4 was the vestigial `mix` from the kit-insert
+ *  era. */
+static inline int dr32_send_slot_index(const char *name) {
+    if (!strcmp(name, "size")     || !strcmp(name, "time_l") || !strcmp(name, "p1")) return 0;
+    if (!strcmp(name, "damp")     || !strcmp(name, "time_r") || !strcmp(name, "p2")) return 1;
+    /* `hold` is the GATED reverb's name for slot 2: SpaceExtra maps it to the
+     * gate's hold time (50..500 ms), not to a decay. Same slot, honest name. */
+    if (!strcmp(name, "decay")    || !strcmp(name, "feedback")
+        || !strcmp(name, "hold")  || !strcmp(name, "p3")) return 2;
+    if (!strcmp(name, "predelay") || !strcmp(name, "tone")   || !strcmp(name, "p4")) return 3;
+    /* `length` is NonLin's name for slot 2 and `shape` its name for slot 4 —
+     * that type has no decay at all, which is the point of it. */
+    if (!strcmp(name, "length")) return 2;
+    /* Slot 4 is ping-pong on a Delay, Shape on NonLin and the TANK's decay on
+     * the gate — where slot 2 is the gate's hold, so "decay" would have been
+     * ambiguous and `tail` is used instead. */
+    if (!strcmp(name, "pingpong") || !strcmp(name, "shape")
+        || !strcmp(name, "tail") || !strcmp(name, "diffusion")
+        || !strcmp(name, "p5")) return 4;
+    /* Slot 5 is sync on a Delay and the RELEASE on the two envelope types. */
+    if (!strcmp(name, "release")) return 5;
+    if (!strcmp(name, "sync")     || !strcmp(name, "p6")) return 5;
+    if (!strcmp(name, "ms_l")     || !strcmp(name, "p7")) return 6;
+    if (!strcmp(name, "ms_r")     || !strcmp(name, "p8")) return 7;
+    return -1;
+}
 
 #ifdef __cplusplus
 }

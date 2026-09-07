@@ -25,6 +25,7 @@
 
 #include "host/audio_fx_api_v2.h"
 #include "dsp/dr32_drumbus.h"
+#include "dsp/dr32_sendfx.h"
 
 #include <cmath>
 #include <cstdio>
@@ -47,11 +48,38 @@ static const host_api_v1_t *g_host = nullptr;
  * `effect` remains a settable param, because a declaration is allowed to name
  * the stage directly and because the preset IS the effect here; it is simply
  * not on the knob row. */
-enum Effect { FX_CRUNCH = 0, FX_ATTACK, FX_SUSTAIN, FX_COMP, FX_COUNT };
-static const char *kEffectName[FX_COUNT] = { "Crunch", "Attack", "Sustain", "Comp" };
+/* ...and the seven SEND effects, which are the same `Slot` the kit's send
+ * buses ran. They are here because retiring DR32's internal sends would
+ * otherwise DELETE them: an effect that exists only inside a synth's own bus
+ * disappears the moment that bus does. As inserts on a global send they are
+ * the same thing they always were -- a wet return -- and as inserts on a slot
+ * they are something the kit never offered.
+ *
+ * Bus stages and send types share one preset list on purpose. Which one an
+ * instance is remains a choice made once, when the insert is placed, and the
+ * knobs stay free for the controls you actually reach for. */
+enum Effect {
+    FX_CRUNCH = 0, FX_ATTACK, FX_SUSTAIN, FX_COMP,   /* the Drum Buss stages */
+    FX_PLATE, FX_SPACES, FX_DELAY, FX_GATED,          /* the send types       */
+    FX_DIGITAL, FX_HALL, FX_NONLIN, FX_NATIVE,
+    FX_COUNT
+};
+static const char *kEffectName[FX_COUNT] = {
+    "Crunch", "Attack", "Sustain", "Comp",
+    "Plate", "Spaces", "Delay", "Gated", "Digital", "Hall", "NonLin", "Native"
+};
+/* The first send preset. Everything below it drives DrumBuss, everything from
+ * it up drives Slot -- ONE comparison, so the two halves cannot disagree about
+ * which engine an instance is running. */
+#define FX_FIRST_SEND FX_PLATE
+static const dr32_efx_type kSendType[FX_COUNT - FX_FIRST_SEND] = {
+    DR32_EFX_PLATE, DR32_EFX_SPACES, DR32_EFX_DELAY, DR32_EFX_GATED,
+    DR32_EFX_DIGITAL, DR32_EFX_HALL, DR32_EFX_NONLIN, DR32_EFX_NATIVE
+};
 
 struct Instance {
     dr32::DrumBuss bus;
+    dr32::Slot     send;
     int   effect = FX_CRUNCH;
     /* Bipolar for Attack and Sustain (-1..+1 about a neutral 0), unipolar for
      * Crunch and Comp. One stored value: the stage decides how to read it, and
@@ -67,7 +95,48 @@ struct Instance {
      * neutral needs it more, not less. */
     bool  neutral = true;
 
+    bool isSend() const { return effect >= FX_FIRST_SEND; }
+
+    /* The page's visibility hangs off this, exactly as it does on the kit's own
+     * send page: the host's visible_if takes a SINGLE condition on a SINGLE
+     * param, so "this is a reverb" and "this is a bus stage" each have to be
+     * one equality. Deriving it here is what keeps the two rows -- Amount for a
+     * stage, the eight send slots for a type -- from being drawn together. */
+    const char *modeName() const {
+        if (!isSend()) return "Bus";
+        switch (kSendType[effect - FX_FIRST_SEND]) {
+            case DR32_EFX_DELAY:  return "Delay";
+            case DR32_EFX_GATED:  return "Gate";
+            case DR32_EFX_NONLIN: return "NonLin";
+            default:              return "Verb";
+        }
+    }
+
+    /* Choosing a type LOADS that type's musical starting point, which is what
+     * the kit's send page does and for the same reason: selecting an effect
+     * should sound like something immediately rather than inherit the previous
+     * effect's knob positions. Only on an actual CHANGE -- re-selecting the
+     * preset you are already on must not throw away your edits. */
+    void selectEffect(int n) {
+        const bool changed = (n != effect);
+        effect = n;
+        if (changed && isSend()) dr32_efx_defaults(kSendType[effect - FX_FIRST_SEND], send.p);
+        apply();
+    }
+
     void apply() {
+        if (isSend()) {
+            /* The bus stays at its zeroed defaults, which DrumBuss gates off
+             * entirely, so an instance is one engine or the other and never
+             * pays for both. */
+            send.type = kSendType[effect - FX_FIRST_SEND];
+            send.apply();
+            /* NEVER neutral: a reverb with a wet mix is doing work by
+             * definition, and `mix` at zero is the honest way to switch it off.
+             * Saying otherwise here would silence a tail mid-decay. */
+            neutral = (mix <= 0.0f);
+            return;
+        }
         /* EVERY OTHER STAGE NEUTRAL. This is the whole trick: DrumBuss gates
          * each stage on its own parameter, so the three that are zero cost
          * nothing and change nothing, and the one that is not behaves exactly
@@ -108,6 +177,7 @@ static void *v2_create_instance(const char *module_dir, const char *config_json)
     Inst *in = new (std::nothrow) Inst();
     if (!in) return nullptr;
     in->bus.setSampleRate(44100.0f);
+    in->send.setSampleRate(44100.0f);
     in->apply();
     return in;
 }
@@ -130,7 +200,8 @@ static void v2_process_block(void *instance, int16_t *audio, int frames) {
     const bool blend = in->mix < 0.999f;
     if (blend) memcpy(in->dry, in->io, sizeof(float) * 2 * (size_t)frames);
 
-    in->bus.processBlock(in->io, frames, in->sl, in->sr);
+    if (in->isSend()) in->send.processBlock(in->io, frames, in->sl, in->sr);
+    else              in->bus.processBlock(in->io, frames, in->sl, in->sr);
 
     if (blend) {
         for (int i = 0; i < 2 * frames; i++)
@@ -155,7 +226,7 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
      * declaration from disagreeing about which stage this is. */
     if (!strcmp(key, "preset")) {
         int n = atoi(val);
-        if (n >= 0 && n < FX_COUNT) { in->effect = n; in->apply(); }
+        if (n >= 0 && n < FX_COUNT) in->selectEffect(n);
         return;
     }
     if (!strcmp(key, "preset_name") || !strcmp(key, "effect")) {
@@ -164,16 +235,33 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
          * module.json may hand over either, so both are accepted rather than
          * having one of them silently select Crunch. */
         for (int i = 0; i < FX_COUNT; i++) {
-            if (!strcmp(val, kEffectName[i])) { in->effect = i; in->apply(); return; }
+            if (!strcmp(val, kEffectName[i])) { in->selectEffect(i); return; }
         }
         int n = atoi(val);
-        if (n >= 0 && n < FX_COUNT) { in->effect = n; in->apply(); }
+        if (n >= 0 && n < FX_COUNT) in->selectEffect(n);
         return;
     }
     if (!strcmp(key, "amount")) { in->amount = (float)atof(val); in->apply(); return; }
+    /* `sync` is a WORD on the wire (the enum reports names) and a number in a
+     * restored state or a script, exactly as it is on the kit. */
+    if (!strcmp(key, "sync")) {
+        in->send.p[5] = !strcmp(val, "Sync") ? 1.0f
+                  : !strcmp(val, "Free") ? 0.0f
+                  : ((float)atof(val) >= 0.5f ? 1.0f : 0.0f);
+        in->apply();
+        return;
+    }
+    {
+        /* One table, shared with the kit -- see dr32_send_slot_index. */
+        int idx = dr32_send_slot_index(key);
+        if (idx >= 0) { in->send.p[idx] = (float)atof(val); in->apply(); return; }
+    }
     if (!strcmp(key, "mix")) {
         float m = (float)atof(val);
         in->mix = m < 0.0f ? 0.0f : (m > 1.0f ? 1.0f : m);
+        /* A send instance's neutrality IS its mix, so the gate has to be
+         * recomputed here; for a bus stage apply() is a no-op on this path. */
+        in->apply();
         return;
     }
 }
@@ -187,6 +275,28 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
     if (!strcmp(key, "preset_name") || !strcmp(key, "effect"))
         return snprintf(buf, buf_len, "%s", kEffectName[in->effect]);
     if (!strcmp(key, "amount")) return snprintf(buf, buf_len, "%g", (double)in->amount);
+    if (!strcmp(key, "mode"))   return snprintf(buf, buf_len, "%s", in->modeName());
+    /* Does this type have an envelope with a release? Gated and NonLin do; the
+     * reverbs and the delay do not. One more derived value, for `mode`'s
+     * reason: visible_if has no OR. */
+    if (!strcmp(key, "env")) {
+        const bool e = in->isSend() &&
+                       (kSendType[in->effect - FX_FIRST_SEND] == DR32_EFX_GATED ||
+                        kSendType[in->effect - FX_FIRST_SEND] == DR32_EFX_NONLIN);
+        return snprintf(buf, buf_len, "%s", e ? "Env" : "-");
+    }
+    /* "-" when the type is not a delay at all. That sentinel is what lets the
+     * two time pages hang off a SINGLE equality -- without it a reverb would
+     * draw the delay's time knobs, since `sync` would still read "Sync". */
+    if (!strcmp(key, "sync")) {
+        if (!in->isSend() || kSendType[in->effect - FX_FIRST_SEND] != DR32_EFX_DELAY)
+            return snprintf(buf, buf_len, "%s", "-");
+        return snprintf(buf, buf_len, "%s", in->send.p[5] >= 0.5f ? "Sync" : "Free");
+    }
+    {
+        int idx = dr32_send_slot_index(key);
+        if (idx >= 0) return snprintf(buf, buf_len, "%g", (double)in->send.p[idx]);
+    }
     if (!strcmp(key, "mix"))    return snprintf(buf, buf_len, "%g", (double)in->mix);
     /* WHAT THE BOX SAYS. Four instances of one binary would otherwise all wear
      * the module's abbreviation and be indistinguishable in the chain diagram --
