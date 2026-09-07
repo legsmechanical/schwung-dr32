@@ -187,6 +187,37 @@ int main(void) {
         CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
               "a mismatched-kit baseline was honoured (blob still a delta)");
 
+        /*
+         * The delta must SURVIVE the pad set changing since the baseline.
+         *
+         * emit_param resumes its baseline lookup from the last hit (see
+         * baseline_find — a scan per key was 55% of this call, and it is served
+         * on the host's SPI audio callback). A pad occupied since the baseline
+         * has no entry there, so the walks stop lining up; if that desynced the
+         * cursor, every key after it would read as absent and the blob would
+         * quietly stop being a delta. Nothing would look broken — the values are
+         * all still correct — which is exactly why it is asserted here.
+         */
+        {
+            dr32_kit d; dr32_kit_init(&d);
+            occupy(&d, 1, "/s1.wav"); occupy(&d, 3, "/s3.wav");
+            static char dbase[65536];
+            CHECK(dr32_state_write(&d, "/kit.ablpreset", dbase, (int)sizeof(dbase), NULL) > 0,
+                  "divergence baseline write failed");
+
+            /* Pad 2 appears BETWEEN two pads the baseline knows, and pad 3
+             * (after it) is the one whose dedup must still work. */
+            occupy(&d, 2, "/s2.wav");
+            dr32_apply_param(&d, "pad1_transpose", "-5");
+            int dn = dr32_state_write(&d, "/kit.ablpreset", blob, (int)sizeof(blob), dbase);
+            CHECK(dn > 0, "divergence delta write failed");
+            CHECK(strstr(blob, "pad1_transpose") != NULL,
+                  "divergence delta dropped the edit");
+            CHECK(strstr(blob, "pad3_") == NULL,
+                  "pad3 is unedited and sits AFTER the newly-occupied pad2 — its "
+                  "fields must still be deduped against the baseline, got: %.300s", blob);
+        }
+
         /* A garbage baseline degrades to the full dump, never an error. */
         n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), "not json");
         CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
