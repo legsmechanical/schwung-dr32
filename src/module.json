@@ -1238,6 +1238,42 @@
           ]
         }
       }
-    }
+    },
+    "default_buses": [
+      {
+        "name": "Drum Bus",
+        "voices": "*",
+        "fx": [
+          {
+            "module": "dr32-fx",
+            "params": {
+              "effect": "Crunch",
+              "amount": 0
+            }
+          },
+          {
+            "module": "dr32-fx",
+            "params": {
+              "effect": "Attack",
+              "amount": 0
+            }
+          },
+          {
+            "module": "dr32-fx",
+            "params": {
+              "effect": "Sustain",
+              "amount": 0
+            }
+          },
+          {
+            "module": "dr32-fx",
+            "params": {
+              "effect": "Comp",
+              "amount": 0
+            }
+          }
+        ]
+      }
+    ]
   }
 }

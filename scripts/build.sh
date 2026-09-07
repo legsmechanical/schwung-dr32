@@ -96,12 +96,33 @@ $CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
 
 $CXX -shared -o build/dsp.so build/obj/*.o -lm
 
+# The EFFECTS module: the same Drum Buss stages, as ordinary chain inserts.
+# One binary, four effects chosen by `effect` -- audio_fx_api_v2 is
+# multi-instance, so a bus holding all four is four create_instance calls on
+# this file. It shares dsp/dr32_drumbus.h with the kit rather than copying it.
+FX_ID=dr32-fx
+$CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -I. -Idsp -Ifx \
+    -c fx/dr32_fx.cpp -o build/obj/dr32_fx.o
+$CXX -shared -o build/dr32-fx.so build/obj/dr32_fx.o -lm
+
 echo "==> packaging dist/"
-rm -rf "dist/${MODULE_ID}"
-mkdir -p "dist/${MODULE_ID}"
+rm -rf "dist/${MODULE_ID}" "dist/${FX_ID}"
+mkdir -p "dist/${MODULE_ID}" "dist/${FX_ID}"
 cp build/dsp.so     "dist/${MODULE_ID}/"
 cp build/ui.js      "dist/${MODULE_ID}/"
 cp src/module.json  "dist/${MODULE_ID}/"
 
+# The host loads an audio FX by the path in its module.json; dsp.so is the name
+# every other module uses, so it is dsp.so here too.
+# `cat` and not `cp`: on an ExtFS volume cp attempts a clone and fails with
+# "error deallocating", which under `set -e` aborts the script AFTER the .so is
+# in place but BEFORE the tarball is made -- a build that looks like it worked
+# and ships nothing.
+cat build/dr32-fx.so > "dist/${FX_ID}/dsp.so"
+chmod 755 "dist/${FX_ID}/dsp.so"
+cp fx/module.json   "dist/${FX_ID}/"
+[ -f fx/help.json ] && cp fx/help.json "dist/${FX_ID}/"
+
 tar -czf "dist/${MODULE_ID}-module.tar.gz" -C dist "${MODULE_ID}"
-echo "==> done: dist/${MODULE_ID}-module.tar.gz"
+tar -czf "dist/${FX_ID}-module.tar.gz"     -C dist "${FX_ID}"
+echo "==> done: dist/${MODULE_ID}-module.tar.gz + dist/${FX_ID}-module.tar.gz"

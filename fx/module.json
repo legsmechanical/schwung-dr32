@@ -1,0 +1,80 @@
+{
+  "id": "dr32-fx",
+  "name": "DR32 FX",
+  "abbrev": "D32",
+  "version": "0.1.0",
+  "description": "The DR32 Drum Buss stages as ordinary chain effects: Crunch, Attack, Sustain, Comp.",
+  "author": "legsmechanical",
+  "component_type": "audio_fx",
+  "dsp": "dsp.so",
+  "capabilities": {
+    "chainable": true,
+    "component_type": "audio_fx",
+    "chain_params": [
+      {
+        "key": "effect",
+        "name": "Effect",
+        "short_name": "FX",
+        "type": "enum",
+        "options": [
+          "Crunch",
+          "Attack",
+          "Sustain",
+          "Comp"
+        ],
+        "options_as_string": true,
+        "default": 0
+      },
+      {
+        "key": "amount",
+        "name": "Amount",
+        "short_name": "AMT",
+        "type": "float",
+        "min": -1.0,
+        "max": 1.0,
+        "step": 0.01,
+        "default": 0.0
+      },
+      {
+        "key": "mix",
+        "name": "Dry/Wet",
+        "short_name": "MIX",
+        "type": "float",
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.01,
+        "default": 1.0,
+        "viz": {
+          "kind": "fader"
+        }
+      }
+    ],
+    "ui_hierarchy": {
+      "levels": {
+        "root": {
+          "label": "DR32 FX",
+          "knobs": [
+            "effect",
+            "amount",
+            "mix"
+          ],
+          "params": [
+            {
+              "key": "effect",
+              "label": "Effect"
+            },
+            {
+              "key": "amount",
+              "label": "Amount"
+            },
+            {
+              "key": "mix",
+              "label": "Dry/Wet"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "api_version": 2
+}
