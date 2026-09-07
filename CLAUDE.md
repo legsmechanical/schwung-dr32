@@ -37,10 +37,15 @@ Key facts for this module specifically:
 - **A viz group must sit contiguously on ONE row of four.** Knob order in the `pads` level is
   therefore load-bearing: attack/decay, cutoff/resonance/filter_type. Verify with
   `node tools/pages_check.mjs` (below) — it runs upstream's validator and prints every page.
-- The send pages hang off DSP-derived read-only params (`send1_mode`, `send1_env`,
-  `send1_sync`) because `visible_if` takes one condition on one param. They are served by the
-  DSP and declared nowhere; that is deliberate. Every armed type must fit ONE page of eight —
-  `pages_check` enforces it.
+- **The send pages moved to `dr32-fx`** and so did the check. They hang off DSP-derived
+  read-only params (`mode`, `env`, `sync`, `tank`) because `visible_if` takes one condition
+  on one param; they are served by the DSP and declared nowhere, deliberately. Every preset
+  must fit ONE page of eight — `pages_check` enforces it, against `fx/module.json`.
+  Repointing it there caught two gates the same day: `size`/`damp`/`predelay` were gated on
+  `mode != "Delay"`, correct while every preset was a send and a reverb's knobs on a
+  saturator once Crunch and Comp joined the list (hence `tank`); and `diffusion` named a
+  param the module does not serve, so the read answered null and **`visible_if` failed
+  OPEN** on all seven presets.
 
 ### How pad focus follows a hit — two regimes, and why
 
@@ -101,52 +106,53 @@ float scratch (`dr32_instance::scratch`, reused per pad) and `dr32.c` converts a
 into the int16 destination; summing in int16 is forced by the aliasing, since there is no
 per-bus float buffer to sum into.
 
-### 🥁 Routing a pad to a bus takes it OFF the drum bus
+### 🥁 The Drum Bus and the sends are the HOST's
 
-One sentence, and it is the user-facing behaviour: **a voice you route to a bus leaves the
-kit's drum bus**, exactly as routing a channel to a subgroup takes it out of the main mix
-on a desk. Pads you do not route stay on main and are glued as they always were.
+**DR32 no longer contains a mixer.** The always-on Drum Bus is a **declared voice bus** of
+four `dr32-fx` inserts (`capabilities.default_buses`), and the pads' Send 1 / Send 2 feed
+the host's two **global** sends through `voice_send_params`. The effects did not go
+anywhere: `dr32-fx` is one binary holding the four Drum Buss stages *and* all eight send
+types (Plate, Spaces, Delay, Gated, Digital, Hall, NonLin, Native) as presets.
 
-So the order inside `move_plugin_render_split` is load-bearing:
+What that buys is the whole argument for it. Inside the kit the four stages were not
+reorderable, not bypassable with the host's own gesture, not LFO targets, and not
+swappable for anything else. As a bus they are all four, and you can drop a drive between
+two of them.
 
-1. **all 32 voices** — an unrouted pad's destination *is* `main_out`, so it lands there by
-   the same aliasing everything else uses;
-2. **the send returns**, added to `main_out`;
-3. **the Drum Bus over `main_out` IN PLACE** (`dr32_kit_finish_main`), so it glues the
-   unrouted pads plus the returns — the same signal mixed mode gives it, minus exactly the
-   pads the user routed away.
+**This reverses a decision recorded here.** The note used to read *"the internal sends stay
+exactly as they are — dropping them for the platform's would cost DR32 its 64 per-pad send
+levels against a bus's 8"*. That was true when it was written and is not any more: the host
+grew **per-voice sends**, so a pad's send level is per pad again (32 pads × 2 = 64),
+taken from its own audio pre-insert. The reason to keep them had been removed upstream.
 
-Get that order wrong and the glue either misses the kit (the first cut started the main
-section from silence, so the Drum Bus compressed the *reverb returns* the moment any pad
-was routed — a surprising, audible change triggered by an unrelated action) or processes
-the unrouted pads twice. If every pad is routed, main holds only the returns and the glue
-processes just those; that is correct under this semantic, not a bug.
+**Ordering inside `move_plugin_render_split` is no longer load-bearing.** It was — all 32
+voices, then the returns, then the Drum Bus over `main_out` in place — and getting it wrong
+made the glue miss the kit or process the unrouted pads twice. With both of those gone it
+is a plain accumulate. The **int16 round trip went with it**: gluing in place meant reading
+`main_out` back to float and writing it out again, one extra quantisation (~-90 dBFS) forced
+by destinations that alias and so have no float buffer to live in. There is nothing to read
+back now.
 
-Want glue over everything *including* the buses? The platform already does it one tier up:
-the chain host sums buses into main **before** the slot's own 8 FX, "so a slot compressor
-sees the whole kit". Nothing for DR32 to do about that case.
+`dr32_kit_finish_main` is kept as a **documented no-op**. It is a seam two binaries share;
+removing the symbol is an ABI break for no gain.
 
-**The in-place glue costs an int16 round trip.** The Drum Bus is float DSP and `main_out`
-is int16, so `dr32.c` reads the destination back (`dr32_from_i16`), runs the finish, and
-writes it back — one extra quantisation, ~-90 dBFS under the unrouted pads, forced by a
-contract whose destinations alias and therefore have no float buffer to live in. The
-write-back ROUNDS (`dr32_to_i16_round`) rather than truncating, so a neutral bus with no
-sends is an exact identity instead of shaving an LSB off every pad every block. The glue
-itself runs in the **pre-master-gain domain**, matching `dr32_kit_render`, because a
-compressor is level-dependent.
+**The retired keys are still accepted.** `bus_*`, `send1_*` and `send2_*` are stored, read
+back, and connected to nothing. 137 factory kits and every saved slot carry them, and
+rejecting a key makes a restore fail on state that is otherwise fine. A DSP *cannot* migrate
+them — turning `bus_crunch = 0.4` into an insert means writing into the host's bus, which
+this module cannot see and which the user may already have arranged differently. They are
+off every page in `module.json`, so there is no knob that does nothing.
 
-The internal sends stay exactly as they are — dropping them for the platform's would cost
-DR32 its 64 per-pad send levels against a bus's 8 (upstream `docs/CHAIN.md`, "Per-voice
-sends").
+**One thing genuinely goes away**: a factory kit's per-pad send amount now points at the
+host's Send A, which is empty until you put something on it. Out of the box a `.abl` kit
+loads dry. `dr32-fx` set to **Native** on Send A is the closest thing to what it used to do,
+and it is one insert.
 
-`dr32_kit_finish_main` runs every block whether or not the caller wants the audio: it is
-what drains the send buses. Skipping it replays a block's sends on top of the next.
-
-Pinned by `tests/test_split.c` — the untouched destination, the aliased sum, an unrouted
-pad reaching the glue, a routed one never landing on main, the all-bused case, parity with
-`render_block` under a live Drum Bus, and the 4096-byte ceiling the host reads the list
-through. The mixed path is unchanged and stays hashed: a 400-block score FNVs to
-`634c6afc892c35f0` before and after.
+Pinned by `tests/test_split.c`, which INVERTS its old Drum Bus block rather than dropping
+it: same shape, same violently non-neutral settings, and the assertion is now that the
+buffer must **not** move by a single LSB on either entry point. Any surviving call into the
+old container shows up there. The mixed path is unchanged and stays hashed: a 400-block
+score FNVs to `634c6afc892c35f0` before and after.
 
 ## ⚠ The engine is a reconstruction, not a design
 

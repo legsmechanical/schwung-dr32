@@ -480,10 +480,10 @@ static void render_block(void *instance, int16_t *out, int frames) {
  *    pointer, and a pad on no bus is handed main_out. That is the whole reason
  *    the feature is cheap, and the reason nothing here may memset a
  *    destination: zeroing one would delete another pad's audio for the block.
- *  - main_out carries every pad the host did NOT route away, plus what belongs
- *    to no pad — DR32's two send returns and its Drum Bus. It may be the same
- *    pointer as some voice_out[i], and in the ordinary case it is the same
- *    pointer as every unrouted one.
+ *  - main_out carries every pad the host did NOT route away, and now nothing
+ *    else: the send returns and the Drum Bus that used to land here are the
+ *    host's. It may be the same pointer as some voice_out[i], and in the
+ *    ordinary case it is the same pointer as every unrouted one.
  *  - Never more than `frames` frames into any of them.
  *
  * The kit works in float and the destinations are int16, so the conversion
@@ -493,18 +493,22 @@ static void render_block(void *instance, int16_t *out, int frames) {
  * so two loud pads on one bus clip at the bus rather than at the mix, and each
  * pad's own clamp happens before they meet.
  *
- * ORDERING INSIDE THE RENDER, and it is load-bearing: all 32 voices first,
- * then the returns, then the Drum Bus over main_out IN PLACE. A voice the user
- * routed to a bus LEAVES the kit's drum bus — the desk semantic, and the one
- * sentence that describes the difference from render_block: "a voice routed to
- * a bus leaves the kit's drum bus, because you've routed it elsewhere." Glue
- * the returns before the voices land and the glue misses the kit (which is
- * what the first cut of this did); glue twice and the unrouted pads go through
- * the compressor twice.
+ * ORDERING USED TO BE LOAD-BEARING HERE, and is not any more. It was: all 32
+ * voices, then the send returns, then the Drum Bus over main_out IN PLACE —
+ * glue before the voices landed and it missed the kit, glue twice and the
+ * unrouted pads went through the compressor twice. Both of those are the
+ * host's now (a declared voice bus, and the host's global sends), so this is a
+ * plain accumulate and there is no order left to get wrong.
+ *
+ * What that bought is the point: the desk semantic used to mean "a voice you
+ * route to a bus LEAVES the kit's drum bus", which is right on a desk and was
+ * a surprise here, because the drum bus was not something you had put in the
+ * chain. Now the Drum Bus IS a bus, so routing a voice into a different one is
+ * an ordinary routing decision with an ordinary consequence.
  *
  * State-compatibility with render_block is by construction: both drive the
- * same kit, the same voices and the same FX bus through the same calls, and
- * the host may switch between them mid-note.
+ * same kit and the same voices through the same calls, and the host may switch
+ * between them mid-note.
  */
 void move_plugin_render_split(void *instance, int16_t *const *voice_out,
                               int n_voices, int16_t *main_out, int frames);
@@ -519,37 +523,14 @@ static void dr32_accum_i16(int16_t *dst, const float *src, int frames) {
     }
 }
 
-/** The inverse of dr32_to_i16, for the one place that has to read a
- *  destination back: the Drum Bus is float DSP and main_out is int16, so
- *  gluing IN PLACE means a round trip through this pair.
+/* dr32_from_i16 / dr32_to_i16_round LIVED HERE, and are gone with the glue.
  *
- *  WHAT THE ROUND TRIP COSTS. The mixed path never leaves float until the very
- *  end, so it glues the full-precision mix; here the glue sees a signal that
- *  has already been quantised to int16 once, and is quantised again on the way
- *  back. That is one extra quantisation, i.e. a noise floor around -90 dBFS
- *  under the unrouted pads, and it is a direct consequence of the contract
- *  handing out int16 destinations that alias — with no per-bus float buffer
- *  there is nowhere else for the sum to live. It is inaudible under drums; it
- *  is not nothing, and it is the reason this comment exists rather than a
- *  claim of parity. */
-static inline float dr32_from_i16(int16_t v) {
-    return (float)v * (1.0f / 32767.0f);
-}
-
-/** float -> int16 for the write-back of a buffer that CAME FROM int16.
- *
- *  Rounds instead of truncating, unlike dr32_to_i16. Truncation is right for
- *  audio arriving from the kit, but here it would make the round trip lossy
- *  even when the glue did nothing at all: 100/32767.0f*32767.0f can land a
- *  hair under 100 and truncate to 99, so a neutral Drum Bus with no sends —
- *  the default kit — would shave an LSB off every unrouted pad, every block.
- *  Rounding makes the identity exact, which is the property that matters. */
-static inline int16_t dr32_to_i16_round(float v) {
-    if (v > 1.0f) v = 1.0f;
-    if (v < -1.0f) v = -1.0f;
-    float x = v * 32767.0f;
-    return (int16_t)(x >= 0.0f ? x + 0.5f : x - 0.5f);
-}
+ * They existed for one thing: the Drum Bus was float DSP running IN PLACE over
+ * an int16 main_out, so the split path had to read the destination back, glue,
+ * and write it out again -- an extra quantisation, ~-90 dBFS under the unrouted
+ * pads, forced by a contract whose destinations alias and so have no float
+ * buffer to live in. The Drum Bus is a host bus now; there is nothing to read
+ * back, and the pass over main_out goes with it. */
 
 void move_plugin_render_split(void *instance, int16_t *const *voice_out,
                               int n_voices, int16_t *main_out, int frames) {
@@ -574,30 +555,14 @@ void move_plugin_render_split(void *instance, int16_t *const *voice_out,
         dr32_accum_i16(dst, in->scratch, frames);
     }
 
-    /* Every voice has landed, so main_out now holds exactly the pads the host
-     * did NOT route away. Read it back to float, add the send returns and run
-     * the Drum Bus over the lot, and write it back — a replace, not an
-     * accumulate, because what we read was main_out's own content.
+    /* Every voice has landed, so main_out holds exactly the pads the host did
+     * NOT route away -- and that is the finished signal. Nothing is added to it
+     * here any more: the send returns and the Drum Bus are the host's.
      *
-     * If every pad was routed, main_out holds only the returns and the glue
-     * processes just those. That is correct under this semantic, not a bug:
-     * the user moved the whole kit off the drum bus.
-     *
-     * The finish runs unconditionally even with nowhere to put the audio: it
-     * is what drains the send buses, and skipping it would replay a block's
-     * sends on top of the next one. With no main_out there is nothing to read
-     * back, so it runs on a zeroed scratch and the result is discarded. */
-    if (main_out) {
-        for (int i = 0; i < 2 * frames; i++)
-            in->scratch[i] = dr32_from_i16(main_out[i]);
-    } else {
-        memset(in->scratch, 0, sizeof(float) * 2 * (size_t)frames);
-    }
-    dr32_kit_finish_main(&in->kit, in->scratch, frames);
-    if (main_out) {
-        for (int i = 0; i < 2 * frames; i++)
-            main_out[i] = dr32_to_i16_round(in->scratch[i]);
-    }
+     * The call stays, and it is a no-op. It is the seam a module and a host
+     * both know about, and it costs one call per block to keep a header that
+     * two binaries share honest. */
+    dr32_kit_finish_main(&in->kit, NULL, frames);
 }
 
 static plugin_api_v2_t g_api = {
