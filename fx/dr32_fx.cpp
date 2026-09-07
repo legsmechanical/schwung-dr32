@@ -276,6 +276,16 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
         return snprintf(buf, buf_len, "%s", kEffectName[in->effect]);
     if (!strcmp(key, "amount")) return snprintf(buf, buf_len, "%g", (double)in->amount);
     if (!strcmp(key, "mode"))   return snprintf(buf, buf_len, "%s", in->modeName());
+    /* Does this preset run the reverb TANK -- i.e. does it have a size, a
+     * damping and a pre-delay? Every send type except the Delay does, and no
+     * bus stage does. `mode != "Delay"` was the kit's test for this and was
+     * correct there, where everything on the list was a send; on a list that
+     * also holds Crunch and Comp it draws a reverb's knobs on a saturator. */
+    if (!strcmp(key, "tank"))
+        return snprintf(buf, buf_len, "%s",
+                        (in->isSend() &&
+                         kSendType[in->effect - FX_FIRST_SEND] != DR32_EFX_DELAY)
+                        ? "Yes" : "-");
     /* Does this type have an envelope with a release? Gated and NonLin do; the
      * reverbs and the delay do not. One more derived value, for `mode`'s
      * reason: visible_if has no OR. */

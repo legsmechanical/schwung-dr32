@@ -262,8 +262,8 @@
               "max": 1.0,
               "step": 0.01,
               "visible_if": {
-                "param": "mode",
-                "not_equals": "Delay"
+                "param": "tank",
+                "equals": "Yes"
               },
               "short_name": "SIZE"
             },
@@ -276,8 +276,8 @@
               "step": 0.01,
               "default": 0.3,
               "visible_if": {
-                "param": "mode",
-                "not_equals": "Delay"
+                "param": "tank",
+                "equals": "Yes"
               },
               "short_name": "DAMP"
             },
@@ -290,8 +290,8 @@
               "step": 0.01,
               "default": 0.0,
               "visible_if": {
-                "param": "mode",
-                "not_equals": "Delay"
+                "param": "tank",
+                "equals": "Yes"
               },
               "short_name": "PRE"
             },
@@ -304,7 +304,7 @@
               "step": 0.01,
               "default": 0.46,
               "visible_if": {
-                "param": "type",
+                "param": "effect",
                 "equals": "Native"
               },
               "short_name": "DIFF"
