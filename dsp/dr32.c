@@ -434,27 +434,135 @@ static int get_error(void *instance, char *buf, int buf_len) {
     return snprintf(buf, buf_len, "%s", in->err);
 }
 
-static void render_block(void *instance, int16_t *out, int frames) {
-    dr32_instance *in = (dr32_instance *)instance;
-    if (!in) return;
-    if (frames > 1024) frames = 1024;
+/** The one float -> int16 law, used by both render entry points so they cannot
+ *  drift into sounding different. */
+static inline int16_t dr32_to_i16(float v) {
+    if (v > 1.0f) v = 1.0f;
+    if (v < -1.0f) v = -1.0f;
+    return (int16_t)(v * 32767.0f);
+}
 
+/** Per-block work both entry points need before any audio is produced. */
+static void dr32_pre_render(dr32_instance *in) {
     /* Tempo for the synced Delay send. get_bpm has its own fallback chain and
      * documents 120 as the floor of it, but the POINTER may be NULL on an older
      * host, so it is guarded — and the kit early-outs on an unchanged value, so
      * this is a float compare per block rather than a recompute. */
     if (g_host && g_host->get_bpm) dr32_kit_set_bpm(&in->kit, g_host->get_bpm());
-
     dr32_sync_transport(in);
+}
+
+static void render_block(void *instance, int16_t *out, int frames) {
+    dr32_instance *in = (dr32_instance *)instance;
+    if (!in) return;
+    if (frames > 1024) frames = 1024;
+
+    dr32_pre_render(in);
 
     dr32_kit_render(&in->kit, in->scratch, frames);
 
+    for (int i = 0; i < 2 * frames; i++) out[i] = dr32_to_i16(in->scratch[i]);
+}
+
+/* ------------------------------------------------------------------------
+ * OPTIONAL: per-voice render (Schwung's bus routing)
+ *
+ * dlsym'd off this .so by the chain host — deliberately NOT a field on
+ * plugin_api_v2_t, so a host that predates the contract loads this module
+ * exactly as before and gets render_block. See src/host/plugin_api_v1.h
+ * upstream, and dr32_split_voices_json for the list that names the buffers.
+ *
+ * Four things this owes the contract, all of which a render ported from a
+ * single-output one gets wrong by default:
+ *
+ *  - It ACCUMULATES. The host has already cleared every destination.
+ *  - voice_out[] entries ALIAS. Two pads on one bus are handed the SAME
+ *    pointer, and a pad on no bus is handed main_out. That is the whole reason
+ *    the feature is cheap, and the reason nothing here may memset a
+ *    destination: zeroing one would delete another pad's audio for the block.
+ *  - main_out carries every pad the host did NOT route away, and now nothing
+ *    else: the send returns and the Drum Bus that used to land here are the
+ *    host's. It may be the same pointer as some voice_out[i], and in the
+ *    ordinary case it is the same pointer as every unrouted one.
+ *  - Never more than `frames` frames into any of them.
+ *
+ * The kit works in float and the destinations are int16, so the conversion
+ * that render_block does once now happens once per destination, and it has to
+ * SUM into what is already there. Summing in int16 is forced by the aliasing:
+ * there is no float buffer per bus to sum into, only the shared destination —
+ * so two loud pads on one bus clip at the bus rather than at the mix, and each
+ * pad's own clamp happens before they meet.
+ *
+ * ORDERING USED TO BE LOAD-BEARING HERE, and is not any more. It was: all 32
+ * voices, then the send returns, then the Drum Bus over main_out IN PLACE —
+ * glue before the voices landed and it missed the kit, glue twice and the
+ * unrouted pads went through the compressor twice. Both of those are the
+ * host's now (a declared voice bus, and the host's global sends), so this is a
+ * plain accumulate and there is no order left to get wrong.
+ *
+ * What that bought is the point: the desk semantic used to mean "a voice you
+ * route to a bus LEAVES the kit's drum bus", which is right on a desk and was
+ * a surprise here, because the drum bus was not something you had put in the
+ * chain. Now the Drum Bus IS a bus, so routing a voice into a different one is
+ * an ordinary routing decision with an ordinary consequence.
+ *
+ * State-compatibility with render_block is by construction: both drive the
+ * same kit and the same voices through the same calls, and the host may switch
+ * between them mid-note.
+ */
+void move_plugin_render_split(void *instance, int16_t *const *voice_out,
+                              int n_voices, int16_t *main_out, int frames);
+
+/** dst[i] += src[i], in int16 with saturation. */
+static void dr32_accum_i16(int16_t *dst, const float *src, int frames) {
     for (int i = 0; i < 2 * frames; i++) {
-        float v = in->scratch[i];
-        if (v > 1.0f) v = 1.0f;
-        if (v < -1.0f) v = -1.0f;
-        out[i] = (int16_t)(v * 32767.0f);
+        int sum = (int)dst[i] + (int)dr32_to_i16(src[i]);
+        if (sum > 32767) sum = 32767;
+        else if (sum < -32768) sum = -32768;
+        dst[i] = (int16_t)sum;
     }
+}
+
+/* dr32_from_i16 / dr32_to_i16_round LIVED HERE, and are gone with the glue.
+ *
+ * They existed for one thing: the Drum Bus was float DSP running IN PLACE over
+ * an int16 main_out, so the split path had to read the destination back, glue,
+ * and write it out again -- an extra quantisation, ~-90 dBFS under the unrouted
+ * pads, forced by a contract whose destinations alias and so have no float
+ * buffer to live in. The Drum Bus is a host bus now; there is nothing to read
+ * back, and the pass over main_out goes with it. */
+
+void move_plugin_render_split(void *instance, int16_t *const *voice_out,
+                              int n_voices, int16_t *main_out, int frames) {
+    dr32_instance *in = (dr32_instance *)instance;
+    if (!in || frames <= 0) return;
+    if (frames > 1024) frames = 1024;
+
+    dr32_pre_render(in);
+    dr32_kit_begin_block(&in->kit);
+
+    for (int pad = 0; pad < DR32_PADS; pad++) {
+        /* A pad the host did not ask for separately — n_voices can be shorter
+         * than the list we published — belongs with everything else that has
+         * no destination of its own. */
+        int16_t *dst = (voice_out && pad < n_voices && voice_out[pad])
+                       ? voice_out[pad] : main_out;
+        if (!dst) continue;
+        /* in->scratch is private to this call and is reused for every pad and
+         * then for the main section: each one is converted out before the next
+         * overwrites it. */
+        if (!dr32_kit_render_voice(&in->kit, pad, in->scratch, frames)) continue;
+        dr32_accum_i16(dst, in->scratch, frames);
+    }
+
+    /* Every voice has landed, so main_out holds exactly the pads the host did
+     * NOT route away -- and that is the finished signal. Nothing is added to it
+     * here any more: the send returns and the Drum Bus are the host's.
+     *
+     * The call stays, and it is a no-op. It is the seam a module and a host
+     * both know about, and it costs one call per block to keep a header that
+     * two binaries share honest. */
+    dr32_kit_finish_main(&in->kit, NULL, frames);
 }
 
 static plugin_api_v2_t g_api = {

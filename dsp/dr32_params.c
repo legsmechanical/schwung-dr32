@@ -36,41 +36,9 @@ static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) 
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
 }
 
-/** Which of a send's five generic slots a per-type control name addresses.
- *
- *  The names have to be DISTINCT keys — the host rejects a whole hierarchy that
- *  contains any duplicate key — but several of them mean the same underlying
- *  parameter, so this is the one table both the read and the apply path use.
- *  They used to be duplicated inline in each, which is exactly how a key ends up
- *  settable but not readable, and a knob that reads zero looks like dead UI
- *  rather than a missing case.
- *
- *  ⚠ Slot 0 and 1 are 0..1 for the reverbs and a count of SIXTEENTHS (1..16)
- *  for the Delay. Slot 4 was the vestigial `mix` from the kit-insert era. */
-static int send_slot_index(const char *name) {
-    if (!strcmp(name, "size")     || !strcmp(name, "time_l") || !strcmp(name, "p1")) return 0;
-    if (!strcmp(name, "damp")     || !strcmp(name, "time_r") || !strcmp(name, "p2")) return 1;
-    /* `hold` is the GATED reverb's name for slot 2: SpaceExtra maps it to the
-     * gate's hold time (50..500 ms), not to a decay. Same slot, honest name. */
-    if (!strcmp(name, "decay")    || !strcmp(name, "feedback")
-        || !strcmp(name, "hold")  || !strcmp(name, "p3")) return 2;
-    if (!strcmp(name, "predelay") || !strcmp(name, "tone")   || !strcmp(name, "p4")) return 3;
-    /* `length` is NonLin's name for slot 2 and `shape` its name for slot 4 —
-     * that type has no decay at all, which is the point of it. */
-    if (!strcmp(name, "length")) return 2;
-    /* Slot 4 is ping-pong on a Delay, Shape on NonLin and the TANK's decay on
-     * the gate — where slot 2 is the gate's hold, so "decay" would have been
-     * ambiguous and `tail` is used instead. */
-    if (!strcmp(name, "pingpong") || !strcmp(name, "shape")
-        || !strcmp(name, "tail") || !strcmp(name, "diffusion")
-        || !strcmp(name, "p5")) return 4;
-    /* Slot 5 is sync on a Delay and the RELEASE on the two envelope types. */
-    if (!strcmp(name, "release")) return 5;
-    if (!strcmp(name, "sync")     || !strcmp(name, "p6")) return 5;
-    if (!strcmp(name, "ms_l")     || !strcmp(name, "p7")) return 6;
-    if (!strcmp(name, "ms_r")     || !strcmp(name, "p8")) return 7;
-    return -1;
-}
+/* The name->slot table lives in dr32_fxbus.h now: dr32-fx hosts the same
+ * `Slot` and must agree with the kit about which knob is which. */
+#define send_slot_index dr32_send_slot_index
 
 /** Which of the Drum Bus's five controls a key addresses, -1 if none.
  *
@@ -328,6 +296,22 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (bidx >= 0) return snprintf(buf, buf_len, "%g", (double)kit->bus_p[bidx]);
     }
 
+    if (!strcmp(key, "split_voices"))
+        return dr32_split_voices_json(kit, buf, buf_len);
+
+    /* Per-voice sends into the host's two global send buses.
+     *
+     * ARRAY POSITION IS THE SEND INDEX, and "{id}" is substituted with a voice
+     * id from split_voices -- "pad0_send1", which is a key this file already
+     * serves through split_pad_key. Nothing new is stored: the host reads these
+     * levels, it does not own them.
+     *
+     * The RANGE comes from chain_params, so send1/send2 are declared there as
+     * well as on the pads level. A range the host cannot find is REFUSED rather
+     * than guessed -- assuming 0..1 for a -70..+6 dB control would mute it. */
+    if (!strcmp(key, "voice_send_params"))
+        return snprintf(buf, buf_len, "[\"{id}_send1\",\"{id}_send2\"]");
+
     if (!strcmp(key, "ui_current_pad"))
         return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
     if (!strcmp(key, "ui_auto_select_pad"))
@@ -411,63 +395,53 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         return 1;
     }
 
-    // --- FX buses: send1_*/send2_*
+    /* ── RETIRED: send1_* / send2_* and bus_* ────────────────────────────
+     *
+     * The two internal send buses and the always-on Drum Bus are the host's
+     * now: the Drum Bus is a declared voice bus of four `dr32-fx` inserts, and
+     * the pads' send1/send2 feed the host's two GLOBAL sends. The effects are
+     * all still here -- `dr32-fx` hosts every send type as a preset.
+     *
+     * These keys are still ACCEPTED, stored and read back, and drive no audio.
+     * That is a deliberate dead end rather than an oversight:
+     *
+     *   - 137 factory kits and every saved slot carry them. Rejecting a key
+     *     makes a restore fail loudly on state that is otherwise fine.
+     *   - A DSP cannot migrate them. Turning `bus_crunch = 0.4` into an insert
+     *     would mean writing into the host's bus, which this module cannot see
+     *     and which the user may already have arranged differently. A migration
+     *     that silently overwrites somebody's chain is worse than one that does
+     *     not happen.
+     *
+     * They are off every page in module.json, so the only way to reach one now
+     * is a saved blob or a script -- there is no knob that does nothing. */
     if (!strncmp(key, "send", 4)) {
         const char *p = key + 4;
         int slot = (*p >= '1' && *p <= '2') ? (*p - '1') : -1;
-        if (slot >= 0 && p[1] == '_' && kit->fx) {
+        if (slot >= 0 && p[1] == '_') {
             const char *f2 = p + 2;
             float v = (float)atof(val);
-            dr32_fxbus *fx = kit->fx;
-            // Params are stored per slot so any one of them can be set alone.
             float *cache = kit->send_p[slot];
             if (!strcmp(f2, "type")) {
                 dr32_efx_type t = dr32_efx_from_name(val);
-                // Load that type's musical starting point. Selecting an effect
-                // should sound like something immediately, not inherit the
-                // previous effect's knob positions.
                 if (t != DR32_EFX_NONE) dr32_efx_defaults(t, cache);
-                dr32_fxbus_set_send_type(fx, slot, t);
                 kit->send_type[slot] = t;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
                 return 1;
             }
-            if (!strcmp(f2, "return")) {
-                dr32_fxbus_set_send_return(fx, slot, v);
-                kit->send_return_ui[slot] = v;
-                return 1;
-            }
+            if (!strcmp(f2, "return")) { kit->send_return_ui[slot] = v; return 1; }
             if (!strcmp(f2, "sync")) {
-                /* Name or number: the canvas writes the label, a restored state
-                 * or a script may write 0/1. */
                 if (!strcmp(val, "Sync"))      cache[5] = 1.0f;
                 else if (!strcmp(val, "Free")) cache[5] = 0.0f;
                 else                           cache[5] = (v >= 0.5f) ? 1.0f : 0.0f;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
                 return 1;
             }
             int idx = send_slot_index(f2);
-            if (idx >= 0) {
-                cache[idx] = v;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
-                return 1;
-            }
+            if (idx >= 0) { cache[idx] = v; return 1; }
         }
     }
-
-    // --- the always-on Drum Bus: bus_*
     {
         int bidx = bus_slot_index(key);
-        if (bidx >= 0) {
-            /* Cache first, apply second: a missing fx bus must not make the
-             * value vanish, or a state restore on an instance that failed to
-             * allocate would silently drop the whole page. */
-            kit->bus_p[bidx] = (float)atof(val);
-            if (kit->fx)
-                dr32_fxbus_set_bus_params(kit->fx, kit->bus_p[0], kit->bus_p[1],
-                                          kit->bus_p[2], kit->bus_p[3], kit->bus_p[4]);
-            return 1;
-        }
+        if (bidx >= 0) { kit->bus_p[bidx] = (float)atof(val); return 1; }
     }
 
     if (!strcmp(key, "ui_current_pad")) {

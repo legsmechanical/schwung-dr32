@@ -1,0 +1,12 @@
+{
+  "modules": {
+    "dr32": {
+      "version": "0.4.0",
+      "download_url": "https://github.com/charlesvestal/schwung-dr32/releases/download/v0.4.0/dr32-module.tar.gz"
+    },
+    "dr32-fx": {
+      "version": "0.4.0",
+      "download_url": "https://github.com/charlesvestal/schwung-dr32/releases/download/v0.4.0/dr32-fx-module.tar.gz"
+    }
+  }
+}

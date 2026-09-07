@@ -72,36 +72,48 @@ const knobPages = pages.filter((p) => p.kind === PAGE_KNOBS);
 console.log(`  ${pages.length} pages planned, ${knobPages.length} knob pages`);
 for (const p of knobPages) console.log(`    ${String(p.level).padEnd(8)} ${(p.keys || []).map((k) => k || "-").join(" ")}`);
 
-// ---- the send pages, as the host sees them with visible_if applied
+// ---- dr32-fx's pages, as the host sees them with visible_if applied
 //
-// The planner above is fail-open (everything visible). On the device each
-// send level collapses to the cells of the ARMED type, and the design bar is
-// that every type fits ONE page of eight — a type spilling onto a second page
-// would hide its Return behind a jog for no reason. Values are the DSP's own
-// derived params (dr32_params.c: send1_mode / _env / _sync), which is what the
-// host's visible_if reads.
-const SEND_STATES = {
-    Plate:  { mode: "Verb",   env: "-",   sync: "-",    type: "Plate" },
-    Native: { mode: "Verb",   env: "-",   sync: "-",    type: "Native" },
-    Gated:  { mode: "Gate",   env: "Env", sync: "-",    type: "Gated" },
-    NonLin: { mode: "NonLin", env: "Env", sync: "-",    type: "NonLin" },
-    "Delay/Sync": { mode: "Delay", env: "-", sync: "Sync", type: "Delay" },
-    "Delay/Free": { mode: "Delay", env: "-", sync: "Free", type: "Delay" },
+// The send effects live in `dr32-fx` now, not in a level of this module, so
+// this check follows them there -- the design bar is unchanged and is the
+// reason it exists: the planner above is fail-open (everything visible), while
+// on the device the page collapses to the cells of the SELECTED preset, and
+// every preset must fit ONE page of eight. A preset spilling onto a second
+// page hides its Dry/Wet behind a jog for no reason.
+//
+// Values are the insert's own derived params (fx/dr32_fx.cpp: mode / env /
+// sync), which is what the host's visible_if reads. The "-" sentinels are
+// load-bearing: without them a reverb draws the delay's time knobs, because
+// `sync` would still read "Sync".
+const FX_STATES = {
+    Bus:    { mode: "Bus",    env: "-",   sync: "-",    tank: "-",   effect: "Crunch" },
+    Plate:  { mode: "Verb",   env: "-",   sync: "-",    tank: "Yes", effect: "Plate"  },
+    Native: { mode: "Verb",   env: "-",   sync: "-",    tank: "Yes", effect: "Native" },
+    Gated:  { mode: "Gate",   env: "Env", sync: "-",    tank: "Yes", effect: "Gated"  },
+    NonLin: { mode: "NonLin", env: "Env", sync: "-",    tank: "Yes", effect: "NonLin" },
+    "Delay/Sync": { mode: "Delay", env: "-", sync: "Sync", tank: "-", effect: "Delay" },
+    "Delay/Free": { mode: "Delay", env: "-", sync: "Free", tank: "-", effect: "Delay" },
 };
-for (const [label, st] of Object.entries(SEND_STATES)) {
-    const vals = { send1_mode: st.mode, send1_env: st.env, send1_sync: st.sync, send1_type: st.type };
-    const visible = (cond) => {
-        const v = vals[cond.param];
-        if (v === undefined) return true;
-        if ("equals" in cond) return v === cond.equals;
-        if ("not_equals" in cond) return v !== cond.not_equals;
-        return true;
-    };
-    const r = planPages({ hierarchy, chainParams, visible });
-    const sp = r.pages.filter((p) => p.kind === PAGE_KNOBS && p.level === "send1");
-    const keys = sp.flatMap((p) => (p.keys || []).filter(Boolean)).map((k) => k.replace(/^send1_/, ""));
-    console.log(`    send1 as ${label.padEnd(10)} ${sp.length} page(s): ${keys.join(" ")}`);
-    if (sp.length !== 1) bad(`send1 as ${label} spans ${sp.length} pages, want 1`);
+{
+    const fxjson = JSON.parse(fs.readFileSync("fx/module.json", "utf8"));
+    const fxCaps = fxjson.capabilities;
+    for (const [label, st] of Object.entries(FX_STATES)) {
+        const visible = (cond) => {
+            const v = st[cond.param];
+            /* A gate whose param this table does not drive would read as
+             * VISIBLE and the page would pass for the wrong reason. */
+            if (v === undefined) { bad(`dr32-fx: no state for visible_if param "${cond.param}"`); return true; }
+            if ("equals" in cond) return v === cond.equals;
+            if ("not_equals" in cond) return v !== cond.not_equals;
+            return true;
+        };
+        const r = planPages({ hierarchy: fxCaps.ui_hierarchy,
+                              chainParams: fxCaps.chain_params, visible });
+        const sp = r.pages.filter((p) => p.kind === PAGE_KNOBS && p.level === "root");
+        const keys = sp.flatMap((p) => (p.keys || []).filter(Boolean));
+        console.log(`    dr32-fx as ${label.padEnd(11)} ${sp.length} page(s): ${keys.join(" ")}`);
+        if (sp.length !== 1) bad(`dr32-fx as ${label} spans ${sp.length} pages, want 1`);
+    }
 }
 
 // ---- a fixture for upstream's preview tools

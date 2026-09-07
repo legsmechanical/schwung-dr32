@@ -21,9 +21,23 @@ swapped per pad from either library.
 groups, velocity modulation, pan and volume, sends, and Punch. Two envelope modes (**A-H-D** and
 **A-S-R**) and four filter types (Lowpass 12 dB, Lowpass, Highpass, Peak).
 
-**Two sends and a drum bus.** Each send offers Plate, Spaces, Delay, Gated, Digital, Hall, NonLin
-and `Native` reverb/delay types; the bus has compression, crunch, attack/sustain shaping and
-dry/wet.
+**The mixer is the host's.** DR32 ships a second module, **`dr32-fx`** — one binary holding the
+four Drum Buss stages (Crunch, Attack, Sustain, Comp) and eight reverb/delay types (Plate, Spaces,
+Delay, Gated, Digital, Hall, NonLin and `Native`), each as a preset. Loading DR32 declares a
+**Drum Bus** holding all four stages, so it comes up the way it always did; from there they are
+ordinary inserts. You can reorder them, bypass one with the host's own gesture, aim an LFO at one,
+drop a drive between two, or swap the compressor for something else entirely — none of which was
+possible while they lived inside the synth.
+
+**Every pad is a Schwung bus voice**, so a slot can send the kick to one insert chain and the snare
+to another; and every pad's **Send 1 / Send 2** feed the host's two global sends, per pad, taken
+pre-insert. Put `dr32-fx` on a send and you have DR32's reverbs back — shared with everything else
+in the set rather than trapped in one slot.
+
+> **Coming from an earlier version:** a `.abl` kit's per-pad send amounts now point at the host's
+> Send A, which is empty until you put something on it, so a stock kit loads **dry**. `dr32-fx` set
+> to `Native` on Send A is the closest thing to what it used to do. The old `bus_*` / `send1_*` /
+> `send2_*` keys are still accepted so saved slots restore, but they drive nothing.
 
 **Native Schwung pages, no custom UI.** Since 0.2.0 every page is the host's own knob grid, planned
 from the hierarchy the module serves: the pads are one 32-instance child level with `pad_layout:
@@ -43,8 +57,10 @@ upstream contract for it is in progress).
   than behavioural reconstruction, and that has distribution implications which have not been
   settled. Treat it as provisional.
 - **Kit import does not arm the reverb.** Return-chain FX in an `.ablpreset` is parsed and
-  preserved but left inert, while per-pad *send amounts* are imported — so a stock kit currently
-  feeds correct levels into an unconfigured reverb.
+  preserved but left inert, while per-pad *send amounts* are imported — so a stock kit feeds
+  correct levels into whatever you have put on the host's Send A, and into nothing if that is
+  empty. Arming it automatically would mean a module writing into a device-wide send that every
+  other slot shares, which is worse than loading dry.
 - **Per-pad playback effects are deliberately dropped.** `Effect_Type` and all nine effects'
   parameters are still parsed and written back, so kits stay lossless and reopen correctly on a
   native Move — but playback ignores them and every pad plays the plain sampler.

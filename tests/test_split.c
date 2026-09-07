@@ -1,0 +1,402 @@
+// Per-voice render: the split_voices list DR32 publishes and the
+// move_plugin_render_split entry point Schwung's bus routing dlsym's.
+//
+// The failures these are written against are the ones the contract says a
+// module ported from a single-output render walks into by default: clearing a
+// destination the host already cleared (and that another voice is sharing),
+// overwriting instead of accumulating, and a list whose ids move when the kit
+// does. None of them is visible from inside DR32 — they show up as another
+// bus's audio going missing — so they are pinned here.
+//
+// The other half of this file is the DESK SEMANTIC: a voice routed to a bus
+// leaves the kit's drum bus, and a voice left alone stays on it and is glued.
+// That is an ordering property of render_split (voices, then returns, then the
+// glue in place) and it is invisible from any single buffer — you can only see
+// it by comparing a glued run against an unglued one.
+
+#include "../dsp/dr32_kit.h"
+#include "../dsp/dr32_params.h"
+#include "../dsp/host/plugin_api_v1.h"
+
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* Exported by dsp/dr32.c. render_split is a free symbol on purpose — it is
+ * never a field on plugin_api_v2_t — so the test resolves it the same way the
+ * chain host does: by name. */
+extern plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host);
+extern void move_plugin_render_split(void *instance, int16_t *const *voice_out,
+                                     int n_voices, int16_t *main_out, int frames);
+
+static int failures = 0, checks = 0;
+#define CHECK(cond, ...) do { \
+    checks++; \
+    if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } \
+} while (0)
+
+#define SR 44100
+#define FRAMES 128
+
+static void w16(FILE *f, uint16_t v) { fputc(v & 0xff, f); fputc((v >> 8) & 0xff, f); }
+static void w32(FILE *f, uint32_t v) { for (int i = 0; i < 4; i++) fputc((v >> (8 * i)) & 0xff, f); }
+
+/** A 1 s 16-bit mono WAV of constant `level`. */
+static void make_wav(const char *path, float level) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    uint32_t data = SR * 2;
+    fputs("RIFF", f); w32(f, 4 + 24 + 8 + data); fputs("WAVE", f);
+    fputs("fmt ", f); w32(f, 16); w16(f, 1); w16(f, 1); w32(f, SR);
+    w32(f, SR * 2); w16(f, 2); w16(f, 16);
+    fputs("data", f); w32(f, data);
+    for (int i = 0; i < SR; i++) w16(f, (uint16_t)(int16_t)(level * 32767.0f));
+    fclose(f);
+}
+
+static void note_on(plugin_api_v2_t *api, void *inst, int note) {
+    uint8_t m[3] = { 0x90, (uint8_t)note, 100 };
+    api->on_midi(inst, m, 3, 0);
+}
+
+/** Count non-overlapping occurrences of `needle`. */
+static int count(const char *hay, const char *needle) {
+    int n = 0;
+    for (const char *p = strstr(hay, needle); p; p = strstr(p + 1, needle)) n++;
+    return n;
+}
+
+static int16_t peak_abs(const int16_t *b, int n) {
+    int16_t p = 0;
+    for (int i = 0; i < n; i++) { int a = abs(b[i]); if (a > p) p = (int16_t)a; }
+    return p;
+}
+
+int main(void) {
+    printf("split render\n");
+
+    const char *wa = "/tmp/dr32_split_a.wav", *wb = "/tmp/dr32_split_b.wav";
+    /* Quiet on purpose: the two together must stay well inside full scale, or
+     * the sum this file is about is a clip and every buffer agrees for the
+     * wrong reason. */
+    make_wav(wa, 0.25f);
+    make_wav(wb, 0.1f);
+
+    plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+    CHECK(api != NULL, "no v2 api");
+    if (!api) return 1;
+
+    // ---------------------------------------------------------------- the list
+    {
+        void *inst = api->create_instance("src", NULL);
+        CHECK(inst != NULL, "create_instance");
+        if (inst) {
+            char js[8192];
+            api->set_param(inst, "pad0_sample", wa);
+            int n = api->get_param(inst, "split_voices", js, (int)sizeof(js));
+
+            CHECK(n > 0, "split_voices answered %d — presence of the key is the "
+                         "opt-in, so nothing routes without it", n);
+            /* The chain host reads this through a 4096-byte buffer and a short
+             * read is SILENT — it just sees fewer voices. */
+            CHECK(n < 4096, "split_voices is %d bytes, over the host's 4096", n);
+            CHECK((int)strlen(js) == n, "returned length %d != strlen %d",
+                  n, (int)strlen(js));
+            printf("  split_voices: %d bytes of the host's 4096\n", n);
+
+            /* Entry i is buffer i, so there must be exactly one entry per pad. */
+            CHECK(count(js, "\"id\":") == DR32_PADS,
+                  "%d entries, expected %d", count(js, "\"id\":"), DR32_PADS);
+
+            /* AN ID MUST ROUND-TRIP THROUGH OUR OWN PARSER, and that is the
+             * assertion — not a literal spelling.
+             *
+             * The host substitutes an id into a key template it is given
+             * ("{id}_send1" -> "pad0_send1") and asks US for that parameter.
+             * So every published id must be one split_pad_key resolves, and to
+             * the pad at the SAME index. This test used to pin the first id as
+             * the string "pad1", which is exactly the off-by-one it should have
+             * caught: the ids were 1-based while split_pad_key and the state
+             * blob are both 0-based, so every per-voice key reached the NEXT
+             * pad and the last pad could not be addressed at all. A literal
+             * cannot see that; a round trip can. */
+            for (int pad = 0; pad < DR32_PADS; pad++) {
+                char id[16], key[32];
+                snprintf(id, sizeof(id), "pad%d", pad);
+
+                char needle[24];
+                snprintf(needle, sizeof(needle), "\"id\":\"%s\"", id);
+                CHECK(strstr(js, needle) != NULL, "no entry for id %s", id);
+
+                /* ...and <id>_<field> addresses THAT pad, proven through the
+                 * public API the host uses rather than an internal helper: a
+                 * distinct value per pad, read back per pad. If the ids were
+                 * off by one this reads a neighbour's value, and the last id
+                 * would not resolve at all. */
+                snprintf(key, sizeof(key), "%s_send1", id);
+                char v[16];
+                snprintf(v, sizeof(v), "%d", -60 + pad);   /* dB, distinct per pad */
+                api->set_param(inst, key, v);
+            }
+
+            /* Second pass, after every pad has been written: each id must read
+             * back ITS OWN value. One pass that writes and reads together would
+             * pass even if every id resolved to the same pad. */
+            for (int pad = 0; pad < DR32_PADS; pad++) {
+                char key[32], got[32], want[16];
+                snprintf(key, sizeof(key), "pad%d_send1", pad);
+                snprintf(want, sizeof(want), "%d", -60 + pad);
+                int r = api->get_param(inst, key, got, (int)sizeof(got));
+                CHECK(r > 0, "pad%d_send1 unreadable (%d)", pad, r);
+                CHECK(r > 0 && atoi(got) == atoi(want),
+                      "pad%d_send1 read back %s, wrote %s — ids do not address "
+                      "the pad they name", pad, got, want);
+            }
+
+            /* A loaded pad is labelled by its sample, an empty one by its
+             * position. */
+            CHECK(strstr(js, "\"label\":\"dr32_split_a\"") != NULL,
+                  "pad 1 is not labelled by its sample: %.120s", js);
+            CHECK(strstr(js, "\"id\":\"pad1\",\"label\":\"Pad 2\"") != NULL,
+                  "empty pad index 1 is not labelled 'Pad 2'");
+
+            /* THE point of positional ids: swapping a pad's sample — which is
+             * what loading a kit does to all 32 at once — must not move an id,
+             * or every bus assignment in the set is orphaned. */
+            api->set_param(inst, "pad0_sample", wb);
+            char js2[8192];
+            api->get_param(inst, "split_voices", js2, (int)sizeof(js2));
+            CHECK(count(js2, "\"id\":") == DR32_PADS, "id count changed with the kit");
+            CHECK(strncmp(js2, "[{\"id\":\"pad0\",", 14) == 0,
+                  "the first pad's id moved when its sample changed: '%.24s'", js2);
+            CHECK(strstr(js2, "\"label\":\"dr32_split_b\"") != NULL,
+                  "the label did not follow the sample");
+
+            api->destroy_instance(inst);
+        }
+    }
+
+    // ------------------------------------------- a long / hostile sample name
+    {
+        dr32_kit k;
+        dr32_kit_init(&k);
+        snprintf(k.pads[0].path, sizeof(k.pads[0].path),
+                 "/x/a \"quoted\" name that runs on well past the cap.wav");
+        char js[8192];
+        int n = dr32_split_voices_json(&k, js, (int)sizeof(js));
+        CHECK(n > 0 && n < 4096, "hostile name blew the budget: %d", n);
+        /* An unescaped quote would end the value early in the host's scan,
+         * which has no escape handling at all. */
+        CHECK(count(js, "\"") == 8 * DR32_PADS, "unbalanced quoting: %.80s", js);
+        CHECK(strstr(js, "\\\"") == NULL, "an escape reached the host's flat scan");
+        dr32_kit_free(&k);
+    }
+
+    // ------------------------------------------------ a destination is NEVER cleared
+    {
+        void *inst = api->create_instance("src", NULL);
+        CHECK(inst != NULL, "create_instance");
+        if (inst) {
+            int16_t main_out[2 * FRAMES];
+            for (int i = 0; i < 2 * FRAMES; i++) main_out[i] = 1000;
+            int16_t *voices[DR32_PADS];
+            for (int i = 0; i < DR32_PADS; i++) voices[i] = main_out;
+
+            /* Silent kit: nothing to accumulate, so every sample must come back
+             * exactly as the caller left it. A memset anywhere in the render —
+             * the carry-over mistake from a single-output port — deletes
+             * whatever another voice already put there, and this is what sees
+             * it. */
+            move_plugin_render_split(inst, voices, DR32_PADS, main_out, FRAMES);
+            int intact = 1;
+            for (int i = 0; i < 2 * FRAMES; i++) if (main_out[i] != 1000) intact = 0;
+            CHECK(intact, "render_split cleared or overwrote its destination");
+            api->destroy_instance(inst);
+        }
+    }
+
+    // ------------------------------- two voices on one buffer SUM; parity with mixed
+    {
+        int16_t solo0[2 * FRAMES], solo1[2 * FRAMES], both[2 * FRAMES];
+        int16_t mixed[2 * FRAMES];
+        int16_t sink[2 * FRAMES];
+        int16_t *voices[DR32_PADS];
+
+        /* Each instance is driven identically and independently, so any
+         * difference between them is the render path and nothing else. */
+        for (int which = 0; which < 4; which++) {
+            void *inst = api->create_instance("src", NULL);
+            if (!inst) { CHECK(0, "create_instance"); break; }
+            api->set_param(inst, "pad0_sample", wa);
+            api->set_param(inst, "pad1_sample", wb);
+
+            int16_t *dst = which == 0 ? solo0 : which == 1 ? solo1
+                         : which == 2 ? both : mixed;
+            memset(dst, 0, sizeof(int16_t) * 2 * FRAMES);
+            memset(sink, 0, sizeof(sink));
+
+            if (which == 0) note_on(api, inst, 36);
+            else if (which == 1) note_on(api, inst, 37);
+            else { note_on(api, inst, 36); note_on(api, inst, 37); }
+
+            if (which == 3) {
+                api->render_block(inst, dst, FRAMES);
+            } else {
+                /* pad1 and pad2 share one destination — the aliasing the host
+                 * hands out when two voices are on the same bus. Everything
+                 * else goes to a sink that is not it. */
+                for (int i = 0; i < DR32_PADS; i++) voices[i] = sink;
+                voices[0] = dst;
+                voices[1] = dst;
+                move_plugin_render_split(inst, voices, DR32_PADS, sink, FRAMES);
+            }
+            api->destroy_instance(inst);
+        }
+
+        CHECK(peak_abs(solo0, 2 * FRAMES) > 100, "pad 1 produced no audio");
+        CHECK(peak_abs(solo1, 2 * FRAMES) > 100, "pad 2 produced no audio");
+
+        int worst_sum = 0, worst_mix = 0;
+        for (int i = 0; i < 2 * FRAMES; i++) {
+            int d = abs((int)both[i] - ((int)solo0[i] + (int)solo1[i]));
+            if (d > worst_sum) worst_sum = d;
+            int m = abs((int)both[i] - (int)mixed[i]);
+            if (m > worst_mix) worst_mix = m;
+        }
+        /* Both voices were handed the same pointer, so their sum happened
+         * inside our own render with no mixing pass. Slack is the per-voice
+         * int16 rounding that summing in the destination costs. */
+        CHECK(worst_sum <= 2, "aliased voices did not sum (worst %d LSB)", worst_sum);
+        /* And that sum is the mixed render, which is the property that lets the
+         * host switch entry points per frame without it being audible. */
+        CHECK(worst_mix <= 2, "split != render_block (worst %d LSB)", worst_mix);
+    }
+
+    // ------------------------------------- the retired bus/send keys are INERT
+    // The Drum Bus and the two internal sends are the host's now: a declared
+    // voice bus of `dr32-fx` inserts, and the host's global sends fed through
+    // voice_send_params. The keys are still accepted -- 137 factory kits and
+    // every saved slot carry them, and rejecting one makes a restore fail on
+    // state that is otherwise fine -- so the thing to assert is that accepting
+    // them changes NOTHING about the audio.
+    //
+    // This is the inverse of the test it replaces, and deliberately the same
+    // shape: render once with a violently non-neutral bus and send, once with
+    // them untouched, and compare. Before, the buffer HAD to move; now it must
+    // not move by a single LSB, on either entry point. Any surviving call into
+    // the old container shows up here.
+    {
+        struct { const char *key, *val; } retired[] = {
+            { "bus_comp", "1" }, { "bus_crunch", "1" },
+            { "bus_attack", "1" }, { "bus_sustain", "1" }, { "bus_mix", "1" },
+            { "send1_type", "Plate" }, { "send1_return", "0.9" },
+            { "send2_type", "Delay" }, { "send2_return", "0.9" },
+        };
+
+        /* which: 0 = pad 1 unrouted (lands on main), 1 = pad 1 routed to a bus. */
+        int16_t out[2][2][2 * FRAMES];
+        int16_t bus[2 * FRAMES];
+
+        for (int which = 0; which < 2; which++) {
+            for (int loud = 0; loud < 2; loud++) {
+                void *inst = api->create_instance("src", NULL);
+                if (!inst) { CHECK(0, "create_instance"); break; }
+                api->set_param(inst, "pad0_sample", wa);
+                /* The pad's own send level is set in BOTH runs: it is a host
+                 * fact now, and setting it only in one would measure the level
+                 * rather than the retired bus. */
+                api->set_param(inst, "pad0_send1", "-6");
+                if (loud)
+                    for (unsigned g = 0; g < sizeof(retired) / sizeof(retired[0]); g++)
+                        api->set_param(inst, retired[g].key, retired[g].val);
+
+                int16_t *main_out = out[which][loud];
+                int16_t *voices[DR32_PADS];
+                for (int i = 0; i < DR32_PADS; i++) voices[i] = main_out;
+                if (which == 1) voices[0] = bus;
+
+                note_on(api, inst, 36);
+                /* Long enough that a surviving reverb would have built up: one
+                 * block in, a tail is unmeasurable and the two runs would match
+                 * for the wrong reason. */
+                for (int b = 0; b < 40; b++) {
+                    memset(main_out, 0, sizeof(int16_t) * 2 * FRAMES);
+                    memset(bus, 0, sizeof(bus));
+                    move_plugin_render_split(inst, voices, DR32_PADS, main_out, FRAMES);
+                }
+                api->destroy_instance(inst);
+            }
+        }
+
+        for (int which = 0; which < 2; which++) {
+            int worst = 0;
+            for (int i = 0; i < 2 * FRAMES; i++) {
+                int d = abs((int)out[which][1][i] - (int)out[which][0][i]);
+                if (d > worst) worst = d;
+            }
+            CHECK(worst == 0,
+                  "%s: a retired bus/send key still moved the audio (worst %d LSB)",
+                  which ? "routed" : "unrouted", worst);
+        }
+
+        /* The routing itself is unchanged by any of this. */
+        CHECK(peak_abs(out[0][0], 2 * FRAMES) > 100, "the unrouted pad was silent");
+        CHECK(peak_abs(out[1][0], 2 * FRAMES) == 0,
+              "a routed pad still landed on main (peak %d)",
+              peak_abs(out[1][0], 2 * FRAMES));
+    }
+
+    // --------------------------- an unrouted kit is still the mixed render
+    // With nothing routed away, split and render_block differ in nothing but
+    // the int16 round trip the in-place glue costs. This is the assertion that
+    // would have failed on the old "glue starts from silence" render with any
+    // non-neutral Drum Bus, and it is why the glue runs in the pre-master-gain
+    // domain.
+    {
+        int16_t split_out[2 * FRAMES], mixed_out[2 * FRAMES];
+        for (int which = 0; which < 2; which++) {
+            void *inst = api->create_instance("src", NULL);
+            if (!inst) { CHECK(0, "create_instance"); break; }
+            api->set_param(inst, "pad0_sample", wa);
+            api->set_param(inst, "pad1_sample", wb);
+            api->set_param(inst, "pad1_send1", "-6");
+            api->set_param(inst, "send1_type", "Plate");
+            api->set_param(inst, "send1_return", "0.8");
+            api->set_param(inst, "bus_comp", "0.7");
+            api->set_param(inst, "bus_crunch", "0.4");
+            api->set_param(inst, "bus_mix", "0.9");
+            api->set_param(inst, "master", "0.8");
+
+            int16_t *dst = which ? mixed_out : split_out;
+            memset(dst, 0, sizeof(int16_t) * 2 * FRAMES);
+            note_on(api, inst, 36);
+            note_on(api, inst, 37);
+
+            if (which) {
+                api->render_block(inst, dst, FRAMES);
+            } else {
+                int16_t *voices[DR32_PADS];
+                for (int i = 0; i < DR32_PADS; i++) voices[i] = dst;
+                move_plugin_render_split(inst, voices, DR32_PADS, dst, FRAMES);
+            }
+            api->destroy_instance(inst);
+        }
+        int worst = 0;
+        for (int i = 0; i < 2 * FRAMES; i++) {
+            int d = abs((int)split_out[i] - (int)mixed_out[i]);
+            if (d > worst) worst = d;
+        }
+        /* Slack: per-voice int16 rounding on the way in, plus the one extra
+         * quantisation the in-place glue's read-back costs. */
+        CHECK(worst <= 4,
+              "unrouted split != render_block with a live Drum Bus (worst %d LSB)",
+              worst);
+        printf("  unrouted split vs mixed: worst %d LSB\n", worst);
+    }
+
+    printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED",
+           checks, failures);
+    return failures ? 1 : 0;
+}

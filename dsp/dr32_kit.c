@@ -9,7 +9,6 @@
 
 void dr32_kit_init(dr32_kit *k) {
     memset(k, 0, sizeof(*k));
-    k->fx = dr32_fxbus_create(DR32_SR);
     for (int i = 0; i < 128; i++) k->note_to_pad[i] = -1;
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_pad_defaults(&k->pads[i].params);
@@ -33,8 +32,9 @@ void dr32_kit_init(dr32_kit *k) {
         k->send_return_ui[i] = 1.0f;
     }
 
-    /* Drum Bus: always on, and starting NEUTRAL so it is inaudible and bypassed
-     * until a knob moves. Attack and Sustain are bipolar -1..+1, neutral 0. */
+    /* RETIRED fields, seeded so a read answers something sane. The Drum Bus is
+     * a declared voice bus of `dr32-fx` inserts now and these drive nothing --
+     * see the comment on the fields in dr32_kit.h. */
     k->bus_p[0] = 0.0f;   // compress
     k->bus_p[1] = 0.0f;   // crunch
     k->bus_p[2] = 0.0f;   // attack   (bipolar)
@@ -42,25 +42,11 @@ void dr32_kit_init(dr32_kit *k) {
     k->bus_p[4] = 1.0f;   // mix — fully processed; only ever takes the bus away
     k->bpm = 120.0f;
 
-    // Send 1 starts as a Plate — the drum reverb — so raising a pad's Send 1 is
-    // immediately useful. It costs nothing until a pad actually feeds it (the
-    // bus skips processing while idle), and every pad send starts at -70 = off,
-    // so nothing is audible until asked for.
-    if (k->fx) {
-        dr32_efx_defaults(DR32_EFX_PLATE, k->send_p[0]);
-        k->send_type[0] = DR32_EFX_PLATE;
-        dr32_fxbus_set_send_type(k->fx, 0, DR32_EFX_PLATE);
-        dr32_fxbus_set_send_params(k->fx, 0, k->send_p[0], DR32_SEND_PARAMS);
-        dr32_fxbus_set_send_return(k->fx, 0, 1.0f);
-        dr32_fxbus_set_bus_params(k->fx, k->bus_p[0], k->bus_p[1],
-                                  k->bus_p[2], k->bus_p[3], k->bus_p[4]);
-    }
 }
 
 void dr32_kit_set_bpm(dr32_kit *k, float bpm) {
     if (!k) return;
     k->bpm = bpm;
-    if (k->fx) dr32_fxbus_set_bpm(k->fx, bpm);
 }
 
 /* ---------- folder browse ------------------------------------------------
@@ -177,8 +163,6 @@ int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {
 
 void dr32_kit_free(dr32_kit *k) {
     browse_free(k);
-    dr32_fxbus_destroy(k->fx);
-    k->fx = NULL;
     for (int i = 0; i < DR32_PADS; i++) {
         free(k->pads[i].sample);
         free(k->pads[i].retired);
@@ -298,48 +282,129 @@ void dr32_kit_all_off(dr32_kit *k) {
     for (int i = 0; i < DR32_PADS; i++) k->pads[i].voice.active = 0;
 }
 
-static inline float db_to_gain(float db) {
-    // -70 dB is the format's "off", and native floors the send there.
-    if (db <= -70.0f) return 0.0f;
-    return powf(10.0f, db / 20.0f);
+
+/* THE SEND TAP IS THE HOST'S NOW. A pad's send1 / send2 are still stored and
+ * still read -- they are what `voice_send_params` points the host at -- but the
+ * kit no longer does anything with them: the host takes each voice's audio
+ * PRE-INSERT and applies the level itself. So there is no reason left to render
+ * a sending pad on its own, and the mixed path is a plain sum again.
+ *
+ * db_to_gain went with it. The level's dB->gain conversion happens host-side,
+ * from the range declared in chain_params -- which is why that range being
+ * findable is load-bearing rather than cosmetic (a range the host cannot find
+ * is REFUSED, not guessed). */
+
+void dr32_kit_begin_block(dr32_kit *k) {
+    k->block++;
 }
 
 void dr32_kit_render(dr32_kit *k, float *out, int frames) {
-    k->block++;
+    dr32_kit_begin_block(k);
     if (frames > DR32_KIT_MAX_BLOCK) frames = DR32_KIT_MAX_BLOCK;
     memset(out, 0, sizeof(float) * 2 * (size_t)frames);
 
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_voice *v = &k->pads[i].voice;
-        if (!v->active) continue;
-
-        const float s0 = db_to_gain(k->pads[i].params.send_db[0]);
-        const float s1 = db_to_gain(k->pads[i].params.send_db[1]);
-
-        if (!k->fx || (s0 <= 0.0f && s1 <= 0.0f)) {
-            dr32_voice_render(v, out, frames);       // dry only: no detour
-            continue;
-        }
-
-        // This pad feeds the send buses, so render it on its own first. Sends
-        // are POST-fader (native behaviour), which is exactly what the voice
-        // already produces.
-        memset(k->scratch, 0, sizeof(float) * 2 * (size_t)frames);
-        dr32_voice_render(v, k->scratch, frames);
-        for (int f = 0; f < frames; f++) {
-            float l = k->scratch[2 * f], r = k->scratch[2 * f + 1];
-            out[2 * f]     += l;
-            out[2 * f + 1] += r;
-            if (s0 > 0.0f) dr32_fxbus_send(k->fx, 0, f, l * s0, r * s0);
-            if (s1 > 0.0f) dr32_fxbus_send(k->fx, 1, f, l * s1, r * s1);
-        }
+        if (v->active) dr32_voice_render(v, out, frames);
     }
-
-    if (k->fx) dr32_fxbus_process(k->fx, out, frames);
 
     if (k->master_gain != 1.0f) {
         for (int i = 0; i < 2 * frames; i++) out[i] *= k->master_gain;
     }
+}
+
+int dr32_kit_render_voice(dr32_kit *k, int pad, float *dst, int frames) {
+    if (!k || !dst || pad < 0 || pad >= DR32_PADS || frames <= 0) return 0;
+    if (frames > DR32_KIT_MAX_BLOCK) frames = DR32_KIT_MAX_BLOCK;
+
+    dr32_voice *v = &k->pads[pad].voice;
+    if (!v->active) return 0;
+
+    memset(dst, 0, sizeof(float) * 2 * (size_t)frames);
+    dr32_voice_render(v, dst, frames);
+
+    if (k->master_gain != 1.0f) {
+        for (int i = 0; i < 2 * frames; i++) dst[i] *= k->master_gain;
+    }
+    return 1;
+}
+
+void dr32_kit_finish_main(dr32_kit *k, float *mix, int frames) {
+    /* A NO-OP, deliberately kept.
+     *
+     * This existed to run the send returns and then the Drum Bus over the
+     * unassigned voices, in the pre-master-gain domain, which is why it had to
+     * come after every render_voice. Both of those are the host's now -- the
+     * Drum Bus is a declared voice bus, the sends are the host's global ones --
+     * so there is nothing left to do here and no ordering left to get wrong.
+     *
+     * The symbol stays because dr32.c calls it every block on the split path
+     * and a host built against the old header would otherwise fail to link. */
+    (void)k; (void)mix; (void)frames;
+}
+
+/** One pad's label: the loaded sample's basename without extension, truncated
+ *  to DR32_SPLIT_LABEL_MAX, or "Pad N" for an empty pad.
+ *
+ *  Unsafe bytes are REPLACED, not escaped. The chain host's id scan
+ *  (split_voices_parse.h) has no escape handling, so a `\"` in this string
+ *  would end a value early there; and non-ASCII is dropped rather than
+ *  truncated mid-sequence, which is the other way to hand the host half a
+ *  character. Writes at most DR32_SPLIT_LABEL_MAX bytes plus a terminator. */
+static void split_voice_label(const dr32_pad_slot *s, int pad, char *out) {
+    if (!s->path[0]) {
+        snprintf(out, DR32_SPLIT_LABEL_MAX + 1, "Pad %d", pad + 1);
+        return;
+    }
+    const char *slash = strrchr(s->path, '/');
+    const char *base = slash ? slash + 1 : s->path;
+    const char *dot = strrchr(base, '.');
+    int len = (dot && dot != base) ? (int)(dot - base) : (int)strlen(base);
+    if (len > DR32_SPLIT_LABEL_MAX) len = DR32_SPLIT_LABEL_MAX;
+    int n = 0;
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)base[i];
+        out[n++] = (c >= 0x20 && c < 0x7f && c != '"' && c != '\\') ? (char)c : '_';
+    }
+    out[n] = '\0';
+    if (n == 0) snprintf(out, DR32_SPLIT_LABEL_MAX + 1, "Pad %d", pad + 1);
+}
+
+int dr32_split_voices_json(const dr32_kit *k, char *buf, int buf_len) {
+    if (!k || !buf || buf_len <= 0) return 0;
+
+    /* The whole list must fit the 4096-byte buffer the chain host reads it
+     * through — a short read there is silent. Per entry, `{"id":"pad32",
+     * "label":"...."},` is 26 bytes plus the label; the brackets are 2. */
+    _Static_assert(2 + DR32_PADS * (26 + DR32_SPLIT_LABEL_MAX) < 4096,
+                   "split_voices would not fit the host's 4096-byte read");
+
+    int n = 0;
+    buf[0] = '\0';
+    int w = snprintf(buf + n, (size_t)(buf_len - n), "[");
+    if (w < 0 || n + w >= buf_len) { buf[0] = '\0'; return 0; }
+    n += w;
+
+    /* ZERO-BASED, because every other spelling of a pad in this module is:
+     * split_pad_key parses "pad<N>_" to a 0..DR32_PADS-1 index, and the state
+     * blob writes "pad%d_<field>" with the same 0-based pad. A voice id is not
+     * decoration — the host substitutes it into a key template
+     * ("{id}_send1" -> "pad0_send1") and asks US for that parameter. Emitting
+     * i+1 made every one of those resolve to the NEXT pad, and put pad32 out
+     * of range so the last pad could not be addressed at all. */
+    for (int i = 0; i < DR32_PADS; i++) {
+        char label[DR32_SPLIT_LABEL_MAX + 1];
+        split_voice_label(&k->pads[i], i, label);
+        w = snprintf(buf + n, (size_t)(buf_len - n),
+                     "%s{\"id\":\"pad%d\",\"label\":\"%s\"}",
+                     i ? "," : "", i, label);
+        if (w < 0 || n + w >= buf_len) { buf[0] = '\0'; return 0; }
+        n += w;
+    }
+
+    w = snprintf(buf + n, (size_t)(buf_len - n), "]");
+    if (w < 0 || n + w >= buf_len) { buf[0] = '\0'; return 0; }
+    return n + w;
 }
 
 int dr32_kit_active_voices(const dr32_kit *k) {

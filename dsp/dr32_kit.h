@@ -9,7 +9,7 @@
 #define DR32_KIT_H
 
 #include "dr32_voice.h"
-#include "dr32_fxbus.h"
+#include "dr32_fxbus.h"   /* dr32_efx_type, for the retired-field readers */
 #include "wav.h"
 
 #define DR32_PADS 32
@@ -37,25 +37,25 @@ typedef struct {
     signed char   note_to_pad[128];   // -1 = unmapped
     float         master_gain;        // linear
     unsigned      block;              // render-block counter (choke simultaneity)
-    dr32_fxbus   *fx;                 // 2 sends (may be NULL)
-    // Per-pad render buffer, used only when a pad actually feeds a send.
-    float         scratch[2 * DR32_KIT_MAX_BLOCK];
-    // Send params are cached so the UI can set one at a time (the bus API takes
-    // them together).
-    // See dr32_fxbus.h for the per-type slot table.
-    // ⚠ Not everything here is normalised: the Delay's synced times are a count
-    // of SIXTEENTHS (1..16) and its free times are MILLISECONDS. Both pairs are
-    // stored at once and survive a flip of the sync flag, as they do on the
-    // native device.
+    float         bpm;                // last tempo seen
+    // ── RETIRED: the two internal send buses and the always-on Drum Bus ──
+    //
+    // Both are the host's now: the Drum Bus is a declared voice bus of four
+    // `dr32-fx` inserts (capabilities.default_buses), and the pads' send1 /
+    // send2 feed the host's two GLOBAL sends through voice_send_params. The
+    // effects themselves did not go anywhere -- `dr32-fx` hosts all eight send
+    // types as presets.
+    //
+    // These fields stay ONLY as a place to park the values 137 factory kits and
+    // every saved state still carry. A DSP cannot migrate them: it does not
+    // know what is in the host's buses, and inventing inserts on load would
+    // overwrite whatever the user had put there. So they are accepted, stored,
+    // read back, and NOT connected to any audio -- which is a knob that does
+    // nothing, and is why they are also off every page in module.json. Dropping
+    // them instead would make a saved slot fail to restore rather than restore
+    // quietly.
     float         send_p[2][DR32_SEND_PARAMS];
-    // The always-on Drum Bus: [compress, crunch, attack, sustain, mix].
-    // Attack and Sustain are BIPOLAR -1..+1 with neutral at 0 (the 0..1-about-
-    // 0.5 form lives inside DrumBuss and nowhere else). Mix is the parallel
-    // blend and defaults to 1 = fully processed, so it only ever takes the
-    // stage away.
     float         bus_p[5];
-    float         bpm;                // last tempo seen, for the synced Delay
-    // Mirrors of slot state the UI reads back (the bus itself is write-only).
     dr32_efx_type send_type[2];
     float         send_return_ui[2];
     // Which pad the UI is editing, and whether playing a pad moves that focus.
@@ -148,6 +148,93 @@ void dr32_kit_set_bpm(dr32_kit *k, float bpm);
 
 /** Render `frames` of interleaved stereo. Overwrites `out` (does not add). */
 void dr32_kit_render(dr32_kit *k, float *out, int frames);
+
+// ---------------------------------------------------------------- split render
+//
+// The three calls below are the same block of audio as dr32_kit_render, taken
+// apart: one buffer per pad, plus one for everything that belongs to no pad.
+// They exist for Schwung's per-voice render contract (move_plugin_render_split
+// in dsp/dr32.c), which hands the module one int16 destination per voice and
+// may hand the SAME destination to several of them.
+//
+// Nothing here writes to a shared destination — each call works on a
+// caller-owned float scratch buffer that the caller then converts and
+// accumulates. That is what keeps the aliasing rule the plugin layer's problem
+// rather than the kit's.
+//
+// Per block, in this order: begin_block, then render_voice for EVERY pad, then
+// dr32_kit_finish_main. The order is load-bearing twice over:
+//
+//   - it used to be, when the sends and the Drum Bus lived in here. They are
+//     the host's now, so dr32_kit_finish_main has nothing left to do and is
+//     kept as a no-op: the ORDER is no longer load-bearing, but the call is
+//     still in every host that drives the split path and removing it would be
+//     an ABI break for no gain.
+
+/** One block boundary (the choke-simultaneity counter). Call once per block,
+ *  before any dr32_kit_render_voice. dr32_kit_render does this itself. */
+void dr32_kit_begin_block(dr32_kit *k);
+
+/** Render pad `pad` alone into `dst` (2 * frames interleaved floats) and feed
+ *  its post-fader share to whichever send buses it is on.
+ *
+ *  `dst` is OVERWRITTEN, which is safe only because it is the caller's private
+ *  scratch — never one of the split contract's shared destinations.
+ *
+ *  Returns 1 if the pad produced audio, 0 if it is silent, in which case `dst`
+ *  is left untouched and the caller must not accumulate it. */
+int dr32_kit_render_voice(dr32_kit *k, int pad, float *dst, int frames);
+
+/** Finish the kit's MAIN output, IN PLACE: add the two send returns to `mix`
+ *  and then run the always-on Drum Bus over the result.
+ *
+ *  `mix` is NOT cleared. On entry it must already hold every pad that has no
+ *  destination of its own — the unassigned voices — at the same post-master-
+ *  gain level dr32_kit_render_voice produced them at. So:
+ *
+ *      A VOICE YOU ROUTE TO A BUS LEAVES THE KIT'S DRUM BUS.
+ *
+ *  Exactly as routing a channel to a subgroup takes it out of the main mix on
+ *  a desk. What is left on main — the unrouted pads plus the returns — is
+ *  glued as it always was; the routed pads never meet the glue, because you
+ *  routed them elsewhere. Glue over everything including the buses is the
+ *  chain host's job one tier up: it sums buses into main BEFORE the slot's own
+ *  FX, "so a slot compressor sees the whole kit".
+ *
+ *  Call it once per block whether or not anyone wants the audio: this is what
+ *  drains the send buses, and skipping it replays a block's sends on top of
+ *  the next.
+ *
+ *  The returns are added at master gain, and the glue is run in the PRE-gain
+ *  domain (the buffer is scaled down, processed and scaled back) so the
+ *  compressor sees the same level dr32_kit_render's does. That keeps the two
+ *  entry points' only difference the one sentence above. */
+void dr32_kit_finish_main(dr32_kit *k, float *mix, int frames);
+
+/** How long a voice label may be, in bytes, before it is truncated.
+ *
+ *  32 entries have to fit the 4096-byte buffer the chain host parses the id
+ *  table out of, and a truncated read is silently short — so this is a budget,
+ *  not a style choice. See the static assert in dr32_split_voices_json. */
+#define DR32_SPLIT_LABEL_MAX 24
+
+/** Publish the flat ordered voice list Schwung's bus routing is built on:
+ *
+ *      [{"id":"pad1","label":"Kick 707"}, ...]      32 entries, always
+ *
+ *  ENTRY i IS BUFFER i in move_plugin_render_split, so the order is the pad
+ *  order and never changes. The ids are POSITIONAL for the same reason: a kit
+ *  change swaps every pad's sample but no pad's position, and an id keyed to a
+ *  sample name would orphan every bus assignment on the next kit. A bus on a
+ *  drum rack means "the third pad".
+ *
+ *  ⚠ These ids are 1-BASED (`pad1`..`pad32`) while dr32_params' keys are
+ *  0-based (`pad0_attack`). They are not the same namespace and never meet —
+ *  the host treats an id as opaque — and 1-based matches what the user is shown
+ *  ("Pad 1"). Do not "fix" one to match the other.
+ *
+ *  Returns bytes written, or 0 (and an empty buffer) if it would not fit. */
+int dr32_split_voices_json(const dr32_kit *k, char *buf, int buf_len);
 
 /** Number of currently sounding voices — for the CPU/debug readout. */
 int dr32_kit_active_voices(const dr32_kit *k);

@@ -91,17 +91,58 @@ for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
 
+# dsp/dr32_fxbus.cpp is NOT built into the shipped .so any more. It is the
+# internal send + Drum Bus container, which the host owns now; nothing in the
+# kit references it, and the only remaining consumer is the offline null-test
+# renderer, which compiles it itself (tests/run.sh). -Wl,--no-undefined below
+# is what proves the kit really has no reference left rather than us hoping so.
 $CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
-    -c dsp/dr32_fxbus.cpp -o build/obj/dr32_fxbus.o
+    -c dsp/dr32_efx_names.cpp -o build/obj/dr32_efx_names.o
 
-$CXX -shared -o build/dsp.so build/obj/*.o -lm
+# -Wl,--no-undefined on BOTH links. A shared library links clean with undefined
+# symbols by default, so a call to a function whose translation unit was never
+# added succeeds here and fails at dlopen on the device -- which the host shows
+# as an insert stuck on "Loading..." with nothing logged as an error. That is
+# exactly what shipped once; the link is the only place it can be caught.
+$CXX -shared -Wl,--no-undefined -o build/dsp.so build/obj/*.o -lm
+
+# The EFFECTS module: the same Drum Buss stages, as ordinary chain inserts.
+# One binary, four effects chosen by `effect` -- audio_fx_api_v2 is
+# multi-instance, so a bus holding all four is four create_instance calls on
+# this file. It shares dsp/dr32_drumbus.h with the kit rather than copying it.
+FX_ID=dr32-fx
+$CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -I. -Idsp -Ifx \
+    -c fx/dr32_fx.cpp -o build/obj/dr32_fx.o
+$CXX -shared -Wl,--no-undefined -o build/dr32-fx.so \
+    build/obj/dr32_fx.o build/obj/dr32_efx_names.o -lm
 
 echo "==> packaging dist/"
-rm -rf "dist/${MODULE_ID}"
-mkdir -p "dist/${MODULE_ID}"
-cp build/dsp.so     "dist/${MODULE_ID}/"
-cp build/ui.js      "dist/${MODULE_ID}/"
+rm -rf "dist/${MODULE_ID}" "dist/${FX_ID}"
+mkdir -p "dist/${MODULE_ID}" "dist/${FX_ID}"
+# `cat` and not `cp` for anything BUILT: on an ExtFS volume cp attempts a clone
+# and fails with "error deallocating", which under `set -e` aborts the script
+# after the .so is half-written -- a truncated dsp.so and no tarball, reported
+# as a copy error rather than as a build failure. The fx .so below learned this
+# first; the kit's did not, and started failing the day dsp.so grew.
+cat build/dsp.so > "dist/${MODULE_ID}/dsp.so"
+chmod 755 "dist/${MODULE_ID}/dsp.so"
+cat build/ui.js > "dist/${MODULE_ID}/ui.js"
 cp src/module.json  "dist/${MODULE_ID}/"
 
+# The host loads an audio FX by the path in its module.json; dsp.so is the name
+# every other module uses, so it is dsp.so here too.
+# <id>/<id>.so, NOT dsp.so.
+#
+# A bus insert is loaded by chain_bus.c with a hardcoded
+# "%s/../audio_fx/%s/%s.so" -- the freeverb convention (freeverb/freeverb.so),
+# not the dsp.so every other module type uses. Named dsp.so the dlopen simply
+# fails, bus_fx_ready never goes true, and every read answers null: the editor
+# holds on "Loading..." forever with nothing logged as an error.
+cat build/dr32-fx.so > "dist/${FX_ID}/${FX_ID}.so"
+chmod 755 "dist/${FX_ID}/${FX_ID}.so"
+cp fx/module.json   "dist/${FX_ID}/"
+[ -f fx/help.json ] && cp fx/help.json "dist/${FX_ID}/"
+
 tar -czf "dist/${MODULE_ID}-module.tar.gz" -C dist "${MODULE_ID}"
-echo "==> done: dist/${MODULE_ID}-module.tar.gz"
+tar -czf "dist/${FX_ID}-module.tar.gz"     -C dist "${FX_ID}"
+echo "==> done: dist/${MODULE_ID}-module.tar.gz + dist/${FX_ID}-module.tar.gz"
