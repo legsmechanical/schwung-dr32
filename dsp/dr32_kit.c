@@ -199,6 +199,25 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     if (pad < 0 || pad >= DR32_PADS) return DR32_WAV_ERR_OPEN;
     dr32_pad_slot *s = &k->pads[pad];
 
+    // Already holding this exact file: nothing to do, and doing it anyway is
+    // expensive in two separate ways.
+    //
+    // set_param IS the host's SPI audio callback -- not a control thread, which
+    // is what the comment at the "kit" case used to assume -- so a WAV read here
+    // blocks the audio budget directly. Restoring a slot's state re-asserts
+    // every pad's sample path, so without this a state restore re-read all 16
+    // files off the card: measured at 18.9 ms warm and 111 ms cold against a
+    // 2.9 ms block, i.e. an audible click on every Shift+Delete.
+    //
+    // The second cost is that the retire dance below silences the pad
+    // (`voice.active = 0`), so a no-op re-assert also cut a ringing pad short.
+    //
+    // Guarded on the loaded BUFFER, not the path string alone: a pad cleared
+    // below stores "" and a failed load keeps its old path, and neither may be
+    // mistaken for "already there".
+    if (path && path[0] && s->sample && strcmp(s->path, path) == 0)
+        return DR32_WAV_OK;
+
     // Silence the pad first: the audio thread checks `active` before touching
     // `sample`, so stopping the voice before the swap means it cannot be mid-read
     // on the buffer we're about to replace.

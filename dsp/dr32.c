@@ -326,15 +326,41 @@ static void set_param(void *instance, const char *key, const char *val) {
     // drum kits, "User" the user library. The filepath type takes exactly one
     // root, so they are two params that mean the same thing.
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user")) {
+        // Whether this is the kit we ALREADY hold, decided before the copy
+        // below overwrites the incumbent -- comparing after it always says yes.
+        int same_kit = (in->state_baseline && !strcmp(in->kit_path, val));
+
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
-        // Load HERE, on the host thread. This used to raise a dirty flag for
-        // ui.js to notice, but that file never runs in a chain slot, so the
-        // kit was never actually loaded and the module was silent.
+        // Load HERE. NOT "on the host thread" as this comment used to claim:
+        // set_param IS the host's SPI audio callback, so everything below runs
+        // against a ~2.9 ms block budget. That mistaken belief is why a state
+        // restore re-read the whole kit off the card and clicked.
         if (!val[0]) {
             // An empty path is the host's cancel-restore when it has no original
             // value to give back. Not an error, and not a reason to unload.
             return;
         }
+        // Same kit already loaded: reset the params WITHOUT touching the card.
+        //
+        // A state restore always carries the kit path, and the blob deliberately
+        // holds only deltas from the kit's baseline -- so the reload is what
+        // resets everything the blob omits, and simply skipping it would
+        // silently stop a recall reverting pad edits. Replaying the captured
+        // baseline gives the identical param state, and every pad's `sample` in
+        // it lands on the already-loaded guard in dr32_kit_load_sample(), so no
+        // WAV and no preset JSON is read.
+        //
+        // dr32_preset_load() cannot be short-circuited any lower down: it CLEARS
+        // every pad before loading, which wipes the paths that guard compares.
+        if (same_kit) {
+            // NULL load_kit: the kit is already the right one, and passing the
+            // real callback would recurse straight back into this branch.
+            dr32_state_read(&in->kit, in->state_baseline, NULL, NULL);
+            in->err[0] = '\0';
+            logmsg("dr32: kit already loaded - params reset from baseline, no disk read");
+            return;
+        }
+
         dr32_preset_report rep;
         // Timed because the kit browser previews live: every cursor move parses
         // a preset and loads up to 32 samples, so this cost is felt directly
