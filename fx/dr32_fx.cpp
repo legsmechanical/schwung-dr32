@@ -34,9 +34,19 @@
 
 static const host_api_v1_t *g_host = nullptr;
 
-/* The four stages, in the order the kit runs them. The INDEX is the wire value
- * of `effect`, so it is also the enum order the host draws — see module.json,
- * which must not be reordered independently of this. */
+/* The four stages, in the order the kit runs them.
+ *
+ * THEY ARE PRESETS, not a knob. Which stage this instance IS is a choice made
+ * once, when the insert is placed; spending a knob on it costs a control every
+ * time you touch the effect, forever, to change something you will change
+ * approximately never. So the stage is the preset browser -- `preset` /
+ * `preset_count` / `preset_name`, the contract the host already has a browser
+ * for -- and the knobs are Amount and Dry/Wet, which is what you actually
+ * reach for.
+ *
+ * `effect` remains a settable param, because a declaration is allowed to name
+ * the stage directly and because the preset IS the effect here; it is simply
+ * not on the knob row. */
 enum Effect { FX_CRUNCH = 0, FX_ATTACK, FX_SUSTAIN, FX_COMP, FX_COUNT };
 static const char *kEffectName[FX_COUNT] = { "Crunch", "Attack", "Sustain", "Comp" };
 
@@ -138,7 +148,17 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
     Inst *in = static_cast<Inst *>(instance);
     if (!in || !key || !val) return;
 
-    if (!strcmp(key, "effect")) {
+    /* PRESET AND EFFECT ARE THE SAME CHOICE, by two names. `preset` is an
+     * index (what the browser sends), `preset_name` a name (what a default_fx
+     * or default_buses declaration sends), `effect` the original spelling.
+     * Routing all three to one place is what stops the browser and a
+     * declaration from disagreeing about which stage this is. */
+    if (!strcmp(key, "preset")) {
+        int n = atoi(val);
+        if (n >= 0 && n < FX_COUNT) { in->effect = n; in->apply(); }
+        return;
+    }
+    if (!strcmp(key, "preset_name") || !strcmp(key, "effect")) {
         /* BY NAME OR BY INDEX. The host learns an enum's wire format from what
          * the plugin reports, and reports names here -- but a declaration in a
          * module.json may hand over either, so both are accepted rather than
@@ -161,7 +181,10 @@ static void v2_set_param(void *instance, const char *key, const char *val) {
 static int v2_get_param(void *instance, const char *key, char *buf, int buf_len) {
     Inst *in = static_cast<Inst *>(instance);
     if (!in || !key || !buf || buf_len < 2) return -1;
-    if (!strcmp(key, "effect"))
+    /* The browser contract: a count, an index, and a name. */
+    if (!strcmp(key, "preset_count")) return snprintf(buf, buf_len, "%d", FX_COUNT);
+    if (!strcmp(key, "preset"))       return snprintf(buf, buf_len, "%d", in->effect);
+    if (!strcmp(key, "preset_name") || !strcmp(key, "effect"))
         return snprintf(buf, buf_len, "%s", kEffectName[in->effect]);
     if (!strcmp(key, "amount")) return snprintf(buf, buf_len, "%g", (double)in->amount);
     if (!strcmp(key, "mix"))    return snprintf(buf, buf_len, "%g", (double)in->mix);

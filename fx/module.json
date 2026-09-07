@@ -53,16 +53,14 @@
       "levels": {
         "root": {
           "label": "DR32 FX",
+          "list_param": "preset",
+          "count_param": "preset_count",
+          "name_param": "preset_name",
           "knobs": [
-            "effect",
             "amount",
             "mix"
           ],
           "params": [
-            {
-              "key": "effect",
-              "label": "Effect"
-            },
             {
               "key": "amount",
               "label": "Amount"
