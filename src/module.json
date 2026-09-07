@@ -60,6 +60,28 @@
         "max": 2.0,
         "step": 0.02,
         "default": 1.0
+      },
+      {
+        "key": "send1",
+        "name": "Send 1",
+        "type": "float",
+        "min": -70.0,
+        "max": 6.0,
+        "step": 0.5,
+        "unit": "dB",
+        "short_name": "SEND1",
+        "default": -70.0
+      },
+      {
+        "key": "send2",
+        "name": "Send 2",
+        "type": "float",
+        "min": -70.0,
+        "max": 6.0,
+        "step": 0.5,
+        "unit": "dB",
+        "short_name": "SEND2",
+        "default": -70.0
       }
     ],
     "ui_hierarchy": {

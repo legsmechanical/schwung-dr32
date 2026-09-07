@@ -331,6 +331,19 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
     if (!strcmp(key, "split_voices"))
         return dr32_split_voices_json(kit, buf, buf_len);
 
+    /* Per-voice sends into the host's two global send buses.
+     *
+     * ARRAY POSITION IS THE SEND INDEX, and "{id}" is substituted with a voice
+     * id from split_voices -- "pad0_send1", which is a key this file already
+     * serves through split_pad_key. Nothing new is stored: the host reads these
+     * levels, it does not own them.
+     *
+     * The RANGE comes from chain_params, so send1/send2 are declared there as
+     * well as on the pads level. A range the host cannot find is REFUSED rather
+     * than guessed -- assuming 0..1 for a -70..+6 dB control would mute it. */
+    if (!strcmp(key, "voice_send_params"))
+        return snprintf(buf, buf_len, "[\"{id}_send1\",\"{id}_send2\"]");
+
     if (!strcmp(key, "ui_current_pad"))
         return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
     if (!strcmp(key, "ui_auto_select_pad"))
