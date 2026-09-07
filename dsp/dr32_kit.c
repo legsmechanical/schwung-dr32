@@ -9,7 +9,6 @@
 
 void dr32_kit_init(dr32_kit *k) {
     memset(k, 0, sizeof(*k));
-    k->fx = dr32_fxbus_create(DR32_SR);
     for (int i = 0; i < 128; i++) k->note_to_pad[i] = -1;
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_pad_defaults(&k->pads[i].params);
@@ -33,8 +32,9 @@ void dr32_kit_init(dr32_kit *k) {
         k->send_return_ui[i] = 1.0f;
     }
 
-    /* Drum Bus: always on, and starting NEUTRAL so it is inaudible and bypassed
-     * until a knob moves. Attack and Sustain are bipolar -1..+1, neutral 0. */
+    /* RETIRED fields, seeded so a read answers something sane. The Drum Bus is
+     * a declared voice bus of `dr32-fx` inserts now and these drive nothing --
+     * see the comment on the fields in dr32_kit.h. */
     k->bus_p[0] = 0.0f;   // compress
     k->bus_p[1] = 0.0f;   // crunch
     k->bus_p[2] = 0.0f;   // attack   (bipolar)
@@ -42,25 +42,11 @@ void dr32_kit_init(dr32_kit *k) {
     k->bus_p[4] = 1.0f;   // mix — fully processed; only ever takes the bus away
     k->bpm = 120.0f;
 
-    // Send 1 starts as a Plate — the drum reverb — so raising a pad's Send 1 is
-    // immediately useful. It costs nothing until a pad actually feeds it (the
-    // bus skips processing while idle), and every pad send starts at -70 = off,
-    // so nothing is audible until asked for.
-    if (k->fx) {
-        dr32_efx_defaults(DR32_EFX_PLATE, k->send_p[0]);
-        k->send_type[0] = DR32_EFX_PLATE;
-        dr32_fxbus_set_send_type(k->fx, 0, DR32_EFX_PLATE);
-        dr32_fxbus_set_send_params(k->fx, 0, k->send_p[0], DR32_SEND_PARAMS);
-        dr32_fxbus_set_send_return(k->fx, 0, 1.0f);
-        dr32_fxbus_set_bus_params(k->fx, k->bus_p[0], k->bus_p[1],
-                                  k->bus_p[2], k->bus_p[3], k->bus_p[4]);
-    }
 }
 
 void dr32_kit_set_bpm(dr32_kit *k, float bpm) {
     if (!k) return;
     k->bpm = bpm;
-    if (k->fx) dr32_fxbus_set_bpm(k->fx, bpm);
 }
 
 /* ---------- folder browse ------------------------------------------------
@@ -177,8 +163,6 @@ int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {
 
 void dr32_kit_free(dr32_kit *k) {
     browse_free(k);
-    dr32_fxbus_destroy(k->fx);
-    k->fx = NULL;
     for (int i = 0; i < DR32_PADS; i++) {
         free(k->pads[i].sample);
         free(k->pads[i].retired);
@@ -298,43 +282,17 @@ void dr32_kit_all_off(dr32_kit *k) {
     for (int i = 0; i < DR32_PADS; i++) k->pads[i].voice.active = 0;
 }
 
-static inline float db_to_gain(float db) {
-    // -70 dB is the format's "off", and native floors the send there.
-    if (db <= -70.0f) return 0.0f;
-    return powf(10.0f, db / 20.0f);
-}
 
-/** One pad's already-rendered block, `src`, added to `dry` (may be NULL) and
- *  fed to whichever send buses the pad is on. Sends are POST-fader (native
- *  behaviour), which is exactly what the voice already produces.
+/* THE SEND TAP IS THE HOST'S NOW. A pad's send1 / send2 are still stored and
+ * still read -- they are what `voice_send_params` points the host at -- but the
+ * kit no longer does anything with them: the host takes each voice's audio
+ * PRE-INSERT and applies the level itself. So there is no reason left to render
+ * a sending pad on its own, and the mixed path is a plain sum again.
  *
- *  One copy of the send law, shared by the mixed render and the split one. The
- *  split render passes dry = NULL: a voice's dry has already been written to
- *  its own destination and there is no summed mix to add it to. */
-static void pad_mix_and_send(dr32_kit *k, int pad, const float *src,
-                             float *dry, int frames) {
-    const float s0 = db_to_gain(k->pads[pad].params.send_db[0]);
-    const float s1 = db_to_gain(k->pads[pad].params.send_db[1]);
-    for (int f = 0; f < frames; f++) {
-        float l = src[2 * f], r = src[2 * f + 1];
-        if (dry) {
-            dry[2 * f]     += l;
-            dry[2 * f + 1] += r;
-        }
-        if (s0 > 0.0f) dr32_fxbus_send(k->fx, 0, f, l * s0, r * s0);
-        if (s1 > 0.0f) dr32_fxbus_send(k->fx, 1, f, l * s1, r * s1);
-    }
-}
-
-/** Is this pad on a send bus at all? Asked in dB rather than in gain because
- *  db_to_gain is a powf and this is per pad per block: -70 dB is its "off"
- *  floor and everything above it maps to a strictly positive gain, so the two
- *  questions have the same answer. */
-static int pad_feeds_sends(const dr32_kit *k, int pad) {
-    if (!k->fx) return 0;
-    return k->pads[pad].params.send_db[0] > -70.0f ||
-           k->pads[pad].params.send_db[1] > -70.0f;
-}
+ * db_to_gain went with it. The level's dB->gain conversion happens host-side,
+ * from the range declared in chain_params -- which is why that range being
+ * findable is load-bearing rather than cosmetic (a range the host cannot find
+ * is REFUSED, not guessed). */
 
 void dr32_kit_begin_block(dr32_kit *k) {
     k->block++;
@@ -347,20 +305,8 @@ void dr32_kit_render(dr32_kit *k, float *out, int frames) {
 
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_voice *v = &k->pads[i].voice;
-        if (!v->active) continue;
-
-        if (!pad_feeds_sends(k, i)) {
-            dr32_voice_render(v, out, frames);       // dry only: no detour
-            continue;
-        }
-
-        // This pad feeds the send buses, so render it on its own first.
-        memset(k->scratch, 0, sizeof(float) * 2 * (size_t)frames);
-        dr32_voice_render(v, k->scratch, frames);
-        pad_mix_and_send(k, i, k->scratch, out, frames);
+        if (v->active) dr32_voice_render(v, out, frames);
     }
-
-    if (k->fx) dr32_fxbus_process(k->fx, out, frames);
 
     if (k->master_gain != 1.0f) {
         for (int i = 0; i < 2 * frames; i++) out[i] *= k->master_gain;
@@ -376,9 +322,6 @@ int dr32_kit_render_voice(dr32_kit *k, int pad, float *dst, int frames) {
 
     memset(dst, 0, sizeof(float) * 2 * (size_t)frames);
     dr32_voice_render(v, dst, frames);
-    // Sends are taken BEFORE master gain here, as they are in the mixed render
-    // (there the gain is applied last, over everything).
-    if (pad_feeds_sends(k, pad)) pad_mix_and_send(k, pad, dst, NULL, frames);
 
     if (k->master_gain != 1.0f) {
         for (int i = 0; i < 2 * frames; i++) dst[i] *= k->master_gain;
@@ -387,38 +330,17 @@ int dr32_kit_render_voice(dr32_kit *k, int pad, float *dst, int frames) {
 }
 
 void dr32_kit_finish_main(dr32_kit *k, float *mix, int frames) {
-    if (!k || !mix || frames <= 0) return;
-    if (frames > DR32_KIT_MAX_BLOCK) frames = DR32_KIT_MAX_BLOCK;
-
-    // NO memset. `mix` arrives holding the unassigned voices, and clearing it
-    // would delete exactly the audio the Drum Bus exists to glue.
-    //
-    // The returns and the glue both belong in the pre-master-gain domain,
-    // because that is where dr32_kit_render runs them (it applies the gain
-    // last, over everything). The voices in `mix` have already been through
-    // that gain, so the buffer is scaled back down, the shared
-    // dr32_fxbus_process — send returns, then the Drum Bus in place — runs on
-    // it exactly as in the mixed path, and the gain goes back on. A compressor
-    // is level-dependent, so doing this rather than gluing the gained signal
-    // is what keeps the two entry points comparable.
-    //
-    // A gain of 0 cannot be undone, and does not need to be: every voice in
-    // `mix` is already silent, and the final scaling silences the returns too,
-    // which is what the mixed path does with the same gain.
-    const float g = k->master_gain;
-    const float inv = (g != 0.0f) ? 1.0f / g : 0.0f;
-    if (g != 1.0f) {
-        for (int i = 0; i < 2 * frames; i++) mix[i] *= inv;
-    }
-
-    // Runs every block whether or not the caller wants the audio:
-    // dr32_fxbus_process is what clears the send buses, so skipping it would
-    // leave one block's sends to be replayed on top of the next.
-    if (k->fx) dr32_fxbus_process(k->fx, mix, frames);
-
-    if (g != 1.0f) {
-        for (int i = 0; i < 2 * frames; i++) mix[i] *= g;
-    }
+    /* A NO-OP, deliberately kept.
+     *
+     * This existed to run the send returns and then the Drum Bus over the
+     * unassigned voices, in the pre-master-gain domain, which is why it had to
+     * come after every render_voice. Both of those are the host's now -- the
+     * Drum Bus is a declared voice bus, the sends are the host's global ones --
+     * so there is nothing left to do here and no ordering left to get wrong.
+     *
+     * The symbol stays because dr32.c calls it every block on the split path
+     * and a host built against the old header would otherwise fail to link. */
+    (void)k; (void)mix; (void)frames;
 }
 
 /** One pad's label: the loaded sample's basename without extension, truncated

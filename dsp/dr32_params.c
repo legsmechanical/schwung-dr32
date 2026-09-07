@@ -395,63 +395,53 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         return 1;
     }
 
-    // --- FX buses: send1_*/send2_*
+    /* ── RETIRED: send1_* / send2_* and bus_* ────────────────────────────
+     *
+     * The two internal send buses and the always-on Drum Bus are the host's
+     * now: the Drum Bus is a declared voice bus of four `dr32-fx` inserts, and
+     * the pads' send1/send2 feed the host's two GLOBAL sends. The effects are
+     * all still here -- `dr32-fx` hosts every send type as a preset.
+     *
+     * These keys are still ACCEPTED, stored and read back, and drive no audio.
+     * That is a deliberate dead end rather than an oversight:
+     *
+     *   - 137 factory kits and every saved slot carry them. Rejecting a key
+     *     makes a restore fail loudly on state that is otherwise fine.
+     *   - A DSP cannot migrate them. Turning `bus_crunch = 0.4` into an insert
+     *     would mean writing into the host's bus, which this module cannot see
+     *     and which the user may already have arranged differently. A migration
+     *     that silently overwrites somebody's chain is worse than one that does
+     *     not happen.
+     *
+     * They are off every page in module.json, so the only way to reach one now
+     * is a saved blob or a script -- there is no knob that does nothing. */
     if (!strncmp(key, "send", 4)) {
         const char *p = key + 4;
         int slot = (*p >= '1' && *p <= '2') ? (*p - '1') : -1;
-        if (slot >= 0 && p[1] == '_' && kit->fx) {
+        if (slot >= 0 && p[1] == '_') {
             const char *f2 = p + 2;
             float v = (float)atof(val);
-            dr32_fxbus *fx = kit->fx;
-            // Params are stored per slot so any one of them can be set alone.
             float *cache = kit->send_p[slot];
             if (!strcmp(f2, "type")) {
                 dr32_efx_type t = dr32_efx_from_name(val);
-                // Load that type's musical starting point. Selecting an effect
-                // should sound like something immediately, not inherit the
-                // previous effect's knob positions.
                 if (t != DR32_EFX_NONE) dr32_efx_defaults(t, cache);
-                dr32_fxbus_set_send_type(fx, slot, t);
                 kit->send_type[slot] = t;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
                 return 1;
             }
-            if (!strcmp(f2, "return")) {
-                dr32_fxbus_set_send_return(fx, slot, v);
-                kit->send_return_ui[slot] = v;
-                return 1;
-            }
+            if (!strcmp(f2, "return")) { kit->send_return_ui[slot] = v; return 1; }
             if (!strcmp(f2, "sync")) {
-                /* Name or number: the canvas writes the label, a restored state
-                 * or a script may write 0/1. */
                 if (!strcmp(val, "Sync"))      cache[5] = 1.0f;
                 else if (!strcmp(val, "Free")) cache[5] = 0.0f;
                 else                           cache[5] = (v >= 0.5f) ? 1.0f : 0.0f;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
                 return 1;
             }
             int idx = send_slot_index(f2);
-            if (idx >= 0) {
-                cache[idx] = v;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
-                return 1;
-            }
+            if (idx >= 0) { cache[idx] = v; return 1; }
         }
     }
-
-    // --- the always-on Drum Bus: bus_*
     {
         int bidx = bus_slot_index(key);
-        if (bidx >= 0) {
-            /* Cache first, apply second: a missing fx bus must not make the
-             * value vanish, or a state restore on an instance that failed to
-             * allocate would silently drop the whole page. */
-            kit->bus_p[bidx] = (float)atof(val);
-            if (kit->fx)
-                dr32_fxbus_set_bus_params(kit->fx, kit->bus_p[0], kit->bus_p[1],
-                                          kit->bus_p[2], kit->bus_p[3], kit->bus_p[4]);
-            return 1;
-        }
+        if (bidx >= 0) { kit->bus_p[bidx] = (float)atof(val); return 1; }
     }
 
     if (!strcmp(key, "ui_current_pad")) {

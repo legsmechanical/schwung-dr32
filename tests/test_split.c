@@ -274,58 +274,53 @@ int main(void) {
         CHECK(worst_mix <= 2, "split != render_block (worst %d LSB)", worst_mix);
     }
 
-    // ------------------------------------------------ the Drum Bus is the desk's
-    // A voice you route to a bus LEAVES the kit's drum bus; a voice you leave
-    // alone stays on it. Both halves are measured the same way: render once
-    // with a violently non-neutral Drum Bus and once with it neutral, and ask
-    // whether the buffer moved. Glue that ran shows up as a difference; glue
-    // that never met the audio cannot.
+    // ------------------------------------- the retired bus/send keys are INERT
+    // The Drum Bus and the two internal sends are the host's now: a declared
+    // voice bus of `dr32-fx` inserts, and the host's global sends fed through
+    // voice_send_params. The keys are still accepted -- 137 factory kits and
+    // every saved slot carry them, and rejecting one makes a restore fail on
+    // state that is otherwise fine -- so the thing to assert is that accepting
+    // them changes NOTHING about the audio.
+    //
+    // This is the inverse of the test it replaces, and deliberately the same
+    // shape: render once with a violently non-neutral bus and send, once with
+    // them untouched, and compare. Before, the buffer HAD to move; now it must
+    // not move by a single LSB, on either entry point. Any surviving call into
+    // the old container shows up here.
     {
-        /* Enough compression and crunch that any signal through this bus is
-         * unrecognisable — the test is "did the glue touch it", so the setting
-         * only has to be far from transparent. */
-        struct { const char *key, *val; } glue[] = {
+        struct { const char *key, *val; } retired[] = {
             { "bus_comp", "1" }, { "bus_crunch", "1" },
             { "bus_attack", "1" }, { "bus_sustain", "1" }, { "bus_mix", "1" },
+            { "send1_type", "Plate" }, { "send1_return", "0.9" },
+            { "send2_type", "Delay" }, { "send2_return", "0.9" },
         };
 
-        /* which: 0 = pad 1 unrouted (main), 1 = pad 1 routed to its own bus,
-         *        2 = every pad routed away.
-         * glued: run the Drum Bus, or leave it neutral. */
-        int16_t out[3][2][2 * FRAMES];
+        /* which: 0 = pad 1 unrouted (lands on main), 1 = pad 1 routed to a bus. */
+        int16_t out[2][2][2 * FRAMES];
         int16_t bus[2 * FRAMES];
 
-        for (int which = 0; which < 3; which++) {
-            for (int glued = 0; glued < 2; glued++) {
+        for (int which = 0; which < 2; which++) {
+            for (int loud = 0; loud < 2; loud++) {
                 void *inst = api->create_instance("src", NULL);
                 if (!inst) { CHECK(0, "create_instance"); break; }
                 api->set_param(inst, "pad0_sample", wa);
-                /* Sends are on ONLY for the all-bused case, where they are the
-                 * only thing left on main. Off for the other two, so what is
-                 * measured there is the DRY pad and nothing else: with a
-                 * return in the buffer, a glue that saw only the returns
-                 * (the bug this replaces) would still show a difference and
-                 * the check would pass for the wrong reason. */
-                if (which == 2) {
-                    api->set_param(inst, "pad0_send1", "-6");
-                    api->set_param(inst, "send1_type", "Plate");
-                    api->set_param(inst, "send1_return", "0.9");
-                }
-                if (glued)
-                    for (unsigned g = 0; g < sizeof(glue) / sizeof(glue[0]); g++)
-                        api->set_param(inst, glue[g].key, glue[g].val);
+                /* The pad's own send level is set in BOTH runs: it is a host
+                 * fact now, and setting it only in one would measure the level
+                 * rather than the retired bus. */
+                api->set_param(inst, "pad0_send1", "-6");
+                if (loud)
+                    for (unsigned g = 0; g < sizeof(retired) / sizeof(retired[0]); g++)
+                        api->set_param(inst, retired[g].key, retired[g].val);
 
-                int16_t *main_out = out[which][glued];
+                int16_t *main_out = out[which][loud];
                 int16_t *voices[DR32_PADS];
-                for (int i = 0; i < DR32_PADS; i++)
-                    voices[i] = (which == 2) ? bus : main_out;
+                for (int i = 0; i < DR32_PADS; i++) voices[i] = main_out;
                 if (which == 1) voices[0] = bus;
 
                 note_on(api, inst, 36);
-                /* Long enough for the Plate's return to have built up — one
-                 * block in, a reverb has emitted nothing and "main carries the
-                 * returns" is unmeasurable. The host clears the destinations
-                 * every block; the last one is what is compared. */
+                /* Long enough that a surviving reverb would have built up: one
+                 * block in, a tail is unmeasurable and the two runs would match
+                 * for the wrong reason. */
                 for (int b = 0; b < 40; b++) {
                     memset(main_out, 0, sizeof(int16_t) * 2 * FRAMES);
                     memset(bus, 0, sizeof(bus));
@@ -335,39 +330,22 @@ int main(void) {
             }
         }
 
-        int moved[3];
-        for (int which = 0; which < 3; which++) {
+        for (int which = 0; which < 2; which++) {
             int worst = 0;
             for (int i = 0; i < 2 * FRAMES; i++) {
                 int d = abs((int)out[which][1][i] - (int)out[which][0][i]);
                 if (d > worst) worst = d;
             }
-            moved[which] = worst;
+            CHECK(worst == 0,
+                  "%s: a retired bus/send key still moved the audio (worst %d LSB)",
+                  which ? "routed" : "unrouted", worst);
         }
 
-        /* An unassigned voice IS glued — this is the bug the first cut had,
-         * where the glue started from silence and only ever saw the returns. */
-        CHECK(moved[0] > 100,
-              "an unrouted pad did not reach the Drum Bus (worst %d LSB)", moved[0]);
-
-        /* Route that same pad to a bus and its audio must not appear on main at
-         * all, glued or not. With no sends in this case main is left holding
-         * literally nothing. */
+        /* The routing itself is unchanged by any of this. */
         CHECK(peak_abs(out[0][0], 2 * FRAMES) > 100, "the unrouted pad was silent");
         CHECK(peak_abs(out[1][0], 2 * FRAMES) == 0,
               "a routed pad still landed on main (peak %d)",
               peak_abs(out[1][0], 2 * FRAMES));
-        CHECK(peak_abs(out[1][1], 2 * FRAMES) == 0,
-              "a routed pad landed on main once the glue was live (peak %d)",
-              peak_abs(out[1][1], 2 * FRAMES));
-
-        /* And with every pad routed away, main is the returns only — which
-         * still go through the glue. Correct under this semantic, not a bug. */
-        CHECK(peak_abs(out[2][0], 2 * FRAMES) > 0,
-              "all-bused main carried no send return at all");
-        CHECK(moved[2] > 0,
-              "all-bused: the glue did not process the returns (worst %d LSB)",
-              moved[2]);
     }
 
     // --------------------------- an unrouted kit is still the mixed render

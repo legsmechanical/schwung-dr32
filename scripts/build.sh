@@ -91,10 +91,13 @@ for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
 
-for src in dsp/dr32_fxbus.cpp dsp/dr32_efx_names.cpp; do
-    $CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
-        -c "$src" -o "build/obj/$(basename "${src%.cpp}").o"
-done
+# dsp/dr32_fxbus.cpp is NOT built into the shipped .so any more. It is the
+# internal send + Drum Bus container, which the host owns now; nothing in the
+# kit references it, and the only remaining consumer is the offline null-test
+# renderer, which compiles it itself (tests/run.sh). -Wl,--no-undefined below
+# is what proves the kit really has no reference left rather than us hoping so.
+$CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
+    -c dsp/dr32_efx_names.cpp -o build/obj/dr32_efx_names.o
 
 # -Wl,--no-undefined on BOTH links. A shared library links clean with undefined
 # symbols by default, so a call to a function whose translation unit was never

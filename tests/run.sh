@@ -8,7 +8,11 @@ fail=0
 for src in tests/test_*.c; do
   name=$(basename "$src" .c)
   # dr32_fxbus.cpp is C++ (vendored reverbs); build it separately and link both.
+  # It is no longer in the shipped .so -- the host owns the sends and the Drum
+  # Bus now -- but test_fxbus.c still drives it directly, and the names table it
+  # calls lives in its own TU since `dr32-fx` needed it without the container.
   c++ -std=c++17 -O2 -Wall -Idsp -c dsp/dr32_fxbus.cpp -o dist/tests/dr32_fxbus.o
+  c++ -std=c++17 -O2 -Wall -Idsp -c dsp/dr32_efx_names.cpp -o dist/tests/dr32_efx_names.o
   cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$src" -o "dist/tests/$name.o"
   for c in dsp/*.c; do
     cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$c" -o "dist/tests/$(basename "${c%.c}").o"
@@ -26,12 +30,16 @@ node tests/roundtrip.mjs tests/fixtures || fail=1
 # The offline null-test renderer must at least build (running it needs device
 # fixtures + a sample mirror; see docs/NULL_TESTING.md).
 c++ -std=c++17 -O2 -Idsp -c dsp/dr32_fxbus.cpp -o dist/tests/fxbus_rs.o
+# The names/defaults table left dr32_fxbus.cpp when `dr32-fx` needed it without
+# the container; every link that had one now needs both.
+c++ -std=c++17 -O2 -Idsp -c dsp/dr32_efx_names.cpp -o dist/tests/efx_names.o
 
 # The reverb null-test renderer (raw device parameters -> WAV).
 cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/render_verb.o -c tests/render_verb.c
-c++ -o dist/tests/render_verb dist/tests/render_verb.o dist/tests/fxbus_rs.o -lm || fail=1
+c++ -o dist/tests/render_verb dist/tests/render_verb.o dist/tests/fxbus_rs.o dist/tests/efx_names.o -lm || fail=1
 cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/render_score.o -c tests/render_score.c
 c++ -o dist/tests/render_score dist/tests/render_score.o dist/tests/fxbus_rs.o \
+   dist/tests/efx_names.o \
    dist/tests/dr32_params.o dist/tests/dr32_kit.o dist/tests/dr32_voice.o \
    dist/tests/dr32_effects.o dist/tests/dr32_preset.o dist/tests/dr32_json.o dist/tests/wav.o -lm || fail=1
 exit $fail

@@ -9,7 +9,7 @@
 #define DR32_KIT_H
 
 #include "dr32_voice.h"
-#include "dr32_fxbus.h"
+#include "dr32_fxbus.h"   /* dr32_efx_type, for the retired-field readers */
 #include "wav.h"
 
 #define DR32_PADS 32
@@ -37,25 +37,25 @@ typedef struct {
     signed char   note_to_pad[128];   // -1 = unmapped
     float         master_gain;        // linear
     unsigned      block;              // render-block counter (choke simultaneity)
-    dr32_fxbus   *fx;                 // 2 sends (may be NULL)
-    // Per-pad render buffer, used only when a pad actually feeds a send.
-    float         scratch[2 * DR32_KIT_MAX_BLOCK];
-    // Send params are cached so the UI can set one at a time (the bus API takes
-    // them together).
-    // See dr32_fxbus.h for the per-type slot table.
-    // ⚠ Not everything here is normalised: the Delay's synced times are a count
-    // of SIXTEENTHS (1..16) and its free times are MILLISECONDS. Both pairs are
-    // stored at once and survive a flip of the sync flag, as they do on the
-    // native device.
+    float         bpm;                // last tempo seen
+    // ── RETIRED: the two internal send buses and the always-on Drum Bus ──
+    //
+    // Both are the host's now: the Drum Bus is a declared voice bus of four
+    // `dr32-fx` inserts (capabilities.default_buses), and the pads' send1 /
+    // send2 feed the host's two GLOBAL sends through voice_send_params. The
+    // effects themselves did not go anywhere -- `dr32-fx` hosts all eight send
+    // types as presets.
+    //
+    // These fields stay ONLY as a place to park the values 137 factory kits and
+    // every saved state still carry. A DSP cannot migrate them: it does not
+    // know what is in the host's buses, and inventing inserts on load would
+    // overwrite whatever the user had put there. So they are accepted, stored,
+    // read back, and NOT connected to any audio -- which is a knob that does
+    // nothing, and is why they are also off every page in module.json. Dropping
+    // them instead would make a saved slot fail to restore rather than restore
+    // quietly.
     float         send_p[2][DR32_SEND_PARAMS];
-    // The always-on Drum Bus: [compress, crunch, attack, sustain, mix].
-    // Attack and Sustain are BIPOLAR -1..+1 with neutral at 0 (the 0..1-about-
-    // 0.5 form lives inside DrumBuss and nowhere else). Mix is the parallel
-    // blend and defaults to 1 = fully processed, so it only ever takes the
-    // stage away.
     float         bus_p[5];
-    float         bpm;                // last tempo seen, for the synced Delay
-    // Mirrors of slot state the UI reads back (the bus itself is write-only).
     dr32_efx_type send_type[2];
     float         send_return_ui[2];
     // Which pad the UI is editing, and whether playing a pad moves that focus.
@@ -165,13 +165,11 @@ void dr32_kit_render(dr32_kit *k, float *out, int frames);
 // Per block, in this order: begin_block, then render_voice for EVERY pad, then
 // dr32_kit_finish_main. The order is load-bearing twice over:
 //
-//   - dr32_fxbus_process consumes and clears what the pads fed into the send
-//     buses, so running it before a pad has rendered loses that pad's send for
-//     the block; and
-//   - the Drum Bus runs over the main buffer IN PLACE, so every unassigned
-//     pad must already be in that buffer or the glue misses it. Running the
-//     finish twice, or running it before the pads, is the way to get audio
-//     through the compressor twice or not at all.
+//   - it used to be, when the sends and the Drum Bus lived in here. They are
+//     the host's now, so dr32_kit_finish_main has nothing left to do and is
+//     kept as a no-op: the ORDER is no longer load-bearing, but the call is
+//     still in every host that drives the split path and removing it would be
+//     an ABI break for no gain.
 
 /** One block boundary (the choke-simultaneity counter). Call once per block,
  *  before any dr32_kit_render_voice. dr32_kit_render does this itself. */
