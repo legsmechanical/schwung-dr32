@@ -212,9 +212,15 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     // The second cost is that the retire dance below silences the pad
     // (`voice.active = 0`), so a no-op re-assert also cut a ringing pad short.
     //
-    // Guarded on the loaded BUFFER, not the path string alone: a pad cleared
-    // below stores "" and a failed load keeps its old path, and neither may be
-    // mistaken for "already there".
+    // The `s->sample` term is DEFENSIVE, not reachable today, and that is
+    // deliberate: the code below writes s->path only after a successful load,
+    // so "path matches but no buffer" cannot currently arise -- a mutation test
+    // that drops the term stays green, and is an equivalent mutant rather than
+    // a gap in the test. It is kept because the invariant it depends on is one
+    // statement away from being false: move that snprintf above the
+    // dr32_wav_load and a FAILED load would leave the path set with no buffer,
+    // at which point this guard would start returning OK for a silent pad --
+    // and a pad that is silently silent is the hardest kind of bug to see.
     if (path && path[0] && s->sample && strcmp(s->path, path) == 0)
         return DR32_WAV_OK;
 
