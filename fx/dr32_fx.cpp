@@ -26,6 +26,7 @@
 #include "host/audio_fx_api_v2.h"
 #include "dsp/dr32_drumbus.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -47,6 +48,14 @@ struct Instance {
      * only one stage is ever live in an instance. */
     float amount = 0.0f;
     float mix    = 1.0f;
+    /* Bit-transparent when the stage is doing nothing. DrumBuss gates each
+     * stage internally, but the WRAPPER around it does not: int16->float,
+     * de-interleave, re-interleave, float->int16 is four passes over the buffer
+     * whatever the knobs say, and a Drum Bus is FOUR of these in series. The
+     * kit's own bus has exactly this test (`bus_neutral`) and calls it "the
+     * whole reason an always-on stage is acceptable"; an insert that seeds at
+     * neutral needs it more, not less. */
+    bool  neutral = true;
 
     void apply() {
         /* EVERY OTHER STAGE NEUTRAL. This is the whole trick: DrumBuss gates
@@ -58,6 +67,12 @@ struct Instance {
         const float s  = (effect == FX_SUSTAIN) ? amount : 0.0f;
         const float cp = (effect == FX_COMP)    ? amount : 0.0f;
         bus.setParams(cp, c, 0.5f + 0.5f * a, 0.5f + 0.5f * s);
+        /* The SAME tolerances DrumBuss gates its own stages on -- compOn is
+         * c > 0.001, and the shapers are +/-0.005 in the 0..1 domain, so
+         * +/-0.01 here. The two must not disagree about what neutral means, or
+         * this returns early on a stage that would have done something. */
+        neutral = (cp <= 0.001f) && (c <= 0.001f) &&
+                  (fabsf(a) <= 0.01f) && (fabsf(s) <= 0.01f);
     }
 };
 
@@ -92,6 +107,10 @@ static void v2_destroy_instance(void *instance) { delete static_cast<Inst *>(ins
 static void v2_process_block(void *instance, int16_t *audio, int frames) {
     Inst *in = static_cast<Inst *>(instance);
     if (!in || !audio || frames <= 0) return;
+    /* One bool test and the buffer is untouched -- not "runs and does nothing".
+     * Four of these seed with a Drum Bus, and at rest they must cost what the
+     * baked-in stage cost, which was nothing. */
+    if (in->neutral) return;
     if (frames > kMaxFrames) frames = kMaxFrames;   /* clamp, never overrun */
 
     for (int i = 0; i < 2 * frames; i++) in->io[i] = audio[i] * (1.0f / 32768.0f);
@@ -146,6 +165,13 @@ static int v2_get_param(void *instance, const char *key, char *buf, int buf_len)
         return snprintf(buf, buf_len, "%s", kEffectName[in->effect]);
     if (!strcmp(key, "amount")) return snprintf(buf, buf_len, "%g", (double)in->amount);
     if (!strcmp(key, "mix"))    return snprintf(buf, buf_len, "%g", (double)in->mix);
+    /* WHAT THE BOX SAYS. Four instances of one binary would otherwise all wear
+     * the module's abbreviation and be indistinguishable in the chain diagram --
+     * three boxes reading the same three letters, which is what "FX 1, FX 2,
+     * FX 3" looks like once you cannot tell them apart. The host polls this for
+     * the handful of effects that report a live identity. */
+    if (!strcmp(key, "display_name"))
+        return snprintf(buf, buf_len, "%s", kEffectName[in->effect]);
     return -1;
 }
 

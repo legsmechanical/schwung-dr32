@@ -6,7 +6,7 @@
   "description": "The DR32 Drum Buss stages as ordinary chain effects: Crunch, Attack, Sustain, Comp.",
   "author": "legsmechanical",
   "component_type": "audio_fx",
-  "dsp": "dsp.so",
+  "dsp": "dr32-fx.so",
   "capabilities": {
     "chainable": true,
     "component_type": "audio_fx",

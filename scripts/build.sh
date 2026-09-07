@@ -118,8 +118,15 @@ cp src/module.json  "dist/${MODULE_ID}/"
 # "error deallocating", which under `set -e` aborts the script AFTER the .so is
 # in place but BEFORE the tarball is made -- a build that looks like it worked
 # and ships nothing.
-cat build/dr32-fx.so > "dist/${FX_ID}/dsp.so"
-chmod 755 "dist/${FX_ID}/dsp.so"
+# <id>/<id>.so, NOT dsp.so.
+#
+# A bus insert is loaded by chain_bus.c with a hardcoded
+# "%s/../audio_fx/%s/%s.so" -- the freeverb convention (freeverb/freeverb.so),
+# not the dsp.so every other module type uses. Named dsp.so the dlopen simply
+# fails, bus_fx_ready never goes true, and every read answers null: the editor
+# holds on "Loading..." forever with nothing logged as an error.
+cat build/dr32-fx.so > "dist/${FX_ID}/${FX_ID}.so"
+chmod 755 "dist/${FX_ID}/${FX_ID}.so"
 cp fx/module.json   "dist/${FX_ID}/"
 [ -f fx/help.json ] && cp fx/help.json "dist/${FX_ID}/"
 
