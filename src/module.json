@@ -77,8 +77,8 @@
               "name": "Follow Pads",
               "type": "enum",
               "options": [
-                "on",
-                "off"
+                "off",
+                "on"
               ],
               "short_name": "FOLLW",
               "viz": {
