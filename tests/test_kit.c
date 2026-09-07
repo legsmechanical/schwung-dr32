@@ -71,6 +71,39 @@ int main(void) {
     CHECK(peak(&k, 512) > 0.4f, "note 67 (pad 32) produced no sound");
     dr32_kit_all_off(&k);
 
+    // ---- re-asserting the SAME path is a no-op, and must not touch the card
+    //
+    // set_param is the host's SPI audio callback, and a state restore
+    // re-asserts every pad's sample path -- so without the guard a recall
+    // re-read all 16 WAVs there (18.9 ms warm, 111 ms cold, against a 2.9 ms
+    // block: an audible click). Pointer identity is the assertion because a
+    // real reload allocates a fresh buffer and retires the old one.
+    {
+        const float *before = k.pads[31].sample;
+        size_t frames_before = k.pads[31].frames;
+        CHECK(before != NULL, "pad 31 should hold a sample by now");
+        CHECK(dr32_kit_load_sample(&k, 31, wa) == DR32_WAV_OK, "same-path reload");
+        CHECK(k.pads[31].sample == before, "same path RELOADED (buffer changed)");
+        CHECK(k.pads[31].frames == frames_before, "same path changed frame count");
+        CHECK(k.pads[31].retired == NULL || k.pads[31].retired != before,
+              "same path retired the live buffer");
+
+        // ...and it must still be a real load when the path DIFFERS, or the
+        // guard has simply broken sample switching.
+        CHECK(dr32_kit_load_sample(&k, 31, wb) == DR32_WAV_OK, "different-path load");
+        CHECK(k.pads[31].sample != before, "different path did NOT reload");
+
+        // A pad cleared to NULL stores "" and holds no buffer; re-asserting a
+        // path after that must load, not be swallowed by a stale compare.
+        CHECK(dr32_kit_load_sample(&k, 31, NULL) == DR32_WAV_OK, "clear pad 31");
+        CHECK(k.pads[31].sample == NULL, "clear left a buffer");
+        CHECK(dr32_kit_load_sample(&k, 31, wa) == DR32_WAV_OK, "reload after clear");
+        CHECK(k.pads[31].sample != NULL, "reload after clear loaded nothing");
+
+        // restore the state the later checks expect
+        dr32_kit_set_note(&k, 31, 67);
+    }
+
     // ---- unmapped note is silent, not a crash
     dr32_kit_note_on(&k, 100, 127);
     CHECK(peak(&k, 512) == 0.0f, "unmapped note produced sound");
