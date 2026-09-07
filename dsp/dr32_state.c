@@ -100,15 +100,57 @@ static int json_escape(char *dst, int cap, const char *src) {
  * `baseline` (may be NULL) is the parsed `params` object of a blob captured
  * right after the kit loaded. A live value equal to its baseline value is
  * NOT emitted — the kit path restores it — so the blob carries only edits. */
+/*
+ * Baseline lookup with a MONOTONIC CURSOR.
+ *
+ * dr32_json_get is a linear scan, and the baseline's `params` object holds one
+ * entry per emitted key — ~530 for a 16-pad kit, ~1060 for 32 — so a scan per
+ * key made this O(n^2): roughly 140,000 strcmp per serialize. Measured at
+ * **55% of the whole call**, against 8% for parsing the baseline, which is the
+ * cost this function looks like it has and does not.
+ *
+ * That matters because `get_param("state")` is served on the host's SPI AUDIO
+ * CALLBACK and the host's 5 s autosave reads it — measured on device at
+ * 3.4 ms, recurring, against a ~2370 us frame budget.
+ *
+ * Both sides walk GLOBAL_FIELDS and then the pads in order, from the same
+ * static tables, so the baseline's members are already in the order we ask for
+ * them: resuming from the last hit turns the whole thing into one pass.
+ *
+ * THE WRAP IS DEFENSIVE, and is documented as such rather than sold as
+ * load-bearing. The cursor only advances past a HIT, and both walks ascend
+ * through the same tables, so a wanted key should never sit behind it — a pad
+ * that gained or lost a sample since the baseline changes which keys exist,
+ * not their order, and a key that is simply absent already fails the forward
+ * scan. It costs nothing on the hit path and is kept because the ordering
+ * assumption is the sort that a later table reorder would break quietly: the
+ * failure is not a wrong value but a blob that silently stops being a delta,
+ * which is invisible except as this function getting slow again.
+ */
+static const dr32_json *baseline_find(const dr32_json *params,
+                                      const dr32_json **cursor,
+                                      const char *key) {
+    if (!params || !key) return NULL;
+    const dr32_json *start = (cursor && *cursor) ? *cursor : params->first;
+    for (const dr32_json *m = start; m; m = m->next) {
+        if (m->key && !strcmp(m->key, key)) { if (cursor) *cursor = m->next; return m; }
+    }
+    for (const dr32_json *m = params->first; m && m != start; m = m->next) {
+        if (m->key && !strcmp(m->key, key)) { if (cursor) *cursor = m->next; return m; }
+    }
+    return NULL;
+}
+
 static int emit_param(const dr32_kit *kit, const char *key,
-                      const dr32_json *baseline,
+                      const dr32_json *baseline, const dr32_json **cursor,
                       char *buf, int cap, int n, int *first) {
     char val[DR32_MAX_PATH + 8];
     int len = dr32_read_param(kit, key, val, (int)sizeof(val));
     if (len <= 0 || !val[0]) return n;
 
     if (baseline) {
-        const char *base = dr32_json_str(baseline, key, NULL);
+        const dr32_json *m = baseline_find(baseline, cursor, key);
+        const char *base = (m && m->type == DR32_JSON_STRING) ? m->str : NULL;
         if (base && strcmp(base, val) == 0) return n;   /* unedited — kit restores it */
     }
 
@@ -143,12 +185,14 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
     }
 
     int n = 0, first = 1;
+    /* Walks forward with the emit loop; see baseline_find. */
+    const dr32_json *base_cursor = NULL;
     char esc[DR32_MAX_PATH * 2 + 8];
     json_escape(esc, (int)sizeof(esc), kit_path ? kit_path : "");
     n += snprintf(buf + n, buf_len - n, "{\"v\":1,\"kit\":\"%s\",\"params\":{", esc);
 
     for (int i = 0; GLOBAL_FIELDS[i]; i++)
-        n = emit_param(kit, GLOBAL_FIELDS[i], base_params, buf, buf_len, n, &first);
+        n = emit_param(kit, GLOBAL_FIELDS[i], base_params, &base_cursor, buf, buf_len, n, &first);
 
     for (int pad = 0; pad < DR32_PADS; pad++) {
         /* Skip pads with nothing loaded. A silent pad carries no sound the user
@@ -158,7 +202,7 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
         for (int f = 0; PAD_FIELDS[f]; f++) {
             char key[64];
             snprintf(key, sizeof(key), "pad%d_%s", pad, PAD_FIELDS[f]);
-            n = emit_param(kit, key, base_params, buf, buf_len, n, &first);
+            n = emit_param(kit, key, base_params, &base_cursor, buf, buf_len, n, &first);
             if (n >= buf_len - 8) { dr32_json_free(base_root); return 0; }   /* truncated — better none than half */
         }
     }
