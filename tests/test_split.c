@@ -106,20 +106,61 @@ int main(void) {
                   n, (int)strlen(js));
             printf("  split_voices: %d bytes of the host's 4096\n", n);
 
-            /* Entry i is buffer i, so there must be exactly one entry per pad
-             * and the first must be pad 1. */
+            /* Entry i is buffer i, so there must be exactly one entry per pad. */
             CHECK(count(js, "\"id\":") == DR32_PADS,
                   "%d entries, expected %d", count(js, "\"id\":"), DR32_PADS);
-            CHECK(strncmp(js, "[{\"id\":\"pad1\",", 14) == 0,
-                  "list does not start at pad1: '%.24s'", js);
-            CHECK(strstr(js, "\"id\":\"pad32\"") != NULL, "no pad32 entry");
+
+            /* AN ID MUST ROUND-TRIP THROUGH OUR OWN PARSER, and that is the
+             * assertion — not a literal spelling.
+             *
+             * The host substitutes an id into a key template it is given
+             * ("{id}_send1" -> "pad0_send1") and asks US for that parameter.
+             * So every published id must be one split_pad_key resolves, and to
+             * the pad at the SAME index. This test used to pin the first id as
+             * the string "pad1", which is exactly the off-by-one it should have
+             * caught: the ids were 1-based while split_pad_key and the state
+             * blob are both 0-based, so every per-voice key reached the NEXT
+             * pad and the last pad could not be addressed at all. A literal
+             * cannot see that; a round trip can. */
+            for (int pad = 0; pad < DR32_PADS; pad++) {
+                char id[16], key[32];
+                snprintf(id, sizeof(id), "pad%d", pad);
+
+                char needle[24];
+                snprintf(needle, sizeof(needle), "\"id\":\"%s\"", id);
+                CHECK(strstr(js, needle) != NULL, "no entry for id %s", id);
+
+                /* ...and <id>_<field> addresses THAT pad, proven through the
+                 * public API the host uses rather than an internal helper: a
+                 * distinct value per pad, read back per pad. If the ids were
+                 * off by one this reads a neighbour's value, and the last id
+                 * would not resolve at all. */
+                snprintf(key, sizeof(key), "%s_send1", id);
+                char v[16];
+                snprintf(v, sizeof(v), "%d", -60 + pad);   /* dB, distinct per pad */
+                api->set_param(inst, key, v);
+            }
+
+            /* Second pass, after every pad has been written: each id must read
+             * back ITS OWN value. One pass that writes and reads together would
+             * pass even if every id resolved to the same pad. */
+            for (int pad = 0; pad < DR32_PADS; pad++) {
+                char key[32], got[32], want[16];
+                snprintf(key, sizeof(key), "pad%d_send1", pad);
+                snprintf(want, sizeof(want), "%d", -60 + pad);
+                int r = api->get_param(inst, key, got, (int)sizeof(got));
+                CHECK(r > 0, "pad%d_send1 unreadable (%d)", pad, r);
+                CHECK(r > 0 && atoi(got) == atoi(want),
+                      "pad%d_send1 read back %s, wrote %s — ids do not address "
+                      "the pad they name", pad, got, want);
+            }
 
             /* A loaded pad is labelled by its sample, an empty one by its
              * position. */
             CHECK(strstr(js, "\"label\":\"dr32_split_a\"") != NULL,
                   "pad 1 is not labelled by its sample: %.120s", js);
-            CHECK(strstr(js, "\"id\":\"pad2\",\"label\":\"Pad 2\"") != NULL,
-                  "empty pad 2 is not labelled 'Pad 2'");
+            CHECK(strstr(js, "\"id\":\"pad1\",\"label\":\"Pad 2\"") != NULL,
+                  "empty pad index 1 is not labelled 'Pad 2'");
 
             /* THE point of positional ids: swapping a pad's sample — which is
              * what loading a kit does to all 32 at once — must not move an id,
@@ -128,7 +169,8 @@ int main(void) {
             char js2[8192];
             api->get_param(inst, "split_voices", js2, (int)sizeof(js2));
             CHECK(count(js2, "\"id\":") == DR32_PADS, "id count changed with the kit");
-            CHECK(strncmp(js2, "[{\"id\":\"pad1\",", 14) == 0, "pad1's id moved");
+            CHECK(strncmp(js2, "[{\"id\":\"pad0\",", 14) == 0,
+                  "the first pad's id moved when its sample changed: '%.24s'", js2);
             CHECK(strstr(js2, "\"label\":\"dr32_split_b\"") != NULL,
                   "the label did not follow the sample");
 

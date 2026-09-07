@@ -463,12 +463,19 @@ int dr32_split_voices_json(const dr32_kit *k, char *buf, int buf_len) {
     if (w < 0 || n + w >= buf_len) { buf[0] = '\0'; return 0; }
     n += w;
 
+    /* ZERO-BASED, because every other spelling of a pad in this module is:
+     * split_pad_key parses "pad<N>_" to a 0..DR32_PADS-1 index, and the state
+     * blob writes "pad%d_<field>" with the same 0-based pad. A voice id is not
+     * decoration — the host substitutes it into a key template
+     * ("{id}_send1" -> "pad0_send1") and asks US for that parameter. Emitting
+     * i+1 made every one of those resolve to the NEXT pad, and put pad32 out
+     * of range so the last pad could not be addressed at all. */
     for (int i = 0; i < DR32_PADS; i++) {
         char label[DR32_SPLIT_LABEL_MAX + 1];
         split_voice_label(&k->pads[i], i, label);
         w = snprintf(buf + n, (size_t)(buf_len - n),
                      "%s{\"id\":\"pad%d\",\"label\":\"%s\"}",
-                     i ? "," : "", i + 1, label);
+                     i ? "," : "", i, label);
         if (w < 0 || n + w >= buf_len) { buf[0] = '\0'; return 0; }
         n += w;
     }
