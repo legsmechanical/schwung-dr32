@@ -72,23 +72,6 @@ static int send_slot_index(const char *name) {
     return -1;
 }
 
-/** Which of the Drum Bus's five controls a key addresses, -1 if none.
- *
- *  ⚠ attack and sustain are BIPOLAR here (-1..+1, neutral 0), unlike everything
- *  else on this bus. `mix` is the parallel blend — it was on the Drum Bus when
- *  it was a selectable insert, and went missing when the stage was lifted onto
- *  the master mix. */
-static int bus_slot_index(const char *key) {
-    if (!strncmp(key, "bus_", 4)) {
-        const char *f = key + 4;
-        if (!strcmp(f, "comp")    || !strcmp(f, "compress")) return 0;
-        if (!strcmp(f, "crunch"))                            return 1;
-        if (!strcmp(f, "attack"))                            return 2;
-        if (!strcmp(f, "sustain"))                           return 3;
-        if (!strcmp(f, "mix"))                               return 4;
-    }
-    return -1;
-}
 
 static int parse_filter_type(const char *v) {
     // The JSON's own spellings, measured on device. Accept the numeric form too
@@ -323,11 +306,6 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         }
     }
 
-    {
-        int bidx = bus_slot_index(key);
-        if (bidx >= 0) return snprintf(buf, buf_len, "%g", (double)kit->bus_p[bidx]);
-    }
-
     if (!strcmp(key, "ui_current_pad"))
         return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
     if (!strcmp(key, "ui_auto_select_pad"))
@@ -452,21 +430,6 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
                 dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
                 return 1;
             }
-        }
-    }
-
-    // --- the always-on Drum Bus: bus_*
-    {
-        int bidx = bus_slot_index(key);
-        if (bidx >= 0) {
-            /* Cache first, apply second: a missing fx bus must not make the
-             * value vanish, or a state restore on an instance that failed to
-             * allocate would silently drop the whole page. */
-            kit->bus_p[bidx] = (float)atof(val);
-            if (kit->fx)
-                dr32_fxbus_set_bus_params(kit->fx, kit->bus_p[0], kit->bus_p[1],
-                                          kit->bus_p[2], kit->bus_p[3], kit->bus_p[4]);
-            return 1;
         }
     }
 

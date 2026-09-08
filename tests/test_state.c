@@ -76,7 +76,6 @@ int main(void) {
         dr32_apply_param(&a, "pad0_choke",     "3");
         dr32_apply_param(&a, "pad3_pan",       "-20");
         dr32_apply_param(&a, "master",         "0.5");
-        dr32_apply_param(&a, "bus_crunch",     "0.7");
 
         int n = dr32_state_write(&a, "/data/UserData/Kits/MyKit.ablpreset",
                                  blob, (int)sizeof(blob), NULL);
@@ -93,7 +92,7 @@ int main(void) {
 
         char va[64], vb[64];
         const char *keys[] = { "pad0_transpose", "pad0_decay", "pad0_choke",
-                               "pad3_pan", "master", "bus_crunch", NULL };
+                               "pad3_pan", "master", NULL };
         for (int i = 0; keys[i]; i++) {
             rd(&a, keys[i], va, sizeof(va));
             rd(&b, keys[i], vb, sizeof(vb));

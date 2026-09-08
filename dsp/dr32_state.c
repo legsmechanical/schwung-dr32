@@ -68,7 +68,6 @@ static const char *const PAD_FIELDS[] = {
  * switched the send to a reverb. pN is the type-agnostic form. */
 static const char *const GLOBAL_FIELDS[] = {
     "master",
-    "bus_compress", "bus_crunch", "bus_attack", "bus_sustain", "bus_mix",
     "send1_type", "send1_return", "send1_sync",
     "send1_p1", "send1_p2", "send1_p3", "send1_p4",
     "send1_p5", "send1_p6", "send1_p7", "send1_p8",

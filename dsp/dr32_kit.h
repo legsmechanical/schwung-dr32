@@ -42,8 +42,9 @@ typedef struct {
     // Per-pad render buffer, used only when a pad actually feeds a send.
     float         scratch[2 * DR32_KIT_MAX_BLOCK];
     // The KIT MIX under a per-voice render: the pads that were NOT routed out
-    // to a host bus. Per-instance, never a static — dr32 is multi-instance and
-    // two slots would share one buffer on the audio thread.
+    // to a host bus, summed so the send returns can be added to them.
+    // Per-instance, never a static — dr32 is multi-instance and two slots would
+    // share one buffer on the audio thread.
     float         split_dry[2 * DR32_KIT_MAX_BLOCK];
     // Send params are cached so the UI can set one at a time (the bus API takes
     // them together).
@@ -53,12 +54,6 @@ typedef struct {
     // stored at once and survive a flip of the sync flag, as they do on the
     // native device.
     float         send_p[2][DR32_SEND_PARAMS];
-    // The always-on Drum Bus: [compress, crunch, attack, sustain, mix].
-    // Attack and Sustain are BIPOLAR -1..+1 with neutral at 0 (the 0..1-about-
-    // 0.5 form lives inside DrumBuss and nowhere else). Mix is the parallel
-    // blend and defaults to 1 = fully processed, so it only ever takes the
-    // stage away.
-    float         bus_p[5];
     float         bpm;                // last tempo seen, for the synced Delay
     // Mirrors of slot state the UI reads back (the bus itself is write-only).
     dr32_efx_type send_type[2];

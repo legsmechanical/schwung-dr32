@@ -33,13 +33,6 @@ void dr32_kit_init(dr32_kit *k) {
         k->send_return_ui[i] = 1.0f;
     }
 
-    /* Drum Bus: always on, and starting NEUTRAL so it is inaudible and bypassed
-     * until a knob moves. Attack and Sustain are bipolar -1..+1, neutral 0. */
-    k->bus_p[0] = 0.0f;   // compress
-    k->bus_p[1] = 0.0f;   // crunch
-    k->bus_p[2] = 0.0f;   // attack   (bipolar)
-    k->bus_p[3] = 0.0f;   // sustain  (bipolar)
-    k->bus_p[4] = 1.0f;   // mix — fully processed; only ever takes the bus away
     k->bpm = 120.0f;
 
     // Send 1 starts as a Plate — the drum reverb — so raising a pad's Send 1 is
@@ -52,8 +45,6 @@ void dr32_kit_init(dr32_kit *k) {
         dr32_fxbus_set_send_type(k->fx, 0, DR32_EFX_PLATE);
         dr32_fxbus_set_send_params(k->fx, 0, k->send_p[0], DR32_SEND_PARAMS);
         dr32_fxbus_set_send_return(k->fx, 0, 1.0f);
-        dr32_fxbus_set_bus_params(k->fx, k->bus_p[0], k->bus_p[1],
-                                  k->bus_p[2], k->bus_p[3], k->bus_p[4]);
     }
 }
 
@@ -395,15 +386,13 @@ void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
         if (dst && dst != main_out) {
             /*
              * ROUTED OUT. Master gain is applied here because this pad will
-             * never reach the master stage below.
+             * never reach the summing below.
              *
-             * ⚠⚠ AND IT LEAVES BEFORE THE DRUM BUS — this is the one audible
-             * consequence of splitting a kit, and it is deliberate rather than
-             * overlooked. The Drum Bus is the kit's GLUE over its own mix; a pad
-             * the user has routed to a host bus is no longer in that mix, the
-             * same as pulling a drum out of a group in any DAW. Gluing it
-             * separately would be a compressor over one drum, which is a
-             * different effect wearing the same name.
+             * ⭑ What it skips is now only the SEND RETURNS, which is simply
+             * what a send is: a pad that left the kit is not in the mix those
+             * returns are added to. (This used to skip the always-on Drum Bus
+             * as well, and needed a paragraph arguing that was defensible;
+             * removing that stage retired the argument.)
              */
             for (int n = 0; n < 2 * frames; n++) k->scratch[n] *= k->master_gain;
             mix_f32_to_i16(dst, k->scratch, 2 * frames);
@@ -414,9 +403,9 @@ void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
         }
     }
 
-    /* The kit's own master stage over what REMAINS in the kit: the send returns
-     * and the Drum Bus, then master gain — the same order, and the same single
-     * application of master_gain, that dr32_kit_render uses. */
+    /* What REMAINS in the kit: the send returns, then master gain — the same
+     * order, and the same single application of master_gain, that
+     * dr32_kit_render uses. */
     if (k->fx) dr32_fxbus_process(k->fx, k->split_dry, frames);
     if (k->master_gain != 1.0f) {
         for (int n = 0; n < 2 * frames; n++) k->split_dry[n] *= k->master_gain;

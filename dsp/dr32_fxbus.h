@@ -1,19 +1,20 @@
-// dr32_fxbus.h — DR32's effect buses: 2 sends + one always-on Drum Bus.
+// dr32_fxbus.h — DR32's effect buses: 2 sends.
 //
 // The native Drum Rack has ONE send (a single return chain); DR32 doubles it,
 // the same way it doubles the pads.
 //
 // There are deliberately NO kit inserts. DR32 had two, but a Schwung chain slot
-// already carries its own insert FX (fx1..fx4) in front of the output, so a
-// kit-level insert was a second, worse copy of a facility the host provides —
-// worse because it was reachable only from inside DR32 and had to be persisted
-// by DR32. Put an insert on the slot instead (Josh, 2026-07-27).
+// already carries its own insert FX in front of the output, so a kit-level
+// insert was a second, worse copy of a facility the host provides — worse
+// because it was reachable only from inside DR32 and had to be persisted by
+// DR32. Put an insert on the slot instead (Josh, 2026-07-27).
 //
-// The Drum Bus is the ONE exception, and it is not user-selectable: it is a
-// fixed stage at the end of the kit's own chain (Josh, 2026-07-28). It used to
-// be a selectable send type, which never made sense — a send return is 100% wet,
-// so "compress the reverb and nothing else" was the only thing you could ask it
-// for. On the summed mix it does what a drum bus is for.
+// ⭑ THE ALWAYS-ON DRUM BUS IS GONE (Josh, 2026-09-08). It was a fixed stage at
+// the end of the kit's own chain, and it went for the same reason the inserts
+// did: a slot chain can hold a compressor, and one baked in here was reachable
+// only from inside DR32. It also sat badly with per-voice buses — a pad routed
+// to a host bus left the kit before its glue, so the stage silently applied to
+// some pads and not others depending on routing.
 //
 // Signal flow per rendered block:
 //
@@ -22,12 +23,7 @@
 //        |                                                       |
 //        +------------------ dry ------------------------------> sum
 //                                                                 |
-//                                              DRUM BUS (always on)
-//                                                                 |
 //                                       master gain (in dr32_kit) -> out
-//
-// So the send returns pass through the Drum Bus too — a tail is glued to the
-// kit rather than sitting on top of it, which is the point of a bus.
 //
 // C API over C++ DSP: the vendored reverbs are C++ structs, the rest of DR32
 // is C11. Implementation lives in dr32_fxbus.cpp.
@@ -41,9 +37,9 @@ extern "C" {
 
 /** Effect types available to a send. 0 is always "off".
  *
- *  There is deliberately no Drum Bus here any more: it is the fixed master
- *  stage below, not something a send can be set to. An older saved state naming
- *  it resolves to NONE through dr32_efx_from_name's unknown-name fallback. */
+ *  There is deliberately no Drum Bus here: that stage was removed entirely
+ *  (2026-09-08). A saved state naming it resolves to NONE through
+ *  dr32_efx_from_name's unknown-name fallback. */
 typedef enum {
     DR32_EFX_NONE = 0,
     DR32_EFX_PLATE,        // Dattorro figure-eight plate tank + input diffusion
@@ -110,23 +106,6 @@ void dr32_fxbus_set_send_params(dr32_fxbus *fx, int slot, const float *p, int n)
  *  only recomputed when the value actually changes. */
 void dr32_fxbus_set_bpm(dr32_fxbus *fx, float bpm);
 
-/** The always-on Drum Bus, over the summed mix.
- *
- *  compress / crunch / mix are 0..1. **attack and sustain are BIPOLAR, -1..+1,
- *  neutral at 0** — down softens/shortens, up sharpens/lengthens. They read as
- *  centred controls everywhere above the DrumBuss struct itself, which still
- *  works in 0..1 about 0.5 internally; the conversion happens here, at the one
- *  boundary, rather than leaving every caller to remember it.
- *
- *  `mix` is a dry/wet BLEND, i.e. parallel compression — 1.0 is fully processed.
- *  It was on the Drum Bus when it was a selectable insert and got dropped when
- *  the stage was lifted onto the master mix (spotted by Josh, 2026-07-28).
- *
- *  At neutral ({ 0, 0, 0, 0 }, any mix) the whole stage is bypassed and
- *  bit-transparent, which is what makes an always-on bus free for anyone who
- *  never opens the page. */
-void dr32_fxbus_set_bus_params(dr32_fxbus *fx, float compress, float crunch,
-                               float attack, float sustain, float mix);
 
 /** Return level of a send bus into the master mix, linear. */
 void dr32_fxbus_set_send_return(dr32_fxbus *fx, int slot, float gain);
