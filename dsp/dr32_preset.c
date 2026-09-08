@@ -113,12 +113,27 @@ int dr32_preset_load(dr32_kit *kit, const char *path, dr32_preset_report *rep) {
     if (!chains) { dr32_json_free(doc); return 0; }
 
     // Start from a clean kit: a loaded preset defines every pad.
+    //
+    // ⚠ The SAMPLES are cleared at the END, not here, and that ordering is the
+    // whole point of dr32_kit_load_sample's decode memo. Clearing up front frees
+    // every buffer, so by the time the real samples load there is nothing left to
+    // compare against and the memo can never hit — which is exactly what it did
+    // before this change: reloading the same kit re-decoded all 16 WAVs on the
+    // SPI callback (measured on device, ~3.5 ms against a 2.9 ms block).
+    //
+    // Params and note mapping ARE still reset here. Only the buffers wait, and
+    // every pad the preset does not fill is cleared below, so "a loaded preset
+    // defines every pad" still holds exactly.
     dr32_kit_all_off(kit);
     for (int i = 0; i < DR32_PADS; i++) {
-        dr32_kit_load_sample(kit, i, NULL);
         dr32_pad_defaults(&kit->pads[i].params);
         dr32_kit_set_note(kit, i, DR32_FIRST_NOTE + i);
     }
+    /* Which pads this preset actually gave a sample. Anything still 0 after the
+     * loop is cleared — an absent, unresolvable or failed sampleUri all land
+     * there, so a pad that used to hold audio does not keep it. */
+    char filled[DR32_PADS];
+    memset(filled, 0, sizeof(filled));
 
     // Pads are addressed positionally but ROUTED by note, and real kits are not
     // sorted by note (MD1Kit13 has 46/47 swapped) — so read the note from the
@@ -193,11 +208,18 @@ int dr32_preset_load(dr32_kit *kit, const char *path, dr32_preset_report *rep) {
             continue;
         }
         if (dr32_kit_load_sample(kit, i, file) == DR32_WAV_OK) {
+            filled[i] = 1;
             if (rep) rep->loaded++;
         } else if (rep) {
             rep->failed++;
         }
     }
+
+    /* Every pad this preset did not fill goes empty — including pads past
+     * `count`, and pads whose sampleUri was missing, unresolvable or failed to
+     * load. This is the clear that used to happen up front. */
+    for (int i = 0; i < DR32_PADS; i++)
+        if (!filled[i]) dr32_kit_load_sample(kit, i, NULL);
 
     dr32_json_free(doc);
     return 1;
