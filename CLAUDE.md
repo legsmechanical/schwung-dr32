@@ -64,6 +64,52 @@ time it reaches `on_midi` (measured on device: identical status/channel/note/sou
 Pinned by `tests/test_kit.c` (both regimes, vouch consumption across a transport start, the
 upper bank). **Before changing any of this, say so**: dAVEBOx sound mode depends on it.
 
+## 🚌 Module buses — DR32 declares its 32 pads, and MUST keep working on BOTH hosts
+
+Since 2026-09-08 (branch `dr32-module-buses`) DR32 publishes its voices so a host can group a
+subset onto a **bus** with its own inserts and sends:
+
+- `get_param("split_voices")` → `[{"id":"pad1","label":"Kick"}, …]`, **all 32 pads, empty ones
+  included**
+- exported symbol **`move_plugin_render_split`** → `dr32_kit_render_split`
+
+⭐ **THE BOTH-HOSTS RULE (Josh): DR32 has to run on stock Schwung AND under dAVEBOx.** It does, and
+not because it was tested on both — because **both halves are opt-in from the HOST's side**. A host
+asks for `split_voices` only if it knows the key, and `dlsym`s `move_plugin_render_split` only if it
+knows the symbol. Stock **< 1.3.0** does neither, so DR32 takes its ordinary `render_block` path,
+unchanged. **Do not add anything that makes bus support mandatory** — no capability probe, no
+required key, no behaviour that only makes sense with a bus-aware host.
+
+⚠⚠ **THE TWO RENDER PATHS MUST STAY STATE-COMPATIBLE.** The host switches between `render_block`
+and `render_split` **at runtime, per frame**, by whether any voice is currently on a bus —
+assigning one pad flips the entry point mid-stream with no reload. So both must advance the SAME
+voices, envelopes and block counter. `dr32_kit_render_split` mirrors `dr32_kit_render`'s loop for
+exactly this reason; **if you change one, change the other in the same commit.**
+`tests/test_split.c` pins it: with nothing routed out, the split path must match `render_block`.
+If they diverge, every kit changes the moment a user touches a bus, and it presents as *"the drums
+got quieter"* — nowhere near this code.
+
+**Other rules the split render must keep:**
+- **ACCUMULATE, never clear.** The host clears the destinations first, and **they alias** — two
+  pads on one bus are handed the SAME pointer, and their sum is supposed to happen inside our
+  render. A `memset` there erases another pad's audio.
+- **All 32 pads are listed, empties included.** The index IS the `voice_out[]` index, so dropping
+  empties shifts every pad behind them onto the wrong buffer.
+- **Ids are `pad1..pad32` (stable); labels follow the loaded sample.** That is what lets a saved
+  bus assignment survive a kit change.
+- **A short `n_voices`, or a NULL entry, falls back to `main_out`** — a host that asks about fewer
+  voices than we have must still hear the whole kit.
+- **Never a `static` scratch buffer.** DR32 is MULTI-INSTANCE; two slots would share it on the
+  audio thread. Per-kit fields (`scratch`, `split_dry`).
+
+⭑ **The always-on Drum Bus was REMOVED in the same branch** (`7da1f5f`) and this is related, not
+incidental: it was glue over the kit's SUMMED mix, so a pad routed to a host bus left before it and
+the stage applied to some pads and not others depending on routing. A slot chain can hold a
+compressor. **Do not reintroduce a whole-instrument stage** without deciding what it means for a
+routed-out voice.
+
+Cross-host contract, and the host side of all this: `../dbxhost/docs/MODULE_BUSES.md`.
+
 ## ⚠⚠ dAVEBOx sound mode reads two keys from the `pads` level — keep them
 
 ```json
