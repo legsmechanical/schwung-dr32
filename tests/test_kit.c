@@ -4,6 +4,7 @@
 #include "../dsp/dr32_params.h"
 
 #include <sys/stat.h>
+#include <fcntl.h>       /* AT_FDCWD, for utimensat in the decode-memo test */
 #include <unistd.h>      /* rmdir */
 
 #include <math.h>
@@ -359,6 +360,72 @@ int main(void) {
         CHECK(!strcmp(buf, "1"), "overlong region read end %s, want 1", buf);
 
         dr32_kit_free(&t);
+    }
+
+    /* ---- the decode memo: a reload of the SAME file must not re-decode.
+     *
+     * Motivating measurement (device, 2026-09-08, via the newly ported
+     * param-slow): a state recall re-reads all 16 pads and the WAV decode was
+     * ~3.5 ms of it, ON the SPI callback, against a 2.9 ms block period —
+     * every recall blew a frame.
+     *
+     * ⚠ The memo is at the DECODE, never at the reload. dr32_state_read loads
+     * the kit first because it replaces every pad wholesale and the saved blob
+     * carries only the user's deltas from that baseline; skipping the reload
+     * would apply deltas to whatever was edited since, turning a restore into
+     * a merge. Nothing below may be "simplified" into a path check in
+     * dr32_state_read. */
+    {
+        dr32_kit m;
+        dr32_kit_init(&m);
+        const char *wm = "/tmp/dr32_kit_memo.wav";
+        make_wav(wm, 0.5f);
+
+        CHECK(dr32_kit_load_sample(&m, 0, wm) == DR32_WAV_OK, "memo: first load");
+        const float *first = m.pads[0].sample;
+        CHECK(first != NULL, "memo: first load produced a buffer");
+
+        /* Same file, unchanged: the SAME buffer survives. Pointer identity is
+         * the observable — a re-decode necessarily allocates a new one and
+         * retires this. */
+        CHECK(dr32_kit_load_sample(&m, 0, wm) == DR32_WAV_OK, "memo: reload same");
+        CHECK(m.pads[0].sample == first, "memo: same file re-decoded (buffer changed)");
+        CHECK(m.pads[0].retired == NULL, "memo: same file retired a buffer — it took the reload path");
+
+        /* Edited in place must still reload, or "reload the kit" becomes the
+         * one gesture that cannot pick up an edited sample.
+         * ⚠ st_mtime is SECONDS. A rewrite in the same second AND at the same
+         * size is genuinely not detected — see the note in dr32_kit.c. The
+         * test forces a distinct mtime rather than pretending otherwise;
+         * writing a different LEVEL alone would not be enough.
+         * → [[mutate-restore-same-mtime-second]] is this same hazard. */
+        make_wav(wm, 0.25f);
+        {
+            struct stat st;
+            CHECK(stat(wm, &st) == 0, "memo: stat after rewrite");
+            struct timespec times[2];
+            times[0].tv_sec = st.st_atime; times[0].tv_nsec = 0;
+            times[1].tv_sec = st.st_mtime + 5; times[1].tv_nsec = 0;
+            CHECK(utimensat(AT_FDCWD, wm, times, 0) == 0, "memo: bump mtime");
+        }
+        CHECK(dr32_kit_load_sample(&m, 0, wm) == DR32_WAV_OK, "memo: reload edited");
+        CHECK(m.pads[0].sample != first, "memo: an EDITED file was not reloaded");
+
+        /* A different path always reloads. */
+        const float *second = m.pads[0].sample;
+        CHECK(dr32_kit_load_sample(&m, 0, wa) == DR32_WAV_OK, "memo: load other path");
+        CHECK(m.pads[0].sample != second, "memo: a DIFFERENT path was not reloaded");
+
+        /* Clearing drops the stamp with the buffer, so the same path reloads
+         * rather than matching a stamp that outlived what it described. */
+        CHECK(dr32_kit_load_sample(&m, 0, "") == DR32_WAV_OK, "memo: clear pad");
+        CHECK(m.pads[0].sample == NULL, "memo: clear left a buffer");
+        CHECK(m.pads[0].src_size == 0 && m.pads[0].src_mtime == 0, "memo: clear left a stamp");
+        CHECK(dr32_kit_load_sample(&m, 0, wa) == DR32_WAV_OK, "memo: reload after clear");
+        CHECK(m.pads[0].sample != NULL, "memo: reload after clear produced no buffer");
+
+        dr32_kit_free(&m);
+        remove(wm);
     }
 
     dr32_kit_free(&k);

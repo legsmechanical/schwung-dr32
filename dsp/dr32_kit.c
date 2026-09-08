@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>      /* strcasecmp */
+#include <sys/stat.h>    /* the sample-decode memo — see dr32_kit_load_sample */
 
 void dr32_kit_init(dr32_kit *k) {
     memset(k, 0, sizeof(*k));
@@ -186,9 +187,41 @@ void dr32_kit_set_note(dr32_kit *k, int pad, int note) {
     k->note_to_pad[note] = (signed char)pad;
 }
 
+/* Is `path` byte-for-byte what this pad already holds?
+ *
+ * A kit recall re-reads all 16 pads, and the WAV decode was ~3.5 ms of it —
+ * ON THE SPI CALLBACK, against a 2.9 ms block period (measured on device
+ * 2026-09-08 via param-slow). Recalling the same kit decodes 16 identical
+ * files every time.
+ *
+ * ⚠ THIS IS DELIBERATELY NOT "skip the reload when the kit path matches".
+ * dr32_state_read loads the kit FIRST precisely because it replaces every pad
+ * wholesale, and the saved blob carries only the user's DELTAS from that
+ * baseline; skipping the reload would apply those deltas to whatever the user
+ * had edited since, turning a restore into a merge. The memo is at the DECODE,
+ * which no semantics depend on: pad params still reset from the kit JSON, the
+ * pad is still "replaced", the bytes are simply not read twice.
+ *
+ * Size+mtime, not path alone, so editing a sample in place still reloads it —
+ * otherwise "reload the kit" would be the one gesture that could not pick up
+ * an edited file. One stat per pad is microseconds against a full decode. */
+static int sample_is_current(const dr32_pad_slot *s, const char *path) {
+    if (!s->sample || !s->path[0]) return 0;
+    if (strcmp(s->path, path) != 0) return 0;
+    struct stat st;
+    if (stat(path, &st) != 0) return 0;        /* gone or unreadable → reload */
+    return (long)st.st_size == s->src_size && (long)st.st_mtime == s->src_mtime;
+}
+
 int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     if (pad < 0 || pad >= DR32_PADS) return DR32_WAV_ERR_OPEN;
     dr32_pad_slot *s = &k->pads[pad];
+
+    /* Already holding exactly this file — keep the decoded buffer. Returns
+     * before the retire below, so the audio thread's pointer is untouched and
+     * no voice is silenced: re-decoding identical audio was the only thing
+     * being skipped. */
+    if (path && path[0] && sample_is_current(s, path)) return DR32_WAV_OK;
 
     // Silence the pad first: the audio thread checks `active` before touching
     // `sample`, so stopping the voice before the swap means it cannot be mid-read
@@ -203,6 +236,12 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     s->sample = NULL;
     s->frames = 0;
     s->path[0] = '\0';
+    /* Clear the decode stamp with the buffer it describes. sample_is_current
+     * already requires a non-NULL sample, so this is belt-and-braces — but a
+     * stamp outliving its buffer is exactly the kind of stale pair that starts
+     * matching again by accident after a struct reuse. */
+    s->src_size = 0;
+    s->src_mtime = 0;
 
     if (!path || !path[0]) return DR32_WAV_OK;     // clearing the pad
 
@@ -215,6 +254,14 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     s->channels = w.channels;
     s->sample_rate = w.sample_rate;
     snprintf(s->path, sizeof(s->path), "%s", path);
+    /* Stamp what we just decoded, for sample_is_current above. Stat AFTER the
+     * read: a file rewritten between the two then looks stale next time and
+     * reloads, which is the safe direction to be wrong in. */
+    {
+        struct stat st;
+        if (stat(path, &st) == 0) { s->src_size = (long)st.st_size; s->src_mtime = (long)st.st_mtime; }
+        else                      { s->src_size = 0; s->src_mtime = 0; }
+    }
     return DR32_WAV_OK;
 }
 

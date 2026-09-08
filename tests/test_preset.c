@@ -8,10 +8,31 @@
 #include "../dsp/dr32_json.h"
 #include "../dsp/dr32_params.h"
 
+#include "../dsp/dr32_kit.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+
+/* A 1 s 16-bit mono WAV, for the stale-audio check below. Same shape as
+ * test_kit.c's helper; duplicated rather than shared because these two suites
+ * are separate translation units with no common test header. */
+#define PRESET_TEST_SR 44100
+static void w16(FILE *f, uint16_t v) { fputc(v & 0xff, f); fputc((v >> 8) & 0xff, f); }
+static void w32(FILE *f, uint32_t v) { for (int i = 0; i < 4; i++) fputc((v >> (8 * i)) & 0xff, f); }
+static void make_wav(const char *path, float level) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    uint32_t data = PRESET_TEST_SR * 2;
+    fputs("RIFF", f); w32(f, 4 + 24 + 8 + data); fputs("WAVE", f);
+    fputs("fmt ", f); w32(f, 16); w16(f, 1); w16(f, 1); w32(f, PRESET_TEST_SR);
+    w32(f, PRESET_TEST_SR * 2); w16(f, 2); w16(f, 16);
+    fputs("data", f); w32(f, data);
+    for (int i = 0; i < PRESET_TEST_SR; i++) w16(f, (uint16_t)(int16_t)(level * 32767.0f));
+    fclose(f);
+}
 
 static int failures = 0, checks = 0;
 #define CHECK(cond, ...) do { \
@@ -84,6 +105,48 @@ int main(int argc, char **argv) {
             CHECK(nondefault > 0, "no pad carried a non-default value — params are not being read");
         }
         dr32_kit_free(&kit);
+    }
+
+    // ---- a preset load must leave NO stale audio on a pad it does not fill.
+    //
+    // dr32_preset_load used to clear every pad's sample up front. It no longer
+    // does: clearing first frees the buffers, so dr32_kit_load_sample's decode
+    // memo had nothing to compare against and could never hit — the reason the
+    // first version of that memo was a NO-OP on device while its own unit test
+    // passed (it called load_sample directly and never went through here).
+    //
+    // The clear is now deferred to the end and applies to every pad the preset
+    // did not fill. THIS is the check that keeps that safe: an absent,
+    // unresolvable or failed sampleUri, and any pad past the chain count, must
+    // all end EMPTY rather than keeping whatever the pad held before.
+    {
+        dr32_kit kit;
+        dr32_kit_init(&kit);
+
+        const char *wp = "/tmp/dr32_preset_stale.wav";
+        make_wav(wp, 0.5f);
+        // Pads across the range, including ones this fixture cannot fill.
+        CHECK(dr32_kit_load_sample(&kit, 0,  wp) == DR32_WAV_OK, "stale: preload pad 0");
+        CHECK(dr32_kit_load_sample(&kit, 5,  wp) == DR32_WAV_OK, "stale: preload pad 5");
+        CHECK(dr32_kit_load_sample(&kit, 31, wp) == DR32_WAV_OK, "stale: preload pad 31");
+        CHECK(kit.pads[31].sample != NULL, "stale: preload took");
+
+        dr32_preset_report rep2;
+        CHECK(dr32_preset_load(&kit, fixture, &rep2), "stale: fixture loaded");
+
+        // Off-device the fixture's sampleUris resolve to /data/... which does
+        // not exist, so every pad FAILS to load — precisely the case that must
+        // not leave the old audio behind.
+        for (int i = 0; i < DR32_PADS; i++) {
+            if (kit.pads[i].sample != NULL) {
+                CHECK(0, "stale: pad %d kept audio the preset did not give it", i);
+                break;
+            }
+        }
+        CHECK(kit.pads[31].sample == NULL, "stale: pad past the chain count kept audio");
+
+        dr32_kit_free(&kit);
+        remove(wp);
     }
 
     // ---- a missing / wrong file must fail cleanly
