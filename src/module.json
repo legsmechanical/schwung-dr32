@@ -1068,10 +1068,6 @@
             {
               "level": "send2",
               "label": "Send 2"
-            },
-            {
-              "level": "bus",
-              "label": "Drum Bus"
             }
           ],
           "knobs": []
@@ -1145,73 +1141,6 @@
               },
               "viz": false
             }
-          ]
-        },
-        "bus": {
-          "name": "Drum Bus",
-          "params": [
-            {
-              "key": "bus_comp",
-              "name": "Compress",
-              "type": "float",
-              "min": 0.0,
-              "max": 1.0,
-              "step": 0.01,
-              "default": 0.0,
-              "short_name": "COMP"
-            },
-            {
-              "key": "bus_crunch",
-              "name": "Crunch",
-              "type": "float",
-              "min": 0.0,
-              "max": 1.0,
-              "step": 0.01,
-              "default": 0.0,
-              "short_name": "CRNCH"
-            },
-            {
-              "key": "bus_attack",
-              "name": "Attack",
-              "type": "float",
-              "min": -1.0,
-              "max": 1.0,
-              "step": 0.02,
-              "default": 0.0,
-              "short_name": "ATK",
-              "viz": false
-            },
-            {
-              "key": "bus_sustain",
-              "name": "Sustain",
-              "type": "float",
-              "min": -1.0,
-              "max": 1.0,
-              "step": 0.02,
-              "default": 0.0,
-              "short_name": "SUS",
-              "viz": false
-            },
-            {
-              "key": "bus_mix",
-              "name": "Dry/Wet",
-              "type": "float",
-              "min": 0.0,
-              "max": 1.0,
-              "step": 0.01,
-              "default": 1.0,
-              "short_name": "MIX",
-              "viz": {
-                "kind": "fader"
-              }
-            }
-          ],
-          "knobs": [
-            "bus_comp",
-            "bus_crunch",
-            "bus_attack",
-            "bus_sustain",
-            "bus_mix"
           ]
         }
       }

@@ -1,7 +1,8 @@
 // FX bus tests — the send buses and the effect algorithms they run.
 //
 // These exist because "it isn't doing anything" and "it thins the low end" are
-// both measurable, and were both true of the first Drum Bus: Transients used a
+// both measurable. (The Drum Bus this once described is gone — the stage was
+// removed from DR32; what remains here is the SEND buses.)
 // level-dependent difference that vanished on quiet material, and Crunch was a
 // band-split that audibly removed lows.
 
@@ -36,11 +37,6 @@ static void hit(float *out, int n, float freq, float amp) {
     }
 }
 
-static float peak_range(const float *x, int from, int to) {
-    float p = 0.0f;
-    for (int i = from; i < to; i++) { float a = fabsf(x[2 * i]); if (a > p) p = a; }
-    return p;
-}
 
 /** RT60 by Schroeder backward integration over the LEFT channel.
  *
@@ -124,33 +120,6 @@ static void run_wet(dr32_efx_type type, float p1, float p2, float p3,
     run_wet4(type, p1, p2, p3, 0.0f, in, out, n);
 }
 
-/** Run a signal through the always-on Drum Bus.
- *
- *  ⚠ NOT a send. The bus is a fixed stage over the SUMMED mix, so the signal
- *  goes into the block that dr32_fxbus_process() is handed — the same place the
- *  dry pads and the send returns have already landed by the time it runs. An
- *  earlier version of these tests drove it as a send type, which no longer
- *  exists.
- *
- *  Attack and Sustain are BIPOLAR -1..+1 with neutral at 0 (the 0..1-about-0.5
- *  form lives inside DrumBuss and nowhere above it). `mix` is the parallel
- *  blend; 1 = fully processed. */
-static void run_bus5(float comp, float crunch, float attack, float sustain,
-                     float mix, const float *in, float *out, int n) {
-    dr32_fxbus *fx = dr32_fxbus_create(SR);
-    dr32_fxbus_set_bus_params(fx, comp, crunch, attack, sustain, mix);
-    for (int p = 0; p < n; p += 128) {
-        int m = (p + 128 <= n) ? 128 : (n - p);
-        memcpy(out + 2 * p, in + 2 * p, sizeof(float) * 2 * (size_t)m);
-        dr32_fxbus_process(fx, out + 2 * p, m);
-    }
-    dr32_fxbus_destroy(fx);
-}
-
-static void run_bus(float comp, float crunch, float attack, float sustain,
-                    const float *in, float *out, int n) {
-    run_bus5(comp, crunch, attack, sustain, 1.0f, in, out, n);
-}
 
 /* RT60-ish: time for the tail to fall 60 dB below its own early peak. Used by
  * the default-length, decay-range and gate tests, so they cannot disagree. */
@@ -183,59 +152,7 @@ static const struct { dr32_efx_type t; const char *n; } kVerbs[] = {
 
 int main(void) {
     printf("fx bus\n");
-    static float dry[2 * N], wet[2 * N], wet2[2 * N];
-
-    // ---- Drum Bus / Attack must actually change the attack-to-tail balance
-    {
-        hit(dry, N, 120.0f, 0.4f);
-        const int atk_from = 0, atk_to = SR / 200;          // first 5 ms
-        const int tail_from = SR / 20, tail_to = SR / 5;    // 50-200 ms
-
-        run_bus(0.0f, 0.0f, 0.0f, 0.0f, dry, wet, N);
-        float n_atk = rms_range(wet, atk_from, atk_to), n_tail = rms_range(wet, tail_from, tail_to);
-        CHECK(n_tail > 1e-6f, "neutral attack produced no tail");
-        float neutral = n_atk / (n_tail + 1e-9f);
-
-        run_bus(0.0f, 0.0f, 1.0f, 0.0f, dry, wet, N);
-        float s_atk = rms_range(wet, atk_from, atk_to), s_tail = rms_range(wet, tail_from, tail_to);
-        float sharp = s_atk / (s_tail + 1e-9f);
-
-        run_bus(0.0f, 0.0f, -1.0f, 0.0f, dry, wet, N);
-        float f_atk = rms_range(wet, atk_from, atk_to), f_tail = rms_range(wet, tail_from, tail_to);
-        float soft = f_atk / (f_tail + 1e-9f);
-
-        printf("  attack knob attack:tail  soft %.3f  neutral %.3f  sharp %.3f\n", soft, neutral, sharp);
-        CHECK(sharp > neutral * 1.15f, "Attack up did not sharpen: %.3f vs %.3f", sharp, neutral);
-        CHECK(soft < neutral * 0.87f, "Attack down did not soften: %.3f vs %.3f", soft, neutral);
-    }
-
-    // ---- Crunch must saturate WITHOUT reshaping the spectrum.
-    //      Drive a low tone and a high tone; both should survive in proportion.
-    {
-        static float low[2 * N], high[2 * N];
-        hit(low, N, 80.0f, 0.4f);
-        hit(high, N, 4000.0f, 0.4f);
-
-        run_bus(0.0f, 0.0f, 0.0f, 0.0f, low, wet, N);
-        float low_dry = rms_range(wet, 0, SR / 10);
-        run_bus(0.0f, 0.8f, 0.0f, 0.0f, low, wet, N);
-        float low_crunch = rms_range(wet, 0, SR / 10);
-
-        run_bus(0.0f, 0.0f, 0.0f, 0.0f, high, wet2, N);
-        float high_dry = rms_range(wet2, 0, SR / 10);
-        run_bus(0.0f, 0.8f, 0.0f, 0.0f, high, wet2, N);
-        float high_crunch = rms_range(wet2, 0, SR / 10);
-
-        float low_ratio = low_crunch / (low_dry + 1e-9f);
-        float high_ratio = high_crunch / (high_dry + 1e-9f);
-        printf("  crunch level ratio      low %.3f  high %.3f\n", low_ratio, high_ratio);
-
-        // The old band-split version failed this: lows dropped while highs rose.
-        CHECK(low_ratio > 0.7f, "Crunch cut the low end to %.2f of dry — it must not shape EQ", low_ratio);
-        float tilt = high_ratio / (low_ratio + 1e-9f);
-        CHECK(tilt > 0.6f && tilt < 1.7f,
-              "Crunch tilted the spectrum: high/low gain ratio %.2f (want ~1)", tilt);
-    }
+    static float wet[2 * N], wet2[2 * N];
 
     // ---- every reverb type must actually produce a tail (Hall was silent)
     {
@@ -637,59 +554,7 @@ int main(void) {
     }
 
 
-    // ---- Compress must NEVER lift quiet material.
-    //      This is the defect that got Pressure4 replaced: it had no threshold,
-    //      so it pulled a -48 dBFS signal up by 17.7 dB — sample noise floor,
-    //      room bleed and reverb tails along with it. Pop3 can only attenuate,
-    //      and the makeup gain is measured per block and gated on real signal,
-    //      so the whole chain must stay silent on a quiet input.
-    {
-        static float quiet[2 * N];
-        for (int i = 0; i < N; i++) {
-            float v = 0.00398f * sinf(2.0f * (float)M_PI * 200.0f * i / SR);  // -48 dBFS
-            quiet[2 * i] = v; quiet[2 * i + 1] = v;
-        }
-        float in_rms = rms_range(quiet, N / 2, N);
-        float worst = 0.0f;
-        for (int k = 0; k <= 4; k++) {
-            run_bus(k * 0.25f, 0.0f, 0.0f, 0.0f, quiet, wet, N);
-            float lift = 20.0f * log10f(rms_range(wet, N / 2, N) / (in_rms + 1e-12f) + 1e-12f);
-            if (fabsf(lift) > fabsf(worst)) worst = lift;
-        }
-        printf("  compress low-level lift  worst %+.2f dB over the whole knob\n", worst);
-        CHECK(fabsf(worst) < 1.0f,
-              "Compress lifted a -48 dBFS signal by %+.2f dB — it must have a real threshold", worst);
-    }
 
-    // ---- Attack and Sustain must be ORTHOGONAL.
-    //      The stage these replaced applied one broadband gain, so its "sustain"
-    //      direction dragged the attack with it. Sustain must move the tail and
-    //      leave the hit alone.
-    {
-        hit(dry, N, 60.0f, 0.4f);
-        const int atk_to = SR / 125;                       // first 8 ms
-        const int t_from = SR * 8 / 100, t_to = SR / 4;     // 80-250 ms
-
-        run_bus(0.0f, 0.0f, 0.0f, 0.0f, dry, wet, N);
-        float n_atk = peak_range(wet, 0, atk_to), n_tail = rms_range(wet, t_from, t_to);
-
-        run_bus(0.0f, 0.0f, 0.0f, 1.0f, dry, wet, N);
-        float up_atk = peak_range(wet, 0, atk_to), up_tail = rms_range(wet, t_from, t_to);
-        run_bus(0.0f, 0.0f, 0.0f, -1.0f, dry, wet, N);
-        float dn_atk = peak_range(wet, 0, atk_to), dn_tail = rms_range(wet, t_from, t_to);
-
-        float up_t = 20.0f * log10f(up_tail / (n_tail + 1e-12f) + 1e-12f);
-        float dn_t = 20.0f * log10f(dn_tail / (n_tail + 1e-12f) + 1e-12f);
-        float up_a = 20.0f * log10f(up_atk / (n_atk + 1e-12f) + 1e-12f);
-        float dn_a = 20.0f * log10f(dn_atk / (n_atk + 1e-12f) + 1e-12f);
-        printf("  sustain knob   tail %+.2f / %+.2f dB   attack %+.2f / %+.2f dB\n",
-               dn_t, up_t, dn_a, up_a);
-        CHECK(up_t > 4.0f,  "Sustain up did not lengthen the tail (%+.2f dB)", up_t);
-        CHECK(dn_t < -4.0f, "Sustain down did not shorten the tail (%+.2f dB)", dn_t);
-        CHECK(fabsf(up_a) < 1.0f && fabsf(dn_a) < 1.0f,
-              "Sustain moved the ATTACK (%+.2f / %+.2f dB) — it must only shape the decay",
-              dn_a, up_a);
-    }
 
     // ---- The reverbs must be STEREO.
     //      Chamber, which Room and Hall used to share, ran as two independent
@@ -820,70 +685,8 @@ int main(void) {
     }
 
 
-    // ---- The always-on Drum Bus must be BIT-IDENTICAL at neutral.
-    //
-    //      This is the whole justification for running it on every instance
-    //      unconditionally. "Close enough" is not the claim being made: a
-    //      neutral-looking setting that still ran the saturator or an envelope
-    //      follower would colour every kit in DR32 forever, and would show up as
-    //      a small null figure rather than as an obvious break. So require
-    //      EXACT equality — the stage has to be skipped, not merely quiet.
-    {
-        hit(dry, N, 90.0f, 0.5f);
-        run_bus(0.0f, 0.0f, 0.0f, 0.0f, dry, wet, N);
-        int differing = 0;
-        for (int i = 0; i < 2 * N; i++) if (wet[i] != dry[i]) differing++;
-        printf("  drum bus neutral: %d of %d samples differ\n", differing, 2 * N);
-        CHECK(differing == 0,
-              "Drum Bus is not bypassed at neutral (%d samples differ) — an "
-              "always-on stage must be bit-transparent until a knob moves", differing);
-    }
 
-    // ---- ...and the bypass must be a real bypass, not a dead code path.
-    //      If the stage never ran at all the test above would also pass, so
-    //      prove that a non-neutral setting DOES reach the output.
-    {
-        hit(dry, N, 90.0f, 0.5f);
-        run_bus(0.0f, 1.0f, 0.0f, 0.0f, dry, wet, N);
-        int differing = 0;
-        for (int i = 0; i < 2 * N; i++) if (wet[i] != dry[i]) differing++;
-        CHECK(differing > N / 10,
-              "Crunch at full changed only %d samples — the bus is never running",
-              differing);
-    }
 
-    // ---- The bus processes the send RETURNS too, not just the dry pads.
-    //      It sits after the returns are summed, which is what makes it a drum
-    //      BUS rather than a pad insert. Feed only a send and require the bus to
-    //      still colour the result.
-    {
-        static float busout[2 * N], plain[2 * N];
-        for (int pass = 0; pass < 2; pass++) {
-            float *out = pass ? busout : plain;
-            dr32_fxbus *fx = dr32_fxbus_create(SR);
-            dr32_fxbus_set_send_type(fx, 0, DR32_EFX_PLATE);
-            { const float pp5[5] = { 0.5f, 0.3f, 0.6f, 0.0f, 0.0f };
-          dr32_fxbus_set_send_params(fx, 0, pp5, 5); }
-            dr32_fxbus_set_send_return(fx, 0, 1.0f);
-            if (pass) dr32_fxbus_set_bus_params(fx, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f);
-            memset(out, 0, sizeof(float) * 2 * N);
-            for (int p = 0; p + 128 <= N; p += 128) {
-                /* one hit into the SEND only — the dry path stays empty */
-                if (p == 0) for (int i = 0; i < 64; i++) dr32_fxbus_send(fx, 0, i, 0.6f, 0.6f);
-                dr32_fxbus_process(fx, out + 2 * p, 128);
-            }
-            dr32_fxbus_destroy(fx);
-        }
-        double d2 = 0, r2 = 0;
-        for (int i = 0; i < 2 * N; i++) {
-            double e = (double)busout[i] - plain[i];
-            d2 += e * e; r2 += (double)plain[i] * plain[i];
-        }
-        CHECK(r2 > 0.0, "send produced nothing to test the bus against");
-        CHECK(d2 > r2 * 1e-6,
-              "the Drum Bus left the send return untouched — it must run on the "
-              "SUMMED mix, after the returns");
-    }
 
     // ---- Delay: the synced time law.
     //      4 sixteenths at 120 BPM is 0.500 s; at 90 BPM it is 0.667 s. This is
@@ -1089,32 +892,6 @@ int main(void) {
               "ping-pong at 0 unbalanced a centred hit by %+.2f dB", bal);
     }
 
-    // ---- Drum Bus: Mix is a real dry/wet blend (parallel compression).
-    //      It was on the Drum Bus as an insert and went missing when the stage
-    //      was lifted onto the master mix (Josh spotted it, 2026-07-28).
-    {
-        hit(dry, N, 90.0f, 0.5f);
-        static float wetFull[2 * N], wetHalf[2 * N], wetNone[2 * N];
-        run_bus5(0.0f, 1.0f, 0.0f, 0.0f, 1.0f, dry, wetFull, N);
-        run_bus5(0.0f, 1.0f, 0.0f, 0.0f, 0.5f, dry, wetHalf, N);
-        run_bus5(0.0f, 1.0f, 0.0f, 0.0f, 0.0f, dry, wetNone, N);
-
-        /* mix 0 = the dry signal back, exactly */
-        int differing = 0;
-        for (int i = 0; i < 2 * N; i++) if (wetNone[i] != dry[i]) differing++;
-        CHECK(differing == 0, "Mix at 0 is not the dry signal (%d samples differ)", differing);
-
-        /* mix 0.5 = exactly halfway between dry and fully processed */
-        double err = 0, ref = 0;
-        for (int i = 0; i < 2 * N; i++) {
-            double want = 0.5 * dry[i] + 0.5 * wetFull[i];
-            double e = wetHalf[i] - want;
-            err += e * e; ref += want * want;
-        }
-        float nulldb = 10.0f * log10f((float)((err + 1e-30) / (ref + 1e-30)));
-        printf("  drum bus mix 0.5 vs the exact blend: %.1f dB\n", nulldb);
-        CHECK(nulldb < -100.0f, "Mix is not a linear dry/wet blend (%.1f dB)", nulldb);
-    }
 
     // ---- Delay: feedback must be BOUNDED.
     //      A send return has no dry path to balance it, so a runaway loop is not
