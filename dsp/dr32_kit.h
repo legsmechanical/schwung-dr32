@@ -28,6 +28,13 @@ typedef struct {
     int     sample_rate;     // source rate of the loaded sample
     float  *retired;         // previous buffer, freed on the NEXT load
     char    path[DR32_MAX_PATH];
+    /* On-disk identity of what `sample` holds, so a reload of the SAME file can
+     * skip the decode. Zero when nothing is loaded. See dr32_kit_load_sample:
+     * a kit recall re-reads all 16 pads, and the decode was ~3.5 ms of it on
+     * the SPI callback. Size+mtime rather than path alone, so editing a sample
+     * in place still reloads it. */
+    long    src_size;
+    long    src_mtime;
 
     int     note;            // receivingNote from drumZoneSettings
     int     choke_group;     // 0 = none
