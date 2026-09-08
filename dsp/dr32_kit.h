@@ -8,6 +8,7 @@
 #ifndef DR32_KIT_H
 #define DR32_KIT_H
 
+#include <stdint.h>
 #include "dr32_voice.h"
 #include "dr32_fxbus.h"
 #include "wav.h"
@@ -40,6 +41,10 @@ typedef struct {
     dr32_fxbus   *fx;                 // 2 sends (may be NULL)
     // Per-pad render buffer, used only when a pad actually feeds a send.
     float         scratch[2 * DR32_KIT_MAX_BLOCK];
+    // The KIT MIX under a per-voice render: the pads that were NOT routed out
+    // to a host bus. Per-instance, never a static — dr32 is multi-instance and
+    // two slots would share one buffer on the audio thread.
+    float         split_dry[2 * DR32_KIT_MAX_BLOCK];
     // Send params are cached so the UI can set one at a time (the bus API takes
     // them together).
     // See dr32_fxbus.h for the per-type slot table.
@@ -148,6 +153,27 @@ void dr32_kit_set_bpm(dr32_kit *k, float bpm);
 
 /** Render `frames` of interleaved stereo. Overwrites `out` (does not add). */
 void dr32_kit_render(dr32_kit *k, float *out, int frames);
+
+/*
+ * The PER-VOICE render: each pad into its own destination, the kit's own FX
+ * return into main.
+ *
+ * ⭐ THE HOST OWNS THE BUFFERS AND THEY ALIAS. Two pads the user put on the
+ * same host bus are handed the SAME pointer, so every write here ACCUMULATES
+ * and nothing is ever cleared — the host clears the distinct destinations
+ * before the call and a memset here would erase another pad's audio.
+ *
+ * int16 destinations, because that is the host's audio type; the kit is float
+ * internally, so each pad is rendered into the float scratch and converted on
+ * the way out. `main_out` carries what belongs to NO pad — the send-FX return
+ * and the drum-bus stage.
+ *
+ * ⚠ STATE-COMPATIBLE WITH dr32_kit_render BY CONSTRUCTION: same voices, same
+ * loop, same choke/block counter. The host switches between the two AT RUNTIME,
+ * PER FRAME, by whether any voice is on a bus — so they must not diverge.
+ */
+void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
+                           int16_t *main_out, int frames);
 
 /** Number of currently sounding voices — for the CPU/debug readout. */
 int dr32_kit_active_voices(const dr32_kit *k);

@@ -342,6 +342,88 @@ void dr32_kit_render(dr32_kit *k, float *out, int frames) {
     }
 }
 
+/* One float sample pair -> the host's int16 destination, ACCUMULATING and
+ * saturating. Accumulate because the destinations alias: two pads on one host
+ * bus share a pointer and their sum is supposed to happen here. */
+static inline void mix_f32_to_i16(int16_t *dst, const float *src, int n) {
+    for (int i = 0; i < n; i++) {
+        float v = src[i];
+        if (v > 1.0f) v = 1.0f;
+        if (v < -1.0f) v = -1.0f;
+        int32_t sum = (int32_t)dst[i] + (int32_t)(v * 32767.0f);
+        if (sum > 32767) sum = 32767;
+        if (sum < -32768) sum = -32768;
+        dst[i] = (int16_t)sum;
+    }
+}
+
+void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
+                           int16_t *main_out, int frames) {
+    if (!k || !voice_out) return;
+    k->block++;
+    if (frames > DR32_KIT_MAX_BLOCK) frames = DR32_KIT_MAX_BLOCK;
+
+    /* ⚠ NOTHING THE HOST OWNS IS CLEARED HERE. It cleared the distinct
+     * destinations before calling, and clearing one ourselves would wipe
+     * another pad's audio out of a buffer they share. `split_dry` is OURS and
+     * is zeroed per block exactly as dr32_kit_render zeroes `out`. */
+    memset(k->split_dry, 0, sizeof(float) * 2 * (size_t)frames);
+
+    for (int i = 0; i < DR32_PADS; i++) {
+        dr32_voice *v = &k->pads[i].voice;
+        if (!v->active) continue;
+
+        const float s0 = db_to_gain(k->pads[i].params.send_db[0]);
+        const float s1 = db_to_gain(k->pads[i].params.send_db[1]);
+
+        /* ALWAYS via the scratch, unlike dr32_kit_render's dry-only shortcut:
+         * a pad's audio may have to leave in two directions now (its own host
+         * destination AND the kit's send buses), and that shortcut exists
+         * precisely to avoid the second copy. */
+        memset(k->scratch, 0, sizeof(float) * 2 * (size_t)frames);
+        dr32_voice_render(v, k->scratch, frames);
+
+        if (k->fx && (s0 > 0.0f || s1 > 0.0f)) {
+            for (int f = 0; f < frames; f++) {
+                float l = k->scratch[2 * f], r = k->scratch[2 * f + 1];
+                if (s0 > 0.0f) dr32_fxbus_send(k->fx, 0, f, l * s0, r * s0);
+                if (s1 > 0.0f) dr32_fxbus_send(k->fx, 1, f, l * s1, r * s1);
+            }
+        }
+
+        int16_t *dst = (i < n_voices && voice_out[i]) ? voice_out[i] : NULL;
+        if (dst && dst != main_out) {
+            /*
+             * ROUTED OUT. Master gain is applied here because this pad will
+             * never reach the master stage below.
+             *
+             * ⚠⚠ AND IT LEAVES BEFORE THE DRUM BUS — this is the one audible
+             * consequence of splitting a kit, and it is deliberate rather than
+             * overlooked. The Drum Bus is the kit's GLUE over its own mix; a pad
+             * the user has routed to a host bus is no longer in that mix, the
+             * same as pulling a drum out of a group in any DAW. Gluing it
+             * separately would be a compressor over one drum, which is a
+             * different effect wearing the same name.
+             */
+            for (int n = 0; n < 2 * frames; n++) k->scratch[n] *= k->master_gain;
+            mix_f32_to_i16(dst, k->scratch, 2 * frames);
+        } else {
+            /* Stays in the kit: summed, then through the sends' returns and the
+             * Drum Bus below, exactly as in dr32_kit_render. */
+            for (int n = 0; n < 2 * frames; n++) k->split_dry[n] += k->scratch[n];
+        }
+    }
+
+    /* The kit's own master stage over what REMAINS in the kit: the send returns
+     * and the Drum Bus, then master gain — the same order, and the same single
+     * application of master_gain, that dr32_kit_render uses. */
+    if (k->fx) dr32_fxbus_process(k->fx, k->split_dry, frames);
+    if (k->master_gain != 1.0f) {
+        for (int n = 0; n < 2 * frames; n++) k->split_dry[n] *= k->master_gain;
+    }
+    if (main_out) mix_f32_to_i16(main_out, k->split_dry, 2 * frames);
+}
+
 int dr32_kit_active_voices(const dr32_kit *k) {
     int n = 0;
     for (int i = 0; i < DR32_PADS; i++) if (k->pads[i].voice.active) n++;

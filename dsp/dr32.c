@@ -415,6 +415,51 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
         memcpy(buf, in->ui_hierarchy, (size_t)in->ui_hierarchy_len + 1);
         return in->ui_hierarchy_len;
     }
+    /*
+     * The voices this kit can render separately, in the module's own declared
+     * order — the INDEX HERE IS THE voice_out[] INDEX handed to
+     * move_plugin_render_split, so this list and that loop must stay in step.
+     *
+     * ⚠ ALL 32 PADS ARE LISTED, INCLUDING EMPTY ONES, and that is deliberate:
+     * the index is a render-buffer index, so dropping the empty pads would
+     * shift every pad behind them onto the wrong buffer. An empty pad simply
+     * renders silence, exactly as it does today.
+     *
+     * The id is the pad's own param prefix (`pad1`..`pad32`) — what the rest of
+     * this module already addresses a pad by — so a saved bus assignment
+     * survives a kit change: the ids are stable and the LABELS follow whatever
+     * sample is loaded. The label falls back to the id when a pad is empty; a
+     * row reading "" would be unclickable on the host's screen.
+     *
+     * A host that does not know about buses never asks for this key, which is
+     * half of why this feature is inert on stock.
+     */
+    if (!strcmp(key, "split_voices")) {
+        int n = 0;
+        int w = snprintf(buf, buf_len, "[");
+        if (w <= 0 || w >= buf_len) return 0;
+        n = w;
+        for (int i = 0; i < DR32_PADS; i++) {
+            if (i) {
+                if (n + 1 >= buf_len) return 0;
+                buf[n++] = ',';
+            }
+            w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i + 1);
+            if (w <= 0 || n + w >= buf_len) return 0;
+            n += w;
+            int m = in->kit.pads[i].path[0]
+                  ? append_pad_name(&in->kit.pads[i], buf + n, buf_len - n)
+                  : snprintf(buf + n, buf_len - n, "\"pad%d\"", i + 1);
+            if (m <= 0 || n + m >= buf_len) return 0;
+            n += m;
+            if (n + 1 >= buf_len) return 0;
+            buf[n++] = '}';
+        }
+        if (n + 2 > buf_len) return 0;
+        buf[n++] = ']';
+        buf[n] = '\0';
+        return n;
+    }
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user"))
         return snprintf(buf, buf_len, "%s", in->kit_path);
     // The blob Schwung stores in the set's slot_N.json. Without this the host
@@ -455,6 +500,44 @@ static void render_block(void *instance, int16_t *out, int frames) {
         if (v < -1.0f) v = -1.0f;
         out[i] = (int16_t)(v * 32767.0f);
     }
+}
+
+/*
+ * ============================================================================
+ * move_plugin_render_split — the OPTIONAL per-voice render (Schwung >= 1.3.0)
+ * ============================================================================
+ *
+ * ⭐ OPT-IN FROM BOTH ENDS, WHICH IS WHY THIS IS SAFE ON STOCK. A host that
+ * does not know about buses never dlsym's this symbol and never asks for
+ * `split_voices`, so DR32 goes on rendering through render_block exactly as it
+ * always has. Nothing here changes the module's behaviour on a host that does
+ * not use it — that matters because DR32 must run on stock Schwung AND under
+ * dAVEBOx, and only one of those has module buses today.
+ *
+ * A SEPARATE EXPORTED SYMBOL, not a field appended to plugin_api_v2_t:
+ * extending that struct once boot-looped a device, because a host built against
+ * the shorter version reads past what the module allocated. dlsym is
+ * present-or-absent with no ABI question at all.
+ *
+ * The host switches between this and render_block AT RUNTIME, PER FRAME, by
+ * whether any voice is currently assigned to a bus — so the two share the kit,
+ * its voices and their envelopes by construction, and neither may hold state
+ * the other does not advance.
+ */
+void move_plugin_render_split(void *instance, int16_t *const *voice_out,
+                              int n_voices, int16_t *main_out, int frames) {
+    dr32_instance *in = (dr32_instance *)instance;
+    if (!in) return;
+    if (frames > 1024) frames = 1024;
+
+    /* The same per-block housekeeping render_block does. Neither may be skipped
+     * on this path: the tempo feeds the synced Delay and the transport sync
+     * drives choke/retrigger, and a kit that only saw them on one of its two
+     * entry points would drift the moment a voice was assigned to a bus. */
+    if (g_host && g_host->get_bpm) dr32_kit_set_bpm(&in->kit, g_host->get_bpm());
+    dr32_sync_transport(in);
+
+    dr32_kit_render_split(&in->kit, voice_out, n_voices, main_out, frames);
 }
 
 static plugin_api_v2_t g_api = {
