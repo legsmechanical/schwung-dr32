@@ -130,9 +130,8 @@
 </header>
 
 <div class="note">
-  <p><strong>Work in progress.</strong> Usable but unreleased — expect changes. Requires Schwung
-  <strong>1.2.0</strong> or later, and <strong>1.3.0</strong> or later for the per-pad sends to
-  reach anything.</p>
+  <p><strong>Requires Schwung 1.3.0 or later.</strong> That is the version where the module-bus
+  contract arrived, and the per-pad sends reach nothing without it. Version 0.3.0.</p>
 </div>
 
 <h2>What it is</h2>
@@ -182,6 +181,10 @@ you a great many things that cannot load.</p>
 stopped; with a pattern running, the editor follows only on a host that reports live presses. The
 <strong>PAD</strong> knob selects a pad by hand, numbered 1&ndash;32.</p>
 
+<p><strong>Sample</strong>, <strong>Shape</strong> and <strong>Mix</strong> are three views of the
+same pad &mdash; pick it on any one of them and it is picked on all three. Each pad's name in the
+header follows its sample, and updates as soon as you change it.</p>
+
 <h3>Sample</h3>
 
 <p><strong>SMPL</strong> opens a browser starting in the folder that pad's current sample came
@@ -221,8 +224,8 @@ can tap it at its own level &mdash; one reverb shared by the kit, rather than on
 A kit imported from Move brings its own send amounts with it.</p>
 
 <div class="note">
-  <p><strong>Needs Schwung 1.3.0 or later.</strong> On an older host the knobs still turn and
-  save, but nothing reads them, so they make no sound. DR32 has no internal effects of its own.</p>
+  <p>This is why DR32 requires Schwung 1.3.0. On an older host the knobs still turn and save, but
+  nothing reads them, so they make no sound. DR32 has no internal effects of its own.</p>
 </div>
 
 <h2>Saving</h2>

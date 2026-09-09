@@ -2,10 +2,10 @@
   "id": "dr32",
   "name": "DrumRack32",
   "abbrev": "DR32",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "legsmechanical",
   "license": "MIT",
-  "description": "Clone of Move's native Drum Rack with 32 pads instead of 16. Loads Move's own .ablpreset drum kits directly from the User Library, with the same Drum Sampler voice: playback region, transpose/detune, A-H-D / A-S-R envelope, four filter types, velocity modulation and choke groups.",
+  "description": "Ableton Move's Drum Rack with 32 pads instead of 16. Loads Move's own .ablpreset drum kits from the Core and User libraries and plays them through a reconstruction of the same Drum Sampler voice: playback region, transpose/detune, A-H-D / A-S-R envelope, four filter types, velocity modulation, choke groups, Punch, and a per-pad Send A / Send B into the host's return buses.",
   "ui": "ui.js",
   "dsp": "dsp.so",
   "api_version": 2,
@@ -597,5 +597,6 @@
         }
       }
     }
-  }
+  },
+  "min_host_version": "1.3.0"
 }
