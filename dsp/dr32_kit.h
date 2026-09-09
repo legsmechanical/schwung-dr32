@@ -59,8 +59,17 @@ typedef struct {
     int           ui_auto_select_pad;
     /* LINK: while set, a per-pad write is applied to EVERY pad. Editor state,
      * not sound — deliberately NOT persisted, so a reload never comes back with
-     * it silently on and the next knob turn flattening the kit. */
+     * it silently on and the next knob turn flattening the kit.
+     *
+     * ⭑ It is ONE-SHOT PER PARAMETER (Josh, 2026-09-09). Arming it does not
+     * link everything from then on: the FIRST fan-out-eligible field written
+     * after arming is latched into `link_sub`, and the moment a DIFFERENT field
+     * is written the mode releases and that write lands on the focused pad
+     * alone. So "link, sweep transpose, then reach for Send A" does the obvious
+     * thing without a second gesture to turn it off — and a mode that cannot be
+     * left on by accident is a mode that cannot flatten a kit by accident. */
     int           link_all;
+    char          link_sub[32];   /* "" = armed, nothing latched yet */
 
     // Live-press correlation. Neither side can move focus alone: the canvas
     // knows a press was PHYSICAL (it gets the raw grid note, which the

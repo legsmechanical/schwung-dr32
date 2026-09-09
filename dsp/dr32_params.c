@@ -354,6 +354,18 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
          * comment already records happening once.
          */
         if (r && kit->link_all && link_fans_out(sub)) {
+            if (kit->link_sub[0] == '\0') {
+                /* First eligible field since arming — this is what Link is for. */
+                snprintf(kit->link_sub, sizeof(kit->link_sub), "%s", sub);
+            } else if (strcmp(kit->link_sub, sub)) {
+                /* A DIFFERENT parameter: release, and let this write land on the
+                 * focused pad alone. The write that ends the mode is never
+                 * itself linked — reaching for another knob is the signal that
+                 * you are done, not a last instruction to obey. */
+                kit->link_all = 0;
+                kit->link_sub[0] = '\0';
+                return r;
+            }
             for (int i = 0; i < DR32_PADS; i++)
                 if (i != pad) apply_pad_field(kit, i, sub, val);
         }
@@ -362,6 +374,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
 
     if (!strcmp(key, "link")) {
         kit->link_all = (!strcmp(val, "All") || atoi(val) == 1);
+        kit->link_sub[0] = '\0';      /* arming always starts unlatched */
         return 1;
     }
     if (!strcmp(key, "ui_current_pad")) {

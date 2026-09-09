@@ -490,6 +490,47 @@ int main(void) {
             remove(wav);
         }
 
+        /* ---- ONE-SHOT PER PARAMETER (Josh, 2026-09-09) --------------------
+         * Arm, sweep one knob, reach for a different one: the second knob is
+         * yours alone and the mode is gone. */
+        {
+            dr32_kit t; dr32_kit_init(&t);
+            dr32_apply_param(&t, "link", "All");
+
+            /* Sweeping the SAME field keeps linking — a knob emits many writes. */
+            dr32_apply_param(&t, "pad3_transpose", "5");
+            dr32_apply_param(&t, "pad3_transpose", "7");
+            int all = 1;
+            for (int i = 0; i < DR32_PADS; i++) if (t.pads[i].params.transpose != 7.0f) all = 0;
+            CHECK(all, "a second write of the SAME field stopped linking mid-sweep");
+            CHECK(t.link_all == 1, "link released while still on the same field");
+
+            /* A DIFFERENT field releases, and is NOT itself linked. */
+            dr32_apply_param(&t, "pad3_send_a", "-6");
+            CHECK(t.link_all == 0, "link did not release on a different parameter");
+            CHECK(t.pads[3].params.send_db[0] == -6.0f, "the releasing write did not reach its own pad");
+            CHECK(t.pads[9].params.send_db[0] != -6.0f,
+                  "the write that ENDED the mode was itself linked — reaching for another knob "
+                  "is the signal you are done, not a last instruction");
+
+            /* And it stays off until armed again. */
+            dr32_apply_param(&t, "pad3_pan", "20");
+            CHECK(t.pads[9].params.pan != 20.0f, "still linking after release");
+
+            /* ui_* must not count as "a different parameter" — focus following a
+             * hit while you sweep would otherwise disarm mid-gesture. */
+            dr32_kit t2; dr32_kit_init(&t2);
+            dr32_apply_param(&t2, "link", "All");
+            dr32_apply_param(&t2, "pad3_decay", "3.0");
+            dr32_apply_param(&t2, "ui_current_pad", "5");
+            dr32_apply_param(&t2, "pad3_decay", "4.0");
+            int still = 1;
+            for (int i = 0; i < DR32_PADS; i++) if (t2.pads[i].params.decay != 4.0f) still = 0;
+            CHECK(still, "a ui_ write released the mode mid-sweep");
+            dr32_kit_free(&t2);
+            dr32_kit_free(&t);
+        }
+
         /* Disarming must actually disarm. */
         dr32_apply_param(&k, "link", "One");
         CHECK(k.link_all == 0, "link did not disarm");

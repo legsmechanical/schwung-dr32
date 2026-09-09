@@ -30,6 +30,14 @@ Master  MASTR
   holds every instrument's presets — 365 files, 75 drum racks, measured on the device. ⚠ The scan
   is INCREMENTAL because `get_param` is on the SPI callback; do not make it a single pass, and do
   not scan at `create_instance` either.
+- ⭑ **LINK is ONE-SHOT PER PARAMETER, and off by default.** Arm it, sweep one knob — every pad
+  takes that value — and the moment a DIFFERENT field is written it releases, with that write
+  landing on the focused pad alone. Reaching for another knob IS the "done" signal, so the
+  releasing write is deliberately never itself linked. ⚠ `ui_*` writes do not count as a different
+  parameter: focus following a hit mid-sweep must not disarm it. Not persisted — a mode that came
+  back armed would flatten a kit on the next turn. The exclusion list in `link_fans_out`
+  (`sample*`, `note`, `sending_note`, `browse`, `play`, `ui_*`) is the design, not caution: those
+  are what make a pad a distinct pad.
 - 🔴 **The preset page auditions with NO undo.** Writing `kit_index` loads, replacing all 32 pads,
   and the host offers no `live_preview`/`browser_hooks` there — the module cannot even tell
   "scrolled past" from "chose this", because the click only navigates away and Back writes
