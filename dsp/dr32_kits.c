@@ -128,13 +128,37 @@ static void walk_push(dr32_kits *c, const char *path, int cat) {
     snprintf(f->path, sizeof(f->path), "%s", path);
 }
 
-/** Begin the next root, or finish. */
+/**
+ * Begin the next root, or finish.
+ *
+ * ⭑ `DR32_KIT_ROOTS` overrides both roots with "<core>:<user>" so the catalogue
+ * is TESTABLE. Without it the roots are two absolute /data paths that exist only
+ * on the device, which meant the off-device tests could only poke at boundary
+ * conditions — and a test written against an empty catalogue passes VACUOUSLY,
+ * which is exactly how the deferred-audition test first "passed" while asserting
+ * nothing. Unset in every real run; reading it costs one getenv at instance
+ * creation.
+ */
 static void walk_next_root(dr32_kits *c) {
+    const char *over = getenv("DR32_KIT_ROOTS");
+    char core[DR32_MAX_PATH], user[DR32_MAX_PATH];
+    const char *core_root = CORE_ROOT, *user_root = USER_ROOT;
+    if (over && *over) {
+        const char *sep = strchr(over, ':');
+        if (sep) {
+            size_t n = (size_t)(sep - over);
+            if (n < sizeof core) {
+                memcpy(core, over, n); core[n] = '\0';
+                snprintf(user, sizeof user, "%s", sep + 1);
+                core_root = core; user_root = user;
+            }
+        }
+    }
     c->root++;
     if (c->root == 0) {
-        walk_push(c, CORE_ROOT, -1);        /* -1: category comes from the subfolder */
+        walk_push(c, core_root, -1);        /* -1: category comes from the subfolder */
     } else if (c->root == 1) {
-        walk_push(c, USER_ROOT, cat_intern(c, USER_CAT));
+        walk_push(c, user_root, cat_intern(c, USER_CAT));
     } else {
         c->done = 1;
         qsort(c->v, (size_t)c->n, sizeof(entry), cmp_entry);

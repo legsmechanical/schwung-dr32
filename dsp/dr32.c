@@ -63,6 +63,11 @@ typedef struct {
     int        kit_cat;      /* category the browser is showing */
     int        kit_idx;      /* entry within that category */
     int        kit_located;  /* cursor has been aimed at the loaded kit once */
+    /* Deferred audition. A detent on the kit list only moves the CURSOR; the
+     * load happens once the cursor has been still for a moment. See
+     * dr32_service_pending_kit. */
+    int        kit_pending;      /* -1 = nothing owed */
+    unsigned   kit_pending_at;   /* render-block counter when it was last moved */
 } dr32_instance;
 
 /** Capture the freshly-loaded kit as the state baseline. Called after every
@@ -260,6 +265,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
      * so walking ~442 files at this point would stall the load. The catalogue
      * fills in from the browser's own reads — see get_param. */
     in->kits = dr32_kits_create();
+    in->kit_pending = -1;
     in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
     dr32_refresh_hierarchy(in);
     if (in->ui_hierarchy) {
@@ -373,8 +379,9 @@ static void set_param(void *instance, const char *key, const char *val) {
         if (v < 0) v = 0;
         if (v >= n) v = n - 1;
         in->kit_idx = v;
-        const char *path = dr32_kits_path(in->kits, in->kit_cat, v);
-        if (path && path[0]) set_param(instance, "kit", path);
+        /* Cursor only — the load is deferred until the cursor settles. */
+        in->kit_pending = v;
+        in->kit_pending_at = in->kit.block;
         return;
     }
 
@@ -620,12 +627,47 @@ static int get_error(void *instance, char *buf, int buf_len) {
     return snprintf(buf, buf_len, "%s", in->err);
 }
 
+/*
+ * DEFERRED AUDITION — why the kit list does not load on every detent.
+ *
+ * The preset page auditions unconditionally: a detent writes kit_index and the
+ * host offers no commit signal, so "load what is selected" is the only contract
+ * available. Loading on EVERY detent measured 5.3-10.1 ms per step on the SPI
+ * callback (device, 2026-09-09) against a 2.9 ms block — a couple of dropped
+ * frames per detent, continuously, for as long as you scroll.
+ *
+ * So a detent moves the CURSOR only, and the load happens once the cursor has
+ * been still for DR32_KIT_SETTLE_BLOCKS. Scrolling past twenty kits now costs
+ * one load instead of twenty, and the one it costs lands where the user has
+ * stopped — which is also the only kit they actually asked to hear.
+ *
+ * ⚠ This does not make the load cheap, and it is not meant to: it makes it
+ * happen ONCE. The cost is inherent — a kit parses a preset and reads up to 32
+ * WAVs — and the decode memo already covers the repeat case.
+ *
+ * ⚠ Serviced from render_block because that is the only thing that runs on a
+ * clock. set_param and render_block are the same thread, so this does not move
+ * the work off the callback; it removes the repetition.
+ */
+#define DR32_KIT_SETTLE_BLOCKS 60   /* ~174 ms at 2.902 ms/block */
+
+static void dr32_service_pending_kit(dr32_instance *in) {
+    if (in->kit_pending < 0) return;
+    if (in->kit.block - in->kit_pending_at < DR32_KIT_SETTLE_BLOCKS) return;
+
+    int idx = in->kit_pending;
+    in->kit_pending = -1;
+    const char *path = dr32_kits_path(in->kits, in->kit_cat, idx);
+    if (path && path[0]) set_param(in, "kit", path);
+}
+
 static void render_block(void *instance, int16_t *out, int frames) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
     if (frames > 1024) frames = 1024;
 
     dr32_sync_transport(in);
+    dr32_service_pending_kit(in);
 
     dr32_kit_render(&in->kit, in->scratch, frames);
 

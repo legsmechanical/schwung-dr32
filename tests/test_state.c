@@ -363,6 +363,82 @@ int main(void) {
         }
     }
 
+    {
+        /*
+         * DEFERRED AUDITION: a detent must move the cursor WITHOUT loading.
+         *
+         * Loading on every detent measured 5.3-10.1 ms per step on the SPI
+         * callback against a 2.9 ms block — dropped frames for as long as you
+         * scroll. The load is owed until the cursor has been still, and the only
+         * thing that runs on a clock is render_block, so that is what pays it.
+         *
+         * ⚠ Driven through the PLUGIN API, not the helper. The whole point is
+         * WHERE the load happens; a direct-call test would pass with the defer
+         * wired to nothing. See test-the-path-not-the-function.
+         */
+        /* A REAL catalogue, or the assertions below are vacuous: with an empty
+         * one the kit_index write returns early, nothing is ever pending, and
+         * "a detent did not load" is true for the wrong reason. */
+        system("rm -rf /tmp/dr32_kr && mkdir -p /tmp/dr32_kr/core/Electronic /tmp/dr32_kr/user");
+        for (int i = 0; i < 4; i++) {
+            char pth[128];
+            snprintf(pth, sizeof pth, "/tmp/dr32_kr/core/Electronic/k%d.json", i);
+            FILE *kf = fopen(pth, "wb");
+            if (kf) {
+                fputs("{\n  \"kind\": \"instrumentRack\",\n", kf);
+                for (int j = 0; j < 30; j++) fputs("  \"pad\": 0,\n", kf);
+                fputs("  \"drumZoneSettings\": { \"receivingNote\": 36 }\n}\n", kf);
+                fclose(kf);
+            }
+        }
+        setenv("DR32_KIT_ROOTS", "/tmp/dr32_kr/core:/tmp/dr32_kr/user", 1);
+
+        plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+        void *inst = api ? api->create_instance(".", NULL) : NULL;
+        CHECK(inst != NULL, "create_instance returned NULL");
+        if (inst) {
+            char before[512] = {0}, after[512] = {0};
+            /* Drive the catalogue to completion first. */
+            for (int i = 0; i < 200; i++) {
+                char c[64]; api->get_param(inst, "kit_count", c, (int)sizeof c);
+            }
+            char cnt[16] = {0};
+            api->get_param(inst, "kit_count", cnt, (int)sizeof cnt);
+            CHECK(atoi(cnt) == 4, "fixture catalogue has %s kits, want 4 — the checks below "
+                                  "would be vacuous", cnt);
+            api->get_param(inst, "kit", before, (int)sizeof before);
+
+            /* Sweep the cursor. None of these may load. */
+            for (int i = 0; i < 4; i++) {
+                char v[16]; snprintf(v, sizeof v, "%d", i);
+                api->set_param(inst, "kit_index", v);
+            }
+            api->get_param(inst, "kit", after, (int)sizeof after);
+            CHECK(!strcmp(before, after),
+                  "a detent loaded a kit — scrolling would drop frames on every step");
+
+            /* The cursor still moved, or the page would look dead. */
+            char idx[16] = {0};
+            api->get_param(inst, "kit_index", idx, (int)sizeof idx);
+            CHECK(!strcmp(idx, "3"), "the cursor did not follow the detents (read '%s')", idx);
+
+            /* And rendering long enough must pay it. On a build host the
+             * catalogue is empty, so nothing can actually load — what is
+             * asserted is that the DEBT is cleared rather than owed forever. */
+            static int16_t out[2 * 128];
+            for (int b = 0; b < 200; b++) api->render_block(inst, out, 128);
+            char loaded[512] = {0};
+            api->get_param(inst, "kit", loaded, (int)sizeof loaded);
+            CHECK(strstr(loaded, "/tmp/dr32_kr/") != NULL,
+                  "rendering past the settle window did not pay the deferred load (kit '%s')",
+                  loaded);
+
+            api->destroy_instance(inst);
+        }
+        unsetenv("DR32_KIT_ROOTS");
+        system("rm -rf /tmp/dr32_kr");
+    }
+
     printf("%s  (%d checks, %d failures)\n", failures ? "FAILED" : "ok", checks, failures);
     return failures ? 1 : 0;
 }
