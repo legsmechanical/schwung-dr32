@@ -179,6 +179,18 @@ if (!compiles) {
         `compiled, and the failure surfaces on the DEVICE at dlopen. Glob here too.`);
 }
 
+/* ---- 3c. the shared link must refuse undefined symbols -------------------- */
+
+const nolink = code.find((l) => /-shared\b/.test(l.text) && /--no-undefined/.test(l.text));
+if (link && !nolink) {
+    errors.push(
+        `the -shared link does not pass \`-Wl,--no-undefined\`.\n` +
+        `        A shared link is ALLOWED to be incomplete — an unresolved symbol is left for ` +
+        `whoever dlopen's it — so the link cannot tell you a source file is missing. That is how ` +
+        `a dsp.so without dr32_kits.o linked, exited 0 and installed, failing only on the device ` +
+        `at dlopen. DR32 resolves everything from libc/libm, so the flag costs nothing.`);
+}
+
 /* ---- 4. a failed assert must remove what install.sh READS ----------------- */
 
 /* ⚠ SCOPED TO LINES AFTER THE ASSERT, and that is the whole point. Searched

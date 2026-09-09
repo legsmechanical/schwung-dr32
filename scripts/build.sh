@@ -161,7 +161,18 @@ for src in dsp/*.c; do
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
 
-$CC -shared -o build/dsp.so build/obj/*.o -lm
+# ⚠⚠ --no-undefined IS LOAD-BEARING, not tidiness.
+#
+# A -shared link is ALLOWED to be incomplete: an unresolved symbol is left for
+# whoever dlopen's you, so the link cannot tell you a whole source file is
+# missing. That is exactly how a dsp.so without dr32_kits.o in it linked, exited
+# 0, printed "==> done:", passed the compiler assert and installed — the failure
+# surfaced on the DEVICE as `dlopen failed: undefined symbol: dr32_kits_name`.
+#
+# Proven on the same objects with dr32_kits.o removed: without the flag the link
+# exits 0; with it, 12 errors naming the symbols. DR32 resolves everything from
+# libc/libm, so this costs nothing here.
+$CC -shared -Wl,--no-undefined -o build/dsp.so build/obj/*.o -lm
 
 echo "==> packaging dist/"
 rm -rf "dist/${MODULE_ID}"
