@@ -36,43 +36,6 @@ static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) 
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
 }
 
-/** Which of a send's five generic slots a per-type control name addresses.
- *
- *  The names have to be DISTINCT keys — the host rejects a whole hierarchy that
- *  contains any duplicate key — but several of them mean the same underlying
- *  parameter, so this is the one table both the read and the apply path use.
- *  They used to be duplicated inline in each, which is exactly how a key ends up
- *  settable but not readable, and a knob that reads zero looks like dead UI
- *  rather than a missing case.
- *
- *  ⚠ Slot 0 and 1 are 0..1 for the reverbs and a count of SIXTEENTHS (1..16)
- *  for the Delay. Slot 4 was the vestigial `mix` from the kit-insert era. */
-static int send_slot_index(const char *name) {
-    if (!strcmp(name, "size")     || !strcmp(name, "time_l") || !strcmp(name, "p1")) return 0;
-    if (!strcmp(name, "damp")     || !strcmp(name, "time_r") || !strcmp(name, "p2")) return 1;
-    /* `hold` is the GATED reverb's name for slot 2: SpaceExtra maps it to the
-     * gate's hold time (50..500 ms), not to a decay. Same slot, honest name. */
-    if (!strcmp(name, "decay")    || !strcmp(name, "feedback")
-        || !strcmp(name, "hold")  || !strcmp(name, "p3")) return 2;
-    if (!strcmp(name, "predelay") || !strcmp(name, "tone")   || !strcmp(name, "p4")) return 3;
-    /* `length` is NonLin's name for slot 2 and `shape` its name for slot 4 —
-     * that type has no decay at all, which is the point of it. */
-    if (!strcmp(name, "length")) return 2;
-    /* Slot 4 is ping-pong on a Delay, Shape on NonLin and the TANK's decay on
-     * the gate — where slot 2 is the gate's hold, so "decay" would have been
-     * ambiguous and `tail` is used instead. */
-    if (!strcmp(name, "pingpong") || !strcmp(name, "shape")
-        || !strcmp(name, "tail") || !strcmp(name, "diffusion")
-        || !strcmp(name, "p5")) return 4;
-    /* Slot 5 is sync on a Delay and the RELEASE on the two envelope types. */
-    if (!strcmp(name, "release")) return 5;
-    if (!strcmp(name, "sync")     || !strcmp(name, "p6")) return 5;
-    if (!strcmp(name, "ms_l")     || !strcmp(name, "p7")) return 6;
-    if (!strcmp(name, "ms_r")     || !strcmp(name, "p8")) return 7;
-    return -1;
-}
-
-
 static int parse_filter_type(const char *v) {
     // The JSON's own spellings, measured on device. Accept the numeric form too
     // so the UI can send either.
@@ -166,6 +129,10 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
             }
             return off;
         }
+        /* `sample` is the key, and since 2026-09-08 the only one the UI uses:
+         * the Move/User pair collapsed into ONE browser cell rooted at /data.
+         * The two old spellings stay accepted because they cost a strcmp and
+         * anything still holding them keeps working. */
         if (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
             || !strcmp(sub, "sample_user"))  return snprintf(buf, buf_len, "%s", s->path);
         if (!strcmp(sub, "loaded"))      return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);
@@ -245,65 +212,16 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
             return snprintf(buf, buf_len, "%g",
                             p->fx_type == DR32_FX_PUNCH ? (double)p->fx_p1 : 0.0);
         if (!strcmp(sub, "punch_time")) return snprintf(buf, buf_len, "%g", (double)p->fx_p2);
-        if (!strcmp(sub, "send1"))       return snprintf(buf, buf_len, "%g", (double)p->send_db[0]);
-        if (!strcmp(sub, "send2"))       return snprintf(buf, buf_len, "%g", (double)p->send_db[1]);
+        /* The two per-pad sends into the HOST's global return buses. Array
+         * position is the send index the host reads them in: `send_a` is
+         * Send A, `send_b` is Send B (see get_param("voice_send_params") in
+         * dr32.c). `send1`/`send2` are accepted as read aliases so a state blob
+         * written before the rename still restores its levels. */
+        if (!strcmp(sub, "send_a") || !strcmp(sub, "send1"))
+            return snprintf(buf, buf_len, "%g", (double)p->send_db[0]);
+        if (!strcmp(sub, "send_b") || !strcmp(sub, "send2"))
+            return snprintf(buf, buf_len, "%g", (double)p->send_db[1]);
         return 0;
-    }
-
-    if (!strncmp(key, "send", 4)) {
-        const char *q = key + 4;
-        int slot = (*q >= '1' && *q <= '2') ? (*q - '1') : -1;
-        if (slot >= 0 && q[1] == '_') {
-            const char *f2 = q + 2;
-            const float *cache = kit->send_p[slot];
-            /* The ONE param the whole send page's visibility hangs off.
-             *
-             * The host's visible_if takes a SINGLE condition on a SINGLE param
-             * (shadow_ui.c: equals / not_equals / gt / lt / truthy — no AND, no
-             * lists), so "armed type is Delay AND it is running free" cannot be
-             * written directly. Publishing the page's mode as its own read-only
-             * param makes every row a single equality again. */
-            if (!strcmp(f2, "mode")) {
-                /* Three values, one comparison each, and they PARTITION the
-                 * page — that is the whole point. "Gate" is separate from
-                 * "Verb" because the gated reverb reads slot 2 as a HOLD time
-                 * rather than a decay, so those two rows must swap. */
-                switch (kit->send_type[slot]) {
-                    case DR32_EFX_DELAY:  return snprintf(buf, buf_len, "%s", "Delay");
-                    case DR32_EFX_GATED:  return snprintf(buf, buf_len, "%s", "Gate");
-                    case DR32_EFX_NONLIN: return snprintf(buf, buf_len, "%s", "NonLin");
-                    default:              return snprintf(buf, buf_len, "%s", "Verb");
-                }
-            }
-            /* Does this type have an envelope with a release? Gated and NonLin
-             * do; the plain reverbs and the delay do not. One more derived
-             * value, for the same reason as `mode`: visible_if takes a single
-             * condition, so "Gate OR NonLin" needs a param that is already the
-             * answer. */
-            if (!strcmp(f2, "env")) {
-                const dr32_efx_type t = kit->send_type[slot];
-                return snprintf(buf, buf_len, "%s",
-                                (t == DR32_EFX_GATED || t == DR32_EFX_NONLIN) ? "Env" : "-");
-            }
-            /* Sync reads back as a NAME so the enum round-trips through the
-             * menu the same way the type does — and as "-" when the armed type
-             * is not a delay at all. That sentinel is what lets the two time
-             * pages hang off a SINGLE equality: visible_if cannot say "type is
-             * Delay AND sync is Free", but it can say "sync is Free", which is
-             * only ever true for a delay. The row itself is hidden then, so the
-             * sentinel is never user-visible. */
-            if (!strcmp(f2, "sync")) {
-                if (kit->send_type[slot] != DR32_EFX_DELAY)
-                    return snprintf(buf, buf_len, "%s", "-");
-                return snprintf(buf, buf_len, "%s", cache[5] >= 0.5f ? "Sync" : "Free");
-            }
-            int idx = send_slot_index(f2);
-            if (idx >= 0) return snprintf(buf, buf_len, "%g", (double)cache[idx]);
-            if (!strcmp(f2, "return"))
-                return snprintf(buf, buf_len, "%g", (double)kit->send_return_ui[slot]);
-            if (!strcmp(f2, "type"))
-                return snprintf(buf, buf_len, "%s", dr32_efx_name(kit->send_type[slot]));
-        }
     }
 
     if (!strcmp(key, "ui_current_pad"))
@@ -366,8 +284,10 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "pitch_env"))     p->pitch_to_env = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "speaker_on"))    p->speaker_on = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "sending_note"))  p->sending_note = atoi(val);
-        else if (!strcmp(sub, "send1"))         p->send_db[0] = f;
-        else if (!strcmp(sub, "send2"))         p->send_db[1] = f;
+        /* See the read path: `send1`/`send2` stay accepted so an older state
+         * blob restores, but `send_a`/`send_b` are the names now. */
+        else if (!strcmp(sub, "send_a") || !strcmp(sub, "send1")) p->send_db[0] = f;
+        else if (!strcmp(sub, "send_b") || !strcmp(sub, "send2")) p->send_db[1] = f;
         /* Punch as a plain per-pad control (Josh, 2026-07-28). It is the
          * native transient shaper, so unlike a bespoke one its settings live in
          * the kit: these write Effect_Type / Effect_PunchAmount / _PunchTime and
@@ -387,50 +307,6 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "fx_p2"))         p->fx_p2 = f;
         else if (!strcmp(sub, "play"))          dr32_kit_note_on(kit, s->note, atoi(val));
         return 1;
-    }
-
-    // --- FX buses: send1_*/send2_*
-    if (!strncmp(key, "send", 4)) {
-        const char *p = key + 4;
-        int slot = (*p >= '1' && *p <= '2') ? (*p - '1') : -1;
-        if (slot >= 0 && p[1] == '_' && kit->fx) {
-            const char *f2 = p + 2;
-            float v = (float)atof(val);
-            dr32_fxbus *fx = kit->fx;
-            // Params are stored per slot so any one of them can be set alone.
-            float *cache = kit->send_p[slot];
-            if (!strcmp(f2, "type")) {
-                dr32_efx_type t = dr32_efx_from_name(val);
-                // Load that type's musical starting point. Selecting an effect
-                // should sound like something immediately, not inherit the
-                // previous effect's knob positions.
-                if (t != DR32_EFX_NONE) dr32_efx_defaults(t, cache);
-                dr32_fxbus_set_send_type(fx, slot, t);
-                kit->send_type[slot] = t;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
-                return 1;
-            }
-            if (!strcmp(f2, "return")) {
-                dr32_fxbus_set_send_return(fx, slot, v);
-                kit->send_return_ui[slot] = v;
-                return 1;
-            }
-            if (!strcmp(f2, "sync")) {
-                /* Name or number: the canvas writes the label, a restored state
-                 * or a script may write 0/1. */
-                if (!strcmp(val, "Sync"))      cache[5] = 1.0f;
-                else if (!strcmp(val, "Free")) cache[5] = 0.0f;
-                else                           cache[5] = (v >= 0.5f) ? 1.0f : 0.0f;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
-                return 1;
-            }
-            int idx = send_slot_index(f2);
-            if (idx >= 0) {
-                cache[idx] = v;
-                dr32_fxbus_set_send_params(fx, slot, cache, DR32_SEND_PARAMS);
-                return 1;
-            }
-        }
     }
 
     if (!strcmp(key, "ui_current_pad")) {

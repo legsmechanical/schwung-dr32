@@ -10,10 +10,48 @@ used `label` where the schema wants `name`, invented a kit-browser arrangement i
 `filepath` param type, and declared UI params the DSP had no `get_param` readback for. Symptom:
 loads fine, logs nothing, menu does nothing.
 
+## 🧭 The four pages, and why each one is shaped that way (2026-09-08)
+
+```
+Kits    MOVE  USER                                    <- first bank; two door cells
+Pads    PAD   SMPL  STRT  END   TRSP  DETN  CHOKE BRWS
+Pads-2  ATK   DCY   HOLD  ENV   VOL   PAN   PUNCH PTIME
+Pads-3  CUT   RES   TYPE  FILT  SNDA  SNDB  VVOL  MASTR
+```
+
+- **Kits is FIRST because `root` has no knobs at all.** Root's own grid page is always emitted
+  first and always named "Main"; a level with no knobs emits no page (`isMenuLevel` in
+  `page_plan.mjs`), so stripping root leaves the first bank to be whatever it navigates to
+  first. **Do not put a knob on `root`** — it would silently become page 1 and push Kits behind
+  it.
+- ⚠ **There is no "Follow Pads" toggle any more** (Josh, 2026-09-08): DR32 always follows. The
+  `ui_auto_select_pad` FIELD and its `set_param` path are still there and must stay — the file
+  browsers suspend follow through `browser_hooks` while open, and `tests/test_kit.c` drives both
+  focus regimes. It initialises to 1 and is declared nowhere.
+- ⚠ **The host's "Selected Pad" page is suppressed by the PAD knob at k1, and that is the only
+  way to suppress it.** `childPickerNeeded` (`page_plan.mjs`) drops the generated picker exactly
+  when the `child_index_param` is reachable — and only a `knobs[]` entry counts, because
+  `allListedKeys` deliberately ignores `ui_`-prefixed keys listed in `params[]`. Take the k1
+  knob away and the picker page comes back. **`node tools/pages_check.mjs` prints every page
+  with its kind**, so this is visible rather than something to reason about.
+- **One `sample` cell, not a Move/User pair.** Rooted at `/data` because the two sample
+  libraries have no closer common ancestor and one cell means one root. It costs nothing in
+  practice: `buildFilepathBrowserState` prefers the CURRENT VALUE's directory over `start_path`,
+  so a pad that holds a sample opens where that sample lives, and only an empty pad ever sees
+  `/data`. `start`/`end` point at it via `filepath_param: "sample"` — **davebox reads that
+  declaration to find the wave editor's file**, so changing the key changes what davebox
+  resolves.
+- **`vel_vol` carries `viz: false`.** The fader detector claims params NAMED like a level and
+  "Vel Vol" reads as one, but it is a modulation AMOUNT — a fader would be the same lie about it
+  that a fader would be about Pan.
+- ⚠ **A knob GAP cannot be declared.** `knobKeys` filters null entries out, so authored knobs are
+  packed; `master` sits at k8 only because `vel_vol` occupies k7. Remove one and master moves.
+
 ## 🎛 The UI is the host's param-pages grid — DR32 ships no UI of its own (since 0.2.0, 2026-09-05)
 
-DR32 targets **upstream Schwung ≥ 1.2.0**. Every page — the 32 pads, both sends, the drum bus,
-the kit browser — is planned by the host from the hierarchy the DSP serves, using upstream's
+DR32 targets **upstream Schwung ≥ 1.2.0** (and needs **≥ 1.3.0** for its per-pad sends to reach
+the host's return buses at all). Every page — the 32 pads, the kit browser — is planned by the
+host from the hierarchy the DSP serves, using upstream's
 built-in pictures (envelope, filter curve, fader, switch, sample waveform + wave editor) and the
 1.2.0 drum-surface contract. The canvaskit Pad Editor (`canvas.js`) and the fork-only host keys
 it needed (`host_canvas_ui`, `canvas_takes_click`) are **gone**; do not bring them back.
@@ -30,17 +68,17 @@ Key facts for this module specifically:
 - **The 32 pads are one child level** (`child_prefix: "pad"`, `child_count: 32`), which is why
   `dsp/dr32_params.c` speaks `pad<N>_<key>` (0-based) and the `pad_<key>` alias for the focused
   pad. `child_index_param: "ui_current_pad"` makes the DSP the owner of focus in both
-  directions (the host reads it to follow, the pad picker writes it). `child_note_base: 36`.
+  directions (the host reads it to follow, the Pad knob writes it). `child_note_base: 36`.
+- **`child_key_overrides` carries the two keys that are NOT per-pad.** `ui_current_pad` and
+  `master` sit on the `pads` level so they can have cells there, and a template with no
+  `{index}` resolves to the literal key (`child_key.mjs`, `resolveChildKey`) — without the
+  override they would become `pad3_master`, which addresses nothing.
 - **Every key the UI displays must be readable back via `dr32_read_param`.** `end` is a UI
   alias of `length` (`start + length`, written back as a length) so the host's trim editor can
   draw start..end while the `.ablpreset` keeps Move's own `Voice_PlaybackLength`.
 - **A viz group must sit contiguously on ONE row of four.** Knob order in the `pads` level is
   therefore load-bearing: attack/decay, cutoff/resonance/filter_type. Verify with
   `node tools/pages_check.mjs` (below) — it runs upstream's validator and prints every page.
-- The send pages hang off DSP-derived read-only params (`send1_mode`, `send1_env`,
-  `send1_sync`) because `visible_if` takes one condition on one param. They are served by the
-  DSP and declared nowhere; that is deliberate. Every armed type must fit ONE page of eight —
-  `pages_check` enforces it.
 
 ### How pad focus follows a hit — two regimes, and why
 
@@ -58,8 +96,8 @@ time it reaches `on_midi` (measured on device: identical status/channel/note/sou
 - A host that has vouched even once OWNS liveness from then on (`dr32_kit.host_vouches`): bare
   notes never move focus again, whatever the transport says — davebox's sequencer dragged focus
   because davebox reports no transport to the plugin.
-- `ui_auto_select_pad` ("Follow Pads") gates both. The kit browser suspends it via
-  `browser_hooks` while open.
+- `ui_auto_select_pad` gates both. It is **always on** — there is no toggle since 2026-09-08 —
+  and the file browsers suspend it via `browser_hooks` while open.
 
 Pinned by `tests/test_kit.c` (both regimes, vouch consumption across a transport start, the
 upper bank). **Before changing any of this, say so**: dAVEBOx sound mode depends on it.
@@ -95,18 +133,48 @@ got quieter"* — nowhere near this code.
   render. A `memset` there erases another pad's audio.
 - **All 32 pads are listed, empties included.** The index IS the `voice_out[]` index, so dropping
   empties shifts every pad behind them onto the wrong buffer.
-- **Ids are `pad1..pad32` (stable); labels follow the loaded sample.** That is what lets a saved
-  bus assignment survive a kit change.
+- 🔴 **Ids are `pad0..pad31` — 0-BASED, because that is what `dr32_params.c` parses.** They were
+  `pad1..pad32` until 2026-09-08 and it was a live bug the moment `voice_send_params` arrived:
+  the host substitutes an id into `{id}_send_a` VERBATIM, so every send level landed on the pad
+  next door and `pad32_send_a` addressed nothing. **Nothing errors on a key that does not
+  resolve** — it is simply a send that never moves. `tests/test_state.c` walks id → template →
+  `set_param`/`get_param` for all 32, and carries a negative control (`pad32_send_a` must resolve
+  to nothing) so the check cannot pass vacuously. Ids stay stable across content changes; the
+  LABELS follow the loaded sample, which is what lets a saved bus assignment survive a kit change.
 - **A short `n_voices`, or a NULL entry, falls back to `main_out`** — a host that asks about fewer
   voices than we have must still hear the whole kit.
 - **Never a `static` scratch buffer.** DR32 is MULTI-INSTANCE; two slots would share it on the
   audio thread. Per-kit fields (`scratch`, `split_dry`).
 
-⭑ **The always-on Drum Bus was REMOVED in the same branch** (`7da1f5f`) and this is related, not
-incidental: it was glue over the kit's SUMMED mix, so a pad routed to a host bus left before it and
-the stage applied to some pads and not others depending on routing. A slot chain can hold a
-compressor. **Do not reintroduce a whole-instrument stage** without deciding what it means for a
-routed-out voice.
+### The third half: DR32 owns each voice's send LEVEL, and nothing else about the send
+
+`get_param("voice_send_params")` → `["{id}_send_a","{id}_send_b"]`. **Array position is the send
+index** — `[0]` is Send A, `[1]` is Send B — and more than two is refused outright by the host
+rather than truncated. The host reads these levels; it does not own them, does not draw a fader
+for them and does not save them. They are ours, on our own pad pages and in our own `state` blob,
+and they arrive from a Move kit's per-pad send amounts, which is what they have always meant on
+the hardware.
+
+⚠ The `pads` level MUST keep declaring `send_a`/`send_b` with `min`, `max` and `unit: "dB"`. That
+is where the host reads the scale from, and **if it cannot find it, it refuses the send rather
+than guessing** — nothing heard, nothing mis-scaled, no error.
+
+⚠ These keys are read **on the audio callback**, a few per frame. Keep `get_param` for them a
+constant.
+
+⭑ **DR32's own send/return framework is GONE** (2026-09-08), and so are the two stages that
+preceded it out the door: the kit inserts (2026-07-27) and the always-on Drum Bus (`7da1f5f`).
+All three went for one reason — *a second, worse copy of a facility the host provides, worse
+because it was reachable only from inside DR32.* The Drum Bus case is the sharpest: it was glue
+over the kit's SUMMED mix, so a pad routed to a host bus left before it and the stage applied to
+some pads and not others depending on routing. **Do not reintroduce a whole-instrument stage**
+without deciding what it means for a routed-out voice, and **do not reintroduce internal
+returns.** The effects themselves were not deleted — they were lifted whole into their own repo
+to become a standalone reverb module; tag **`fxbus-final`** is the pointer.
+
+⭑ Consequence, and it is deliberate: **on a host below 1.3.0 the two per-pad send knobs do
+nothing.** They turn, save and restore; nothing reads them and there is no internal return left
+to feed. Josh's ruling, 2026-09-08.
 
 Cross-host contract, and the host side of all this: `../dbxhost/docs/MODULE_BUSES.md`.
 
@@ -135,12 +203,22 @@ centred on velocity 70, not a linear blend.
 
 ## Testing
 
+⚠ **The order matters and it is not optional.** `tests/run.sh` WIPES `dist/tests` (its link
+lines glob `dr32_*.o`, so a stale object from a deleted source would still be linked), and it is
+`pages_check` — not the test run — that writes the preview fixture.
+
 ```sh
-tests/run.sh                     # off-device: WAV loader, voice, kit, state, JSON round-trip
-node tools/pages_check.mjs       # upstream's validator + voice resolver over the SERVED hierarchy
-node ../schwung-current/tools/param-pages/preview.mjs dr32 --all --layout movy \
-     --fixture dist/tests/dr32-fixture.json --png dist/tests/pages   # render every page
+export SCHWUNG_SRC=../schwung-current/.worktrees/v1.3.3   # the host DR32 actually targets
+tests/run.sh                     # 1. off-device suite; writes dist/tests/served_hierarchy.json
+node tools/pages_check.mjs       # 2. upstream's validator over the SERVED hierarchy; writes the fixture
+node "$SCHWUNG_SRC/tools/param-pages/preview.mjs" dr32 --all --layout movy \
+     --fixture dist/tests/dr32-fixture.json --png dist/tests/pages   # 3. render every page
 ```
+
+⚠ **`../schwung-current` itself is STALE at v1.2.0-16** — it is the upstream-PR home and its
+checkout belongs to whatever branch is being prepared there. DR32 targets 1.3.x, so point
+`SCHWUNG_SRC` at a worktree of the tag instead of switching that checkout:
+`git -C ../schwung-current worktree add --detach .worktrees/v1.3.3 v1.3.3`.
 
 `tests/test_state.c` writes the hierarchy the plugin actually serves to
 `dist/tests/served_hierarchy.json`; `pages_check` reads THAT, not `module.json`, and writes a
@@ -148,18 +226,19 @@ one-module fixture for upstream's preview tools. Look at the PNGs before a deplo
 that broke the row rule draws as plain dials with no error anywhere.
 
 **The acceptance test for the engine is a null test, not an ear test** — see
-`docs/NULL_TESTING.md`. `tools/fx_suite.sh capture` renders native references on the device
-(stack stopped for the batch, via the canonical `scripts/restart_move.sh MOVE_ACTION=stop`);
-`tools/fx_suite.sh` reports null depth per effect.
+`docs/NULL_TESTING.md`. (`tools/fx_suite.sh`, which reported null depth per SEND effect, went
+with the send effects themselves; the drum-engine half of the rig stays.)
 
 **Playback effects are DROPPED** (Josh, 2026-07-26) — every pad plays the plain sampler.
 `Effect_Type` and all nine effects' params are still parsed and preserved on save, so kits stay
 lossless and still open on native Move; only playback ignores them.
 
 If one is ever brought back, the bar in `dr32_fx_modelled()` stands: enable it only once it
-**measurably beats the dry fallback** in `tools/fx_suite.sh`, and record the number. Implementing
-from prose without a numeric target made 8-bit, Punch and FM *worse* than not implementing them.
-Pitch Env (-39.3 dB) and Loop (-35.8 dB) were working when switched off.
+**measurably beats the dry fallback**, measured, with the number recorded. Implementing from prose
+without a numeric target made 8-bit, Punch and FM *worse* than not implementing them. Pitch Env
+(-39.3 dB) and Loop (-35.8 dB) were working when switched off. (The harness that produced those
+numbers was `tools/fx_suite.sh`; it left with the send effects, so reviving an effect means
+reviving a way to score it first.)
 
 ## Device
 
@@ -187,9 +266,38 @@ docker run --rm ubuntu:22.04 df -h /     # 0 available = this is your bug
 docker builder prune -af                 # reclaims build cache, images untouched
 ```
 
-A full VM also makes `docker image inspect` fail intermittently, which looks like the toolchain
-image vanishing. `build.sh` now fails loudly on a full VM; it prefers the native arm64
-`davebox-builder` image, falling back through `schwung-builder` → `move-anything-builder`.
+⚠⚠ **The "image vanishing" symptom is NOT disk pressure.** `docker image inspect` false-negatives
+on an image that is present, listed and runnable — observed **5/5** on `schwung-builder` with
+20 GB free, while `docker run schwung-builder aarch64-linux-gnu-gcc --version` worked. This file
+used to blame a full VM, and that misattribution is why a silent compiler switch was tolerated as
+a known flake. **`build.sh` no longer uses `inspect` at all**: running the image is both the
+presence test and the capability test. It still fails loudly on a genuinely full VM.
+
+### 🔴 THE COMPILER IS PINNED, AND THE PIN IS CHECKED IN THE ARTIFACT (2026-09-09)
+
+⚠⚠ **Selecting a toolchain by "whichever image is present" chooses which COMPILER builds the
+module, and the images on this machine DISAGREE**: `schwung-builder` and `davebox-builder` are
+gcc **12.2.0**, `move-anything-builder` is gcc **11.4.0**. Identical source, different binary —
+proven back to back: `11.4 → a49f4fe9`, `12.2 → c191a9c3`.
+
+**And the fallthrough was silent.** The full-VM symptom above made the preferred image look
+absent, so the old probe loop moved to the next candidate. The only trace was one line of build
+output nobody reads. **Three commits carried a gcc 11.4 artifact that had been reported as the
+verified 12.2 build**, and the hash in git stopped describing what was on the device.
+
+- `DR32_BUILDER` names the image (default `schwung-builder`). That is a **preference**, not the
+  guarantee — an image can move under a floating base tag without changing its name.
+- **The guarantee is read out of the ARTIFACT.** gcc writes its version into the `.so`'s
+  `.comment` section, so `dsp.so` has always been self-identifying; it was simply never checked.
+  `build.sh` greps it and **fails** unless it matches `DR32_GCC` (default `12.2.0`).
+- **A failed assert deletes `dist/<id>/`** — the DIRECTORY `install.sh` actually ships. Deleting
+  only the tarball was the first version of that guard and it guarded nothing.
+- Pinned by `tools/check_build_script.mjs` (in `tests/run.sh`), six mutations, all firing.
+
+⭑ **Verify a suspect artifact anywhere, including on the device:**
+```sh
+strings dsp.so | grep '^GCC:'      # must say 12.2.0
+```
 
 ⚠ Do not run `EnginePerfTool` captures against a live Move stack — that is the suspected cause
 of two full device lockups needing a power cycle.

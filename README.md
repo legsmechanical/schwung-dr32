@@ -2,7 +2,8 @@
 
 > ⚠️ **WORK IN PROGRESS.** Usable but unfinished, and not released. Version `0.2.0`,
 > no catalog entry, and several behaviours below are still open questions rather
-> than decisions. Expect breaking changes. **Requires Schwung ≥ 1.2.0.**
+> than decisions. Expect breaking changes. **Requires Schwung ≥ 1.2.0** — and
+> **≥ 1.3.0 for the per-pad sends to reach anything** (see below).
 
 A clone of Ableton Move's native **Drum Rack**, extended from 16 pads to **32**, running as a
 [Schwung](https://github.com/charlesvestal/schwung) sound-generator module.
@@ -15,36 +16,51 @@ here and sounds like itself, with twice the pads.
 
 **32 pads, Move's own kits.** Kits load from `/data/CoreLibrary/Track Presets/Drums` and
 `/data/UserData/UserLibrary/Track Presets`, with live preview while browsing. Samples can be
-swapped per pad from either library.
+swapped per pad from either library through a single **Sample** browser, which opens in the
+folder that pad's current sample came from.
 
 **The Drum Sampler voice**, per pad: playback region (start / length), transpose and detune, choke
 groups, velocity modulation, pan and volume, sends, and Punch. Two envelope modes (**A-H-D** and
 **A-S-R**) and four filter types (Lowpass 12 dB, Lowpass, Highpass, Peak).
 
-**Two sends and a drum bus.** Each send offers Plate, Spaces, Delay, Gated, Digital, Hall, NonLin
-and `Native` reverb/delay types; the bus has compression, crunch, attack/sustain shaping and
-dry/wet.
+**Two sends, per pad, into the host's return buses.** Every pad has its own Send A and Send B
+amount in dB, which is what a send amount means in a Move kit — so an imported kit's send levels
+arrive pointing at real returns. The effect on a return is the host's: put any chain you like
+there and every pad can tap it at its own level.
+
+⚠️ **This needs a host that offers returns — Schwung ≥ 1.3.0**, which is where the module-bus
+contract (`voice_send_params`) landed. On an older host the two knobs still turn, save and restore,
+but nothing reads them, so they are inaudible. DR32 carried its own reverbs until 2026-09-08 and no
+longer does: a module holding its own returns is a second, worse copy of something the host
+provides, reachable only from inside that module. Those effects were not deleted — they were
+lifted out whole to become a standalone reverb module, and the DR32 tag `fxbus-final` is the
+pointer to them.
 
 **Native Schwung pages, no custom UI.** Since 0.2.0 every page is the host's own knob grid, planned
 from the hierarchy the module serves: the pads are one 32-instance child level with `pad_layout:
-"drums"`, so the header shows a pad map, the grid follows the pad you hit, and each pad's page draws
-the sample waveform with a trim editor, the amp envelope, the filter curve and a fader. Pad names
-come from the loaded kit. Hitting a pad moves the editor to it while the transport is stopped; with
-a pattern running, focus only moves on a host that vouches for a live press (dAVEBOx does; an
-upstream contract for it is in progress).
+"drums"`, so the header shows a pad map and each pad's page draws the sample waveform with a trim
+editor, the amp envelope, the filter curve and a fader. Pad names come from the loaded kit.
+
+Four pages, in order:
+
+| | |
+|---|---|
+| **Kits** | Move Kits and User Kits — click either to open that library's browser |
+| **Pads** | Pad · Sample · Start · End · Transpose · Detune · Choke · Browse |
+| **Pads 2** | Attack · Decay · Hold · Envelope · Volume · Pan · Punch · Punch Time |
+| **Pads 3** | Cutoff · Reso · Type · Filter · Send A · Send B · Vel Vol · Master |
+
+**It always follows the pad you hit** — there is no Follow toggle. Hitting a pad moves the editor
+to it while the transport is stopped; with a pattern running, focus only moves on a host that
+vouches for a live press (dAVEBOx does; an upstream contract for it is in progress). The **Pad**
+knob on the first pad page changes the edited pad by hand, for when focus cannot follow.
 
 ## Status — what is not finished
 
-- **`Native` reverb has never been heard.** It is a port of Move's own SuperEco reverb, measured
-  rather than tuned: energy-decay-curve deviation is 0.29 dB above 5 kHz but **5.28 dB below
-  200 Hz**, which is the remaining modelling gap. An ear check is owed, as is a confirmation of its
-  output level.
-- **Shippability of `Native` is undecided.** Unlike the rest of DR32 it is transcription rather
-  than behavioural reconstruction, and that has distribution implications which have not been
-  settled. Treat it as provisional.
-- **Kit import does not arm the reverb.** Return-chain FX in an `.ablpreset` is parsed and
-  preserved but left inert, while per-pad *send amounts* are imported — so a stock kit currently
-  feeds correct levels into an unconfigured reverb.
+- **Kit import does not arm a return.** Return-chain FX in an `.ablpreset` is parsed and preserved
+  but not acted on, while per-pad *send amounts* are imported — so a stock kit arrives with correct
+  levels pointing at whatever the user has (or has not) put on Send A and Send B.
+- **The per-pad sends are inaudible below host 1.3.0**, as above. They still save and restore.
 - **Per-pad playback effects are deliberately dropped.** `Effect_Type` and all nine effects'
   parameters are still parsed and written back, so kits stay lossless and reopen correctly on a
   native Move — but playback ignores them and every pad plays the plain sampler.
@@ -68,13 +84,12 @@ Check for `==> done:` before trusting an install.
 ```sh
 tests/run.sh                # off-device: WAV loader, voice, kit parsing, state, JSON round-trip
 node tools/pages_check.mjs  # upstream's own validator over the SERVED hierarchy; writes a preview fixture
-tools/fx_suite.sh           # null-test report, per effect
 ```
 
 **The acceptance test is a null test, not an ear test** — see [`docs/NULL_TESTING.md`](docs/NULL_TESTING.md).
-`tools/fx_suite.sh capture` renders native references on the device and the suite reports null depth
-per effect. That bar exists because implementing effects from prose without a numeric target made
-three of them measurably *worse* than not implementing them at all.
+That bar exists because implementing effects from prose without a numeric target made three of them
+measurably *worse* than not implementing them at all. (`tools/fx_suite.sh`, which reported null
+depth per send effect, went with the effects themselves.)
 
 ## A note on fidelity
 
@@ -92,6 +107,6 @@ and wrong), and velocity→volume is a dB law centred on velocity 70, not a line
 | `lib/` | `.ablpreset` reading/writing |
 | `tests/` | off-device unit tests |
 | `tools/` | the null-test harness and capture scripts |
-| `docs/specs/` | design notes, including the reverb port |
+| `docs/specs/` | design notes |
 
 Development conventions and the traps worth knowing are in [`CLAUDE.md`](CLAUDE.md).

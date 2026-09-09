@@ -400,8 +400,6 @@ static void set_param(void *instance, const char *key, const char *val) {
      * the contract on a settle, so this is never per-frame work. */
     size_t kl = strlen(key);
     if ((kl >= 7 && !strcmp(key + kl - 7, "_sample")) ||
-        (kl >= 12 && !strcmp(key + kl - 12, "_sample_move")) ||
-        (kl >= 12 && !strcmp(key + kl - 12, "_sample_user")) ||
         (kl >= 7 && !strcmp(key + kl - 7, "_browse")))
         dr32_refresh_hierarchy(in);
 }
@@ -425,11 +423,23 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
      * shift every pad behind them onto the wrong buffer. An empty pad simply
      * renders silence, exactly as it does today.
      *
-     * The id is the pad's own param prefix (`pad1`..`pad32`) — what the rest of
-     * this module already addresses a pad by — so a saved bus assignment
-     * survives a kit change: the ids are stable and the LABELS follow whatever
-     * sample is loaded. The label falls back to the id when a pad is empty; a
-     * row reading "" would be unclickable on the host's screen.
+     * 🔴 THE ID IS THE PAD'S OWN PARAM PREFIX, AND IT IS 0-BASED: `pad0`..`pad31`.
+     *
+     * That is not cosmetic and it was wrong until 2026-09-08. `voice_send_params`
+     * below publishes the TEMPLATE `{id}_send_a`, and the host substitutes each
+     * id verbatim to read a real parameter off this module — so an id must be
+     * exactly what dr32_params.c's split_pad_key() parses, which counts from
+     * ZERO (`pad0_attack`). Published as `pad1`..`pad32`, every send level would
+     * have landed on the pad NEXT DOOR and `pad32_send_a` would have addressed
+     * nothing at all, silently: nothing in the host errors on a key that does
+     * not resolve. Upstream's own docs name this exact hazard and say it is the
+     * module's to reconcile, not the host's to guess.
+     *
+     * Ids are stable across content changes and the LABELS follow whatever
+     * sample is loaded, so a saved bus assignment survives a kit change. An
+     * empty pad falls back to "Pad N" (1-based, matching the pads the user's
+     * hands are on) rather than to its id; a row reading "" would be
+     * unclickable on the host's screen.
      *
      * A host that does not know about buses never asks for this key, which is
      * half of why this feature is inert on stock.
@@ -444,12 +454,12 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
                 if (n + 1 >= buf_len) return 0;
                 buf[n++] = ',';
             }
-            w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i + 1);
+            w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i);
             if (w <= 0 || n + w >= buf_len) return 0;
             n += w;
             int m = in->kit.pads[i].path[0]
                   ? append_pad_name(&in->kit.pads[i], buf + n, buf_len - n)
-                  : snprintf(buf + n, buf_len - n, "\"pad%d\"", i + 1);
+                  : snprintf(buf + n, buf_len - n, "\"Pad %d\"", i + 1);
             if (m <= 0 || n + m >= buf_len) return 0;
             n += m;
             if (n + 1 >= buf_len) return 0;
@@ -460,6 +470,37 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
         buf[n] = '\0';
         return n;
     }
+    /*
+     * WHERE EACH VOICE'S SEND LEVEL LIVES — the third, optional half of the
+     * module-bus contract (upstream >= 1.3.0, docs/MODULES.md).
+     *
+     * A voice's send level is OURS. The host reads it; it does not own it, does
+     * not draw a fader for it and does not save it — these levels are already
+     * in our own `state` blob and on our own pad pages, and they arrive from a
+     * Move kit's per-pad send amounts, which is what they have always meant on
+     * the hardware.
+     *
+     * ARRAY POSITION IS THE SEND INDEX: [0] is Send A, [1] is Send B. More than
+     * two is refused outright by the host rather than quietly truncated.
+     *
+     * `{id}` is substituted verbatim, so this resolves to `pad0_send_a` ...
+     * `pad31_send_b` — see the id note above, which is the whole reason the
+     * split_voices ids had to become 0-based.
+     *
+     * ⚠ The host reads these keys ON THE AUDIO CALLBACK, a few per frame. Keep
+     * the answer a constant: no allocation, no formatting, no work.
+     *
+     * ⚠ The pads level must keep declaring `send_a`/`send_b` with `min`, `max`
+     * and `unit: "dB"`. That is where the host gets the scale from, and if it
+     * cannot find it, it REFUSES the send rather than guessing — nothing is
+     * heard, and nothing is mis-scaled.
+     *
+     * A host below 1.3.0 never asks for this key, and there is no internal
+     * return left for the levels to feed, so on such a host the two per-pad
+     * send knobs simply do nothing. That is the trade this change accepted.
+     */
+    if (!strcmp(key, "voice_send_params"))
+        return snprintf(buf, buf_len, "[\"{id}_send_a\",\"{id}_send_b\"]");
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user"))
         return snprintf(buf, buf_len, "%s", in->kit_path);
     // The blob Schwung stores in the set's slot_N.json. Without this the host
@@ -483,12 +524,6 @@ static void render_block(void *instance, int16_t *out, int frames) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
     if (frames > 1024) frames = 1024;
-
-    /* Tempo for the synced Delay send. get_bpm has its own fallback chain and
-     * documents 120 as the floor of it, but the POINTER may be NULL on an older
-     * host, so it is guarded — and the kit early-outs on an unchanged value, so
-     * this is a float compare per block rather than a recompute. */
-    if (g_host && g_host->get_bpm) dr32_kit_set_bpm(&in->kit, g_host->get_bpm());
 
     dr32_sync_transport(in);
 
@@ -530,11 +565,10 @@ void move_plugin_render_split(void *instance, int16_t *const *voice_out,
     if (!in) return;
     if (frames > 1024) frames = 1024;
 
-    /* The same per-block housekeeping render_block does. Neither may be skipped
-     * on this path: the tempo feeds the synced Delay and the transport sync
-     * drives choke/retrigger, and a kit that only saw them on one of its two
-     * entry points would drift the moment a voice was assigned to a bus. */
-    if (g_host && g_host->get_bpm) dr32_kit_set_bpm(&in->kit, g_host->get_bpm());
+    /* The same per-block housekeeping render_block does, and it may not be
+     * skipped on this path: the transport sync drives choke/retrigger, and a
+     * kit that only saw it on one of its two entry points would drift the
+     * moment a voice was assigned to a bus. */
     dr32_sync_transport(in);
 
     dr32_kit_render_split(&in->kit, voice_out, n_voices, main_out, frames);

@@ -97,7 +97,8 @@ justifies it.
 
 ## Per-effect scoreboard as of the drop (2026-07-26)
 
-`tools/fx_suite.sh capture` then `tools/fx_suite.sh`. One note (36), hold 0.001,
+`tools/fx_suite.sh capture` then `tools/fx_suite.sh` (that harness left with the send
+effects in 2026-09-08 — see the note at the end). One note (36), hold 0.001,
 decay 2.0, one pad param set per effect.
 
 | Effect | Null | State |
@@ -154,109 +155,16 @@ the amount curve. Do not chase its null depth.
 
 ---
 
-# The REVERB null test (`tools/verb_suite.sh`)
+# The REVERB null test — MOVED OUT (2026-09-08)
 
-The Native send is a port of Move's own Reverb, so it gets its own path — much
-shorter than the pad-effect one above, because a reverb reference needs no song.
-The references in `build/ir/` are single-sample impulse renders through a return
-chain, so the tail is already isolated and **no subtraction and no device time**
-are required. They are checked in; re-capture with `tools/oracle.sh` only if the
-fixtures change.
+Everything about the `Native` send's null test — the direct-parameter path, why
+a sample-level null does not transfer to a reverb, the unmodelled-parameter
+report, and `tools/verb_suite.sh` / `verb_score.mjs` / `verb_null.py` — went with
+the reverbs when DR32 gave up its internal send/return framework.
 
-```sh
-tests/run.sh                  # builds dist/tests/render_verb
-tools/verb_suite.sh           # score + render + report over build/ir/*.abl
-tools/verb_suite.sh x.abl     # one preset, ad hoc
-```
+It is not lost: the whole of this document, the specs and the rig were copied
+into the reverb salvage repo, and DR32's tag **`fxbus-final`** is the commit
+where all of it was still here.
 
-## The direct-parameter path, and why it exists
-
-A stock Reverb carries **33 parameters**; a DR32 send has **eight** generic
-control slots. The musical knob mapping in `dr32_fxbus.cpp` therefore cannot
-express a stock preset at all, and driving the port through it would be testing
-a different reverb. So there is a second, test-only path that takes the `.abl`
-JSON's own keys and values with no DR32-side interpretation in between:
-
-```
-build/ir/x.abl  --tools/verb_score.mjs-->  x.verb  --dist/tests/render_verb-->  x-dr32.wav
-```
-
-`dr32_fxbus_native_set_raw()` is that path. It is **not** reachable from the UI,
-the kit format or saved state, and it must stay that way — it is a measurement
-instrument, not a feature. `dr32_fxbus_native_raw_commit()` also switches the
-send into null-test mode, which turns off two things that exist to make Native
-sit politely beside the other send types and would otherwise corrupt the
-measurement: the output level trim, and the idle-skip (whose output gate at
--120 dB would put a floor under the null depth that has nothing to do with the
-model).
-
-## ⚠ Every unmodelled parameter is REPORTED
-
-`setRaw()` returns three outcomes, and the third is the point:
-
-| | |
-|---:|---|
-| `1` | applied |
-| `0` | a real Reverb parameter the port knowingly does not model yet |
-| `-1` | not a Reverb parameter at all — the renderer refuses to run |
-
-A renderer that silently swallowed the middle case would produce a bad null
-number with nothing to say why, which is worse than no test. `render_verb`
-prints them; `verb_suite.sh` leaves them in `build/fx/<case>.log`.
-`verb_score.mjs` is equally strict on its own side and exits non-zero rather
-than drop a key it cannot represent.
-
-## ⚠⚠ A SAMPLE-LEVEL NULL DOES NOT TRANSFER TO A REVERB
-
-This is the important thing on this page, and it took building the null path to
-find out.
-
-Measured against the device, the tails' waveform correlation is **-0.008** and
-the null depth is **-0.34 dB**. That is not a verdict on the model. Two reverbs
-whose delay lines differ by a single sample produce completely decorrelated
-tails while sounding identical, so the null is **all-or-nothing**: it reads 0 dB
-for everything except a bit-exact port, and cannot tell "very close" from
-"wildly wrong".
-
-DR32's usual rule — *the acceptance test is a null test, not an ear test* —
-holds for the pad effects, which are deterministic transforms of one sample. It
-does not hold for a reverb, and pretending otherwise would have meant reporting
-0 dB forever and calling it a failure.
-
-**The acceptance metric for the reverb is therefore ENERGY DECAY CURVE
-deviation per band**, which is graded, insensitive to phase, and is what a
-reverb is actually judged on. `tools/verb_null.py` reports both — the null for
-the record and to catch a gross error, the EDC deviation as the number that
-means something.
-
-⚠ One trap worth keeping: the reference is a WHOLE-TRACK render, so the dry
-click goes to master alongside the return. That single dry sample carries about
-50x the energy of the entire tail, and our render has no dry path — so with it
-included, the least-squares fit correctly concludes "subtract almost nothing"
-and the null reads 0 dB however good the model is. `--skip=` (default 512
-frames) steps past it.
-
-Current state, driven from each preset's own 33 parameters:
-
-| band | EDC deviation (rms) |
-|---|---:|
-| 5-16 kHz | **0.29 dB** |
-| 1.5-5 kHz | **0.36 dB** |
-| 671 Hz - 1.5 kHz | **0.95 dB** |
-| 200-671 Hz | 2.21 dB |
-| 20-200 Hz | **5.28 dB** |
-
-The model is very close above ~700 Hz and drifts at the bottom. The low end is
-the remaining work, and it is consistent with the low-band RT60 running slightly
-long (1.85 s device against 2.11 s ours).
-
-## ⚠ The null column is not yet a measure of the model
-
-Four parts of the device are still unmodelled, and one of them is the **final
-mixer**, which sets the entire output structure — two stereo delays, a fixed
-1.39 crossfeed and a `swapLR` width term, none of which the port's placeholder
-reproduces. Until that lands, a null number mostly measures the placeholder.
-
-So the suite reports **RT60, broadband and per band**, which reads the late
-loop's behaviour rather than the output mix, and is meaningful today. See
-`docs/specs/2026-07-29-supereco-port.md` for what the numbers currently say.
+What remains above is the DRUM ENGINE's null test, which is DR32's own and is
+still the acceptance test for the voice.
