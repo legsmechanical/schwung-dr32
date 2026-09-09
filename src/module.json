@@ -275,18 +275,6 @@
               "default": "A-H-D"
             },
             {
-              "key": "pitch_env",
-              "name": "Pitch Env",
-              "short_name": "PENV",
-              "type": "int",
-              "min": 0,
-              "max": 1,
-              "viz": {
-                "kind": "switch"
-              },
-              "default": 0
-            },
-            {
               "key": "volume",
               "name": "Volume",
               "type": "float",
@@ -443,7 +431,7 @@
             "vel_vol",
             "volume",
             "pan",
-            "pitch_env",
+            "",
             "send_a",
             "send_b",
             "punch",

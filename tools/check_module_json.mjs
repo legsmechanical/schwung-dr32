@@ -38,9 +38,24 @@ for (const [lname, level] of Object.entries(levels)) {
 }
 
 // 3. knobs must reference params that exist in the same level
+//
+// ⭑ EXCEPT "": an EMPTY knob entry is a DELIBERATE GAP, and it is the only way
+// to leave a slot blank. A level's pages are chunked flat 8 at a time, so only
+// its LAST page may be short — any other page needs a filler to hold position.
+//
+// It works because keyOf() returns "" unchanged (it only filters null), so the
+// entry survives into page.keys, and every consumer downstream guards falsy
+// keys: onKnobTurn and onClick bail on `!key`, and all three value-read loops
+// `continue` on `!k`. So the slot draws as a gap, is not turnable, is not
+// clickable, and is NEVER read from the DSP — it costs nothing on the SPI
+// callback, which matters here.
+//
+// ⚠ Do not "tidy" an empty entry out of a knobs array. It is load-bearing
+// layout, and removing one silently pulls every knob after it one slot earlier.
 for (const [lname, level] of Object.entries(levels)) {
     const keys = new Set((level.params || []).filter(p => p && p.key).map(p => p.key));
     for (const k of level.knobs || []) {
+        if (k === "") continue;                      // a deliberate gap — see above
         if (!keys.has(k)) errors.push(`level "${lname}" maps knob "${k}" which is not one of its params`);
     }
 }
