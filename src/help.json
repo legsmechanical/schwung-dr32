@@ -161,6 +161,40 @@
             " itself on",
             "PTIME punch time"
           ]
+        },
+        {
+          "title": "Copying pads",
+          "lines": [
+            "Hold COPY and hit a",
+            "pad. That pad is",
+            "the source.",
+            "",
+            "Every pad you hit",
+            "while you keep",
+            "holding is pasted",
+            "into, sample and",
+            "all.",
+            "",
+            "Hold DELETE and hit",
+            "pads to clear them.",
+            "",
+            "UNDO puts back the",
+            "last pad you wrote",
+            "over.",
+            "",
+            "The WHOLE pad",
+            "travels, not just",
+            "the page you are",
+            "on: sample, tuning,",
+            "envelope, filter,",
+            "level, pan, sends,",
+            "punch.",
+            "",
+            "Its note and browse",
+            "spot do not. Those",
+            "are what make it",
+            "that pad."
+          ]
         }
       ]
     },
