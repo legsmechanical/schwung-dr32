@@ -131,7 +131,7 @@
 
 <div class="note">
   <p><strong>Requires Schwung 1.3.0 or later.</strong> That is the version where the module-bus
-  contract arrived, and the per-pad sends reach nothing without it. Version 0.3.1.</p>
+  contract arrived, and the per-pad sends reach nothing without it. Version 0.3.2.</p>
 </div>
 
 <h2>What it is</h2>
@@ -210,8 +210,9 @@ detent, so you can try alternatives without opening anything.</p>
 <h2>Link</h2>
 
 <p><strong>LINK</strong> sets one parameter across every pad at once. Click it on, turn a knob and
-every pad takes that value. It releases as soon as you touch a different control, so the next knob
-is the focused pad's alone.</p>
+every pad takes that value. It releases as soon as you change <em>anything</em> else &mdash; another
+knob, a sample, a browse step, the master level &mdash; so the next thing you touch is the focused
+pad's alone. Playing a pad does not end it, so you can audition while you sweep.</p>
 
 <p>It never spreads the things that make a pad a distinct pad: its sample, its note, or the
 sample-browse position. It is off whenever DR32 loads.</p>

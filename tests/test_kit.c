@@ -541,6 +541,71 @@ int main(void) {
             dr32_apply_param(&t, "pad4_pan", "20");
             CHECK(t.pads[9].params.pan != 20.0f, "still linking after release");
 
+            /* ---- ANY EDIT ENDS IT, not just a linkable one (Josh, 09-09) ----
+             * The non-linkable params — sample, browse, note — used to be
+             * invisible to the release check, because it lived INSIDE the
+             * fan-out branch. So you could arm Link, load a sample, and the
+             * mode was still armed with nothing on screen saying so: the next
+             * knob you touched flattened the kit.
+             *
+             * ⚠ Each is checked with the mode BOTH latched and unlatched. The
+             * latched case alone would pass with the unlatched path broken,
+             * which is the case a user hits first — arm, then immediately
+             * reach for the file browser. */
+            {
+                const char *edits[] = { "browse", "note", "sending_note" };
+                const char *vals[]  = { "3",      "40",   "41" };
+                for (int e = 0; e < 3; e++) {
+                    /* (a) armed but nothing swept yet */
+                    dr32_kit a; dr32_kit_init(&a);
+                    dr32_apply_param(&a, "link", "All");
+                    char key[64];
+                    snprintf(key, sizeof key, "pad4_%s", edits[e]);
+                    dr32_apply_param(&a, key, vals[e]);
+                    CHECK(a.link_all == 0,
+                          "`%s` did not end the mode when nothing had been swept yet", edits[e]);
+                    /* ...and the mode really is gone, not just the flag: */
+                    dr32_apply_param(&a, "pad4_pan", "33");
+                    CHECK(a.pads[9].params.pan != 33.0f,
+                          "still linking after `%s` supposedly ended the mode", edits[e]);
+                    dr32_kit_free(&a);
+
+                    /* (b) mid-sweep, already latched onto another field */
+                    dr32_kit b; dr32_kit_init(&b);
+                    dr32_apply_param(&b, "link", "All");
+                    dr32_apply_param(&b, "pad4_hold", "2.0");
+                    CHECK(b.link_all == 1, "link released on its own first field");
+                    dr32_apply_param(&b, key, vals[e]);
+                    CHECK(b.link_all == 0, "`%s` did not end the mode mid-sweep", edits[e]);
+                    dr32_kit_free(&b);
+                }
+
+                /* MASTER is an edit too, and is not a pad key — it would miss
+                 * the pad-branch rule entirely. */
+                dr32_kit m; dr32_kit_init(&m);
+                dr32_apply_param(&m, "link", "All");
+                dr32_apply_param(&m, "pad4_attack", "1.5");
+                dr32_apply_param(&m, "master", "0.8");
+                CHECK(m.link_all == 0, "turning MASTER did not end the mode");
+                dr32_apply_param(&m, "pad4_pan", "44");
+                CHECK(m.pads[9].params.pan != 44.0f, "still linking after MASTER ended the mode");
+                dr32_kit_free(&m);
+            }
+
+            /* ⚠ PLAYING IS NOT EDITING. A note trigger must not disarm — you
+             * audition while you sweep. */
+            {
+                dr32_kit pl; dr32_kit_init(&pl);
+                dr32_apply_param(&pl, "link", "All");
+                dr32_apply_param(&pl, "pad4_volume", "-3");
+                dr32_apply_param(&pl, "pad7_play", "100");
+                dr32_apply_param(&pl, "pad4_volume", "-4");
+                int still = 1;
+                for (int i = 0; i < DR32_PADS; i++) if (pl.pads[i].params.volume_db != -4.0f) still = 0;
+                CHECK(still, "hitting a pad to audition released the mode mid-sweep");
+                dr32_kit_free(&pl);
+            }
+
             /* ui_* must not count as "a different parameter" — focus following a
              * hit while you sweep would otherwise disarm mid-gesture. */
             dr32_kit t2; dr32_kit_init(&t2);
@@ -551,6 +616,23 @@ int main(void) {
             int still = 1;
             for (int i = 0; i < DR32_PADS; i++) if (t2.pads[i].params.decay != 4.0f) still = 0;
             CHECK(still, "a ui_ write released the mode mid-sweep");
+
+            /* ⚠ THE CHECK ABOVE DOES NOT REACH THE GUARD, and that matters.
+             * `ui_current_pad` is a GLOBAL key — split_pad_key rejects it, so
+             * it never enters the pad branch where link_ends_mode is consulted,
+             * and it passes whether the ui_ guard exists or not. A
+             * pad-PREFIXED ui_ key is what the guard is actually for.
+             *
+             * Today the host writes ui_live_press bare (DR32 handles it as a
+             * global), so this is defensive rather than a production path —
+             * pinned because apply_pad_field returns 1 for ANY sub it does not
+             * recognise, which means without the guard this write would end the
+             * mode while changing nothing at all. */
+            dr32_apply_param(&t2, "pad4_ui_live_press", "1");
+            dr32_apply_param(&t2, "pad4_decay", "5.0");
+            int guarded = 1;
+            for (int i = 0; i < DR32_PADS; i++) if (t2.pads[i].params.decay != 5.0f) guarded = 0;
+            CHECK(guarded, "a pad-prefixed ui_ write released the mode — it changed nothing");
             dr32_kit_free(&t2);
             dr32_kit_free(&t);
         }

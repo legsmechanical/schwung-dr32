@@ -54,9 +54,10 @@ level: one reverb for the drums, not one inside each pad.
 > why any Schwung effect module works here.
 
 **Link** sets one control across all 32 pads at once. Arm it, sweep a knob, and every pad takes that
-value — then it releases the moment you touch a different control, so the next knob is that pad's
-alone. It never spreads the things that make a pad a distinct pad: its sample, its note, its browse
-position.
+value — then it releases the moment you change *anything* else: another knob, a sample, a browse
+step, the master level. So the next thing you touch is that pad's alone. Playing a pad doesn't end
+it, so you can audition while you sweep. It never spreads the things that make a pad a distinct pad:
+its sample, its note, its browse position.
 
 ## The pages
 

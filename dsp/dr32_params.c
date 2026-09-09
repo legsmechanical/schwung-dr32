@@ -339,6 +339,8 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
     }
 }
 
+/** May LINK SPREAD this parameter across all 32 pads? The exclusions are what
+ *  make a pad a distinct pad: its sample, its note, its browse position. */
 static int link_fans_out(const char *sub) {
     static const char *const never[] = {
         "sample", "sample_move", "sample_user", "note", "sending_note",
@@ -346,6 +348,29 @@ static int link_fans_out(const char *sub) {
     };
     for (int i = 0; never[i]; i++) if (!strcmp(sub, never[i])) return 0;
     return strncmp(sub, "ui_", 3) != 0;   /* editor state is never per-pad */
+}
+
+/**
+ * Does touching this parameter END the mode?
+ *
+ * ⭐ ANY EDIT ENDS IT, not just a linkable one (Josh, 2026-09-09: "exit link
+ * mode once ANY other param is changed - not just a linkable one"). Reaching
+ * for a different control IS the "done" signal, and it is no less a signal for
+ * landing on something Link could never have spread. Before this, loading a
+ * sample or stepping BROWSE left the mode armed and invisible, so the next knob
+ * you touched flattened the kit.
+ *
+ * ⚠ Two things are NOT edits and must not disarm:
+ *   ui_*   editor state. The host writes ui_current_pad when a pad is HIT, so
+ *          this is the difference between "auditioning while I sweep" and
+ *          "losing the mode because I tapped a pad".
+ *   play   a note trigger. Same reason: playing is not editing.
+ * Both are the carve-out that makes the rule usable rather than an exception
+ * to it.
+ */
+static int link_ends_mode(const char *sub) {
+    if (!strncmp(sub, "ui_", 3)) return 0;
+    return strcmp(sub, "play") != 0;
 }
 
 int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
@@ -363,7 +388,15 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
          * one way and not the other, which this file's own send_slot_index
          * comment already records happening once.
          */
-        if (r && kit->link_all && link_fans_out(sub)) {
+        if (r && kit->link_all && link_ends_mode(sub)) {
+            if (!link_fans_out(sub)) {
+                /* An edit Link could never spread — a sample, a note, a browse
+                 * step. It still ends the mode: the test is "did you reach for
+                 * something else", not "was it linkable". */
+                kit->link_all = 0;
+                kit->link_sub[0] = '\0';
+                return r;
+            }
             if (kit->link_sub[0] == '\0') {
                 /* First eligible field since arming — this is what Link is for. */
                 snprintf(kit->link_sub, sizeof(kit->link_sub), "%s", sub);
@@ -473,7 +506,15 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         kit->ui_auto_select_pad = (!strcmp(val, "on") || atoi(val) == 1);
         return 1;
     }
-    if (!strcmp(key, "master")) { kit->master_gain = (float)atof(val); return 1; }
+    /* ⭐ MASTER IS AN EDIT TOO, and it is not a pad key, so it would otherwise
+     * miss the rule above entirely — turn it with Link armed and the mode would
+     * survive onto whatever you touched next. */
+    if (!strcmp(key, "master")) {
+        kit->master_gain = (float)atof(val);
+        kit->link_all = 0;
+        kit->link_sub[0] = '\0';
+        return 1;
+    }
     if (!strcmp(key, "panic"))  { dr32_kit_all_off(kit); return 1; }
     if (!strcmp(key, "clear")) {
         dr32_kit_all_off(kit);
