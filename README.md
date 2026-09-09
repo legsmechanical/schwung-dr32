@@ -53,6 +53,16 @@ level: one reverb for the drums, not one inside each pad.
 > goes somewhere shared. DR32 carries no effects of its own — all of this is the host's, which is
 > why any Schwung effect module works here.
 
+**Copy a pad onto another by hand.** Hold **Copy** and hit a pad — that one is the source; every
+pad you hit while you keep holding is pasted into, sample and all. Hold **Delete** and hit pads to
+clear them back to defaults. **Undo** puts back the last pad you overwrote. It's the oldest gesture
+a drum rack has, and it works off the pads themselves rather than a menu, so building a kit from
+one good snare is a couple of seconds of holding a button.
+
+What travels is the whole pad — its sample first, then the tuning, envelope, filter, level, pan,
+sends and Punch — not just what happens to be on the page you're looking at. What doesn't travel is
+what makes a pad *that* pad: its note, and where it sits in its own sample folder.
+
 **Link** sets one control across all 32 pads at once. Arm it, sweep a knob, and every pad takes that
 value — then it releases the moment you change *anything* else: another knob, a sample, a browse
 step, the master level. So the next thing you touch is that pad's alone. Playing a pad doesn't end
