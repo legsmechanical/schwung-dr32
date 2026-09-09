@@ -84,12 +84,20 @@ jobs:
           files: dist/dr32-module.tar.gz
           generate_release_notes: true
 
+      # ⚠⚠ IN A FRESH CLONE, NOT THIS WORKING TREE. `build/` is TRACKED and the
+      #    build above runs in Docker as root, so its objects come back
+      #    root-owned and `git checkout master` dies on "unable to unlink old
+      #    build/obj/*.o: Permission denied" — AFTER the release has already
+      #    been published, which is the worst place to fail: the release exists
+      #    and the catalog still cannot see it. A separate clone cannot be
+      #    poisoned by anything the build did.
       - name: Point release.json at it
         run: |
           set -eu
           VERSION="${GITHUB_REF_NAME#v}"
-          git fetch origin master
-          git checkout -f master
+          git clone --depth 1 --branch master \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" /tmp/pub
+          cd /tmp/pub
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           cat > release.json <<EOF
@@ -99,5 +107,7 @@ jobs:
           }
           EOF
           git add release.json
-          git commit -m "chore: release.json for ${GITHUB_REF_NAME}" || echo "release.json already current"
+          git commit -m "chore: release.json for ${GITHUB_REF_NAME}" || { echo "release.json already current"; exit 0; }
           git push origin master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
