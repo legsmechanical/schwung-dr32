@@ -267,8 +267,33 @@ docker builder prune -af                 # reclaims build cache, images untouche
 ```
 
 A full VM also makes `docker image inspect` fail intermittently, which looks like the toolchain
-image vanishing. `build.sh` now fails loudly on a full VM; it prefers the native arm64
-`davebox-builder` image, falling back through `schwung-builder` → `move-anything-builder`.
+image vanishing. `build.sh` fails loudly on a full VM.
+
+### 🔴 THE COMPILER IS PINNED, AND THE PIN IS CHECKED IN THE ARTIFACT (2026-09-09)
+
+⚠⚠ **Selecting a toolchain by "whichever image is present" chooses which COMPILER builds the
+module, and the images on this machine DISAGREE**: `schwung-builder` and `davebox-builder` are
+gcc **12.2.0**, `move-anything-builder` is gcc **11.4.0**. Identical source, different binary —
+proven back to back: `11.4 → a49f4fe9`, `12.2 → c191a9c3`.
+
+**And the fallthrough was silent.** The full-VM symptom above made the preferred image look
+absent, so the old probe loop moved to the next candidate. The only trace was one line of build
+output nobody reads. **Three commits carried a gcc 11.4 artifact that had been reported as the
+verified 12.2 build**, and the hash in git stopped describing what was on the device.
+
+- `DR32_BUILDER` names the image (default `schwung-builder`). That is a **preference**, not the
+  guarantee — an image can move under a floating base tag without changing its name.
+- **The guarantee is read out of the ARTIFACT.** gcc writes its version into the `.so`'s
+  `.comment` section, so `dsp.so` has always been self-identifying; it was simply never checked.
+  `build.sh` greps it and **fails** unless it matches `DR32_GCC` (default `12.2.0`).
+- **A failed assert deletes `dist/<id>/`** — the DIRECTORY `install.sh` actually ships. Deleting
+  only the tarball was the first version of that guard and it guarded nothing.
+- Pinned by `tools/check_build_script.mjs` (in `tests/run.sh`), six mutations, all firing.
+
+⭑ **Verify a suspect artifact anywhere, including on the device:**
+```sh
+strings dsp.so | grep '^GCC:'      # must say 12.2.0
+```
 
 ⚠ Do not run `EnginePerfTool` captures against a live Move stack — that is the suspected cause
 of two full device lockups needing a power cycle.

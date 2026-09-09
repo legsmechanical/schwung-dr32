@@ -57,6 +57,14 @@ const code = lines
 /* ---- 1. the outer pass must not fall through past `docker run` ------------ */
 
 const guard = code.find((l) => /\[ ! -f \/\.dockerenv \]/.test(l.text) && /\bthen\b/.test(l.text));
+/* End of the outer-pass block: the first `fi` in column 0 after the guard.
+ * Hoisted because more than one check needs "is this line INSIDE the outer
+ * pass" — scoping by line number alone is not enough, since the container-side
+ * code that follows the block has higher line numbers than everything in it. */
+const outerEnd = guard
+    ? lines.findIndex((t, i) => i > guard.n - 1 && /^fi\s*$/.test(t)) + 1
+    : -1;
+const inOuter = (l) => guard && outerEnd > 0 && l.n > guard.n && l.n < outerEnd;
 if (!guard) {
     errors.push(
         `no outer-pass guard found — expected an \`if ... [ ! -f /.dockerenv ]; then\` block. ` +
@@ -64,7 +72,7 @@ if (!guard) {
         `rather than loosening it: a guard that no longer has a subject is worse than none.`);
 } else {
     /* The block ends at the first `fi` in column 0 after the guard. */
-    const endIdx = lines.findIndex((t, i) => i > guard.n - 1 && /^fi\s*$/.test(t));
+    const endIdx = outerEnd - 1;
     if (endIdx < 0) {
         errors.push(`outer-pass guard at line ${guard.n} has no closing \`fi\` in column 0`);
     } else {
@@ -91,6 +99,30 @@ if (!guard) {
                 `BEFORE this one, or guard it on \`[ -f /.dockerenv ]\` — do not remove the exit.`);
         }
     }
+}
+
+/* ---- 1b. the compiler must be asserted FROM THE ARTIFACT ------------------
+ *
+ * Selecting a toolchain by whichever image is present decides which COMPILER
+ * makes the binary, and the images on this machine disagree (12.2.0 vs 11.4.0).
+ * The documented full-VM symptom — `docker image inspect` failing intermittently
+ * — made the preferred image look absent, so a probe loop fell through to a
+ * different compiler SILENTLY. Three commits shipped a gcc 11.4 artifact that
+ * had been reported as the verified 12.2 build.
+ *
+ * gcc records its version in the .so's .comment section, so the artifact is
+ * self-identifying and always was. Reading it back is what makes a hash mean
+ * something; the image name alone does not, because the image can move under
+ * a floating base tag without being renamed. */
+
+const asserts = code.find((l) => inOuter(l) &&
+    /strings\s+build\/dsp\.so/.test(l.text) && /GCC/.test(l.text));
+if (!asserts) {
+    errors.push(
+        `the build never reads the compiler back out of build/dsp.so.\n` +
+        `        Whichever image is chosen, the ARTIFACT is what has to be checked: gcc writes ` +
+        `its version into .comment, and a wrong-compiler binary is not comparable with the one ` +
+        `on the device or in git. Without this, a silent fallthrough ships and nothing says so.`);
 }
 
 /* ---- 2. the object dir is wiped before it is globbed into the link -------- */
@@ -120,6 +152,23 @@ if (wideWipe) {
         `line ${wideWipe.n} wipes \`build\` wholesale. \`build/ui.js\` is written by the OUTER ` +
         `(host) pass before the container starts, so a wipe at this level destroys it — the exact ` +
         `bug a sibling repo shipped. Scope the wipe to the object directory.`);
+}
+
+/* ---- 4. a failed assert must remove what install.sh READS ----------------- */
+
+/* ⚠ SCOPED TO LINES AFTER THE ASSERT, and that is the whole point. Searched
+ * over the whole file this matched the PACKAGING wipe (`rm -rf "dist/<id>"`
+ * before the copy), which always exists — so the check passed for a reason that
+ * had nothing to do with what it claims, and went on passing with the assert's
+ * own cleanup mutated away. Mutation-testing is what exposed it. */
+const kill = asserts && code.find((l) => inOuter(l) && l.n > asserts.n &&
+    /^rm -rf .*dist\/\$\{MODULE_ID\}(\s|"|$)/.test(l.text));
+if (asserts && !kill) {
+    errors.push(
+        `the compiler assert does not remove \`dist/\${MODULE_ID}\`.\n` +
+        `        install.sh ships the DIRECTORY, not the tarball — an assert that deletes only ` +
+        `dist/<id>-module.tar.gz leaves the rejected binary exactly where the installer looks ` +
+        `for it. That was the first version of this guard, and it guarded nothing.`);
 }
 
 if (errors.length) {

@@ -25,9 +25,6 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
     # Mac fails (the gcc-aarch64-linux-gnu package resolves differently for an
     # arm64 host), and the image we already have is the one that built the other
     # modules — so only build it when it is genuinely missing.
-    # Toolchain image. `davebox-builder` is a native arm64 Debian image that
-    # already carries aarch64-linux-gnu-gcc; prefer it, and only build our own
-    # if none of the known images exist.
     #
     # ⚠ If `docker build` here fails with apt "At least one invalid signature
     # was encountered", that is NOT an architecture or GPG problem — it is the
@@ -36,32 +33,41 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
     # and reclaim with `docker builder prune -af` (and/or remove unused images).
     # A full VM also makes `docker image inspect` fail intermittently, which
     # looks like the image "disappearing" and silently leaves dist/ stale.
-    # DR32 needs BOTH gcc and g++ (the FX bus is C++ — vendored reverbs).
-    # davebox-builder ships only the C cross compiler, so merely existing is not
-    # enough: probe each candidate for aarch64-linux-gnu-g++ before choosing it.
-    BUILDER=""
-    for img in schwung-builder move-anything-builder davebox-builder; do
-        docker image inspect "$img" >/dev/null 2>&1 || continue
-        if docker run --rm "$img" sh -c 'command -v aarch64-linux-gnu-g++' >/dev/null 2>&1; then
-            BUILDER="$img"; break
-        fi
-        echo "==> $img has no aarch64 g++, skipping" >&2
-    done
+    # ── TOOLCHAIN SELECTION IS A CONVENIENCE; THE VERSION ASSERT IS THE GUARANTEE
+    #
+    # This used to probe three images and take the first that had a cross g++,
+    # and that silently decided which COMPILER built the artifact. The images do
+    # not agree: schwung-builder and davebox-builder carry gcc 12.2.0,
+    # move-anything-builder carries 11.4.0. Same source, two different binaries
+    # (proven: 11.4 -> a49f4fe9, 12.2 -> c191a9c3).
+    #
+    # ⚠⚠ AND THE FALLTHROUGH WAS SILENT. The documented full-VM symptom —
+    # `docker image inspect` failing intermittently — makes the first candidate
+    # look absent, so the loop moves to the next one. The only trace is a line of
+    # build output nobody reads. Three commits shipped a gcc 11.4 artifact that
+    # had been reported as the verified 12.2 build.
+    #
+    # So the name below is a PREFERENCE, and the assert after the build is what
+    # actually holds: gcc records its own version in the .so's .comment section,
+    # so the artifact has always been self-identifying — it was simply never
+    # checked. A wrong-compiler build now FAILS instead of shipping.
+    #
+    # (The old comment here said DR32 needs g++ because the FX bus is C++. That
+    # stopped being true on 2026-09-08 when the FX bus left; there is no C++ in
+    # this module any more, which is why the probe is for gcc.)
+    BUILDER="${DR32_BUILDER:-schwung-builder}"
+    if ! docker image inspect "$BUILDER" >/dev/null 2>&1 ||
+       ! docker run --rm "$BUILDER" sh -c 'command -v aarch64-linux-gnu-gcc' >/dev/null 2>&1; then
+        echo "==> preferred image '$BUILDER' unusable; looking for another" >&2
+        BUILDER=""
+        for img in davebox-builder schwung-builder move-anything-builder; do
+            docker image inspect "$img" >/dev/null 2>&1 || continue
+            if docker run --rm "$img" sh -c 'command -v aarch64-linux-gnu-gcc' >/dev/null 2>&1; then
+                BUILDER="$img"; break
+            fi
+        done
+    fi
 
-    # Fail loudly on a full VM rather than limping on with a stale dist/.
-    if [ -z "$BUILDER" ]; then
-        free_kb=$(docker run --rm ubuntu:22.04 df -k / 2>/dev/null | awk 'NR==2{print $4}')
-        if [ -n "$free_kb" ] && [ "$free_kb" -lt 262144 ]; then
-            echo "ERROR: Docker VM disk is nearly full (${free_kb} KB free)." >&2
-            echo "       Reclaim space first:  docker builder prune -af" >&2
-            exit 1
-        fi
-    fi
-    if [ -z "$BUILDER" ]; then
-        echo "==> no toolchain image found; building one" >&2
-        docker build -q -t move-anything-builder -f scripts/Dockerfile scripts >/dev/null
-        BUILDER=move-anything-builder
-    fi
     echo "==> using $BUILDER" 
     # Propagate the container's exit status. This used to `exit 0`
     # unconditionally, so a failed compile inside docker reported success, left
@@ -71,7 +77,34 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
         "$BUILDER" bash scripts/build.sh
     status=$?
     [ $status -eq 0 ] || echo "ERROR: build failed inside docker (status $status); dist/ NOT updated" >&2
-    exit $status
+    [ $status -eq 0 ] || exit $status
+
+    # ── THE GUARANTEE: the artifact must name the compiler we expect.
+    #
+    # gcc writes its version into .comment, so this reads the built .so rather
+    # than trusting which image was chosen — it catches a fallthrough, an image
+    # rebuilt on a moved base, and a hand-run container, all the same way.
+    # DR32_GCC=<version> to move the pin deliberately; there is no way to move it
+    # by accident.
+    want="${DR32_GCC:-12.2.0}"
+    got=$(strings build/dsp.so 2>/dev/null | sed -n 's/^GCC: .*) \([0-9.]*\)$/\1/p' | sort -u | tr '\n' ' ')
+    case " $got " in
+      *" $want "*) echo "==> built by gcc $want (verified in the artifact)" ;;
+      *) echo "ERROR: dsp.so was built by gcc '${got:-<none recorded>}', expected $want." >&2
+         echo "       The image used was '$BUILDER'. A different compiler produces a" >&2
+         echo "       different binary from identical source, so this artifact is NOT" >&2
+         echo "       comparable with the one on the device or in git." >&2
+         echo "       Fix the toolchain rather than the expectation; DR32_GCC=$got" >&2
+         echo "       overrides it only if the move is deliberate." >&2
+         # ⚠ REMOVE WHAT INSTALL.SH ACTUALLY READS. It ships the DIRECTORY
+         # (`dist/<id>/`), not the tarball — deleting only the tarball left the
+         # bad binary sitting exactly where the installer looks for it, which is
+         # the guard I wrote first and did not check. install.sh already refuses
+         # a missing dist dir with "run scripts/build.sh first".
+         rm -rf "dist/${MODULE_ID}" "dist/${MODULE_ID}-module.tar.gz"
+         exit 1 ;;
+    esac
+    exit 0
 fi
 
 CROSS_PREFIX="${CROSS_PREFIX:-aarch64-linux-gnu-}"
