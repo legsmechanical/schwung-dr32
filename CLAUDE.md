@@ -430,5 +430,12 @@ strings dsp.so | grep '^GCC:'      # must say 12.2.0
 ⚠ Do not run `EnginePerfTool` captures against a live Move stack — that is the suspected cause
 of two full device lockups needing a power cycle.
 
-⚠ `build/` is TRACKED (only `build/fx/` is ignored, while `dist/` is), so every local build
-dirties the tree. Never blind `git add -A`. Untracking it is Josh's call, not a fix to slip in.
+✅ **`build/` is UNTRACKED** (Josh, 2026-09-09 — it was his call and he gave it). Build output is
+not source: while it was tracked, every local build dirtied the tree, `git add -A` was a live
+hazard, and the **release workflow failed on it** — the DSP is cross-compiled in Docker as root, so
+`build/obj` came back root-owned and `git checkout` could not unlink it, *after* the release had
+already been published.
+⚠ The 196 files removed from the index are still **on disk**; 186 of them were orphaned reverb-era
+captures and renders (`build/cap`, `ir`, `fix`, `verbpresets`, `fx`) whose tooling left with
+DrumVerb, referenced by nothing in the tree. If any device capture there is worth keeping, it needs
+a deliberate home — `build/` is now swept.
