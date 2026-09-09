@@ -124,50 +124,84 @@ static int append_pad_name(const dr32_pad_slot *s, char *out, int cap) {
     return n;
 }
 
-/** Rebuild the served hierarchy from module.json's text with the current kit's
- *  pad names spliced in as `child_names` on the pads level. The anchor is the
- *  level's `child_index_param` declaration (module.json is ours, so the key is
- *  guaranteed present); the array is inserted immediately before it. String
- *  surgery rather than a JSON writer: the document is otherwise verbatim, and
- *  a re-serialised copy would be a second thing that could drift from the
- *  file the tests and the docs read. */
+/** Write `"child_names": [...], ` at out+n. Returns the new length, or 0 if it
+ *  would not fit — the caller then serves the hierarchy without names, which is
+ *  the same pages with worse labels rather than no pages. */
+static size_t append_child_names(const dr32_kit *kit, char *out, size_t n, size_t cap) {
+    int w = snprintf(out + n, cap - n, "\"child_names\": [");
+    if (w <= 0 || n + (size_t)w >= cap) return 0;
+    n += (size_t)w;
+    for (int i = 0; i < DR32_PADS; i++) {
+        if (i) {
+            if (n + 2 >= cap) return 0;
+            out[n++] = ','; out[n++] = ' ';
+        }
+        int m = append_pad_name(&kit->pads[i], out + n, (int)(cap - n));
+        if (m <= 0) return 0;
+        n += (size_t)m;
+    }
+    w = snprintf(out + n, cap - n, "], ");
+    if (w <= 0 || n + (size_t)w >= cap) return 0;
+    return n + (size_t)w;
+}
+
+/**
+ * Rebuild the served hierarchy from module.json's text with the current kit's
+ * pad names spliced in as `child_names`.
+ *
+ * The anchor is a level's `child_index_param` declaration (module.json is ours,
+ * so the key is guaranteed present) and the array goes immediately before it.
+ * String surgery rather than a JSON writer: the document is otherwise verbatim,
+ * and a re-serialised copy would be a second thing that could drift from the
+ * file the tests and the docs read.
+ *
+ * ⚠ EVERY anchor, not the first. The pad knobs are three sibling child levels
+ * — Sample / Shape / Mix — and each names the pads it draws. Splicing only the
+ * first left Shape and Mix reading "Pad 7" while Sample said "Kick 707", which
+ * is not a page that looks broken; it is one that looks like a different pad.
+ */
 static void dr32_refresh_hierarchy(dr32_instance *in) {
     if (!in->ui_hierarchy_src) return;
     const char *src = in->ui_hierarchy_src;
-    const char *anchor = strstr(src, "\"child_index_param\"");
     size_t src_len = strlen(src);
-    /* 32 names × up to DR32_MAX_PATH is the pathological bound; real kits are
-     * ~20 bytes a name. The value channel is 64 KB, so cap the whole thing
-     * there and fall back to the plain document if names would not fit. */
+    /* 32 names x up to DR32_MAX_PATH is the pathological bound, times one copy
+     * per pad level; real kits are ~20 bytes a name. The value channel is
+     * 64 KB, so cap the whole thing there and fall back to the plain document
+     * if the names would not fit. */
     const size_t cap = 65536;
     char *out = malloc(cap);
     if (!out) return;
-    size_t n = 0;
-    int ok = 0;
-    if (anchor && src_len < cap) {
-        size_t head = (size_t)(anchor - src);
-        memcpy(out, src, head);
-        n = head;
-        int w = snprintf(out + n, cap - n, "\"child_names\": [");
-        if (w > 0 && n + (size_t)w < cap) {
-            n += (size_t)w;
-            ok = 1;
-            for (int i = 0; i < DR32_PADS && ok; i++) {
-                if (i && n + 2 < cap) { out[n++] = ','; out[n++] = ' '; }
-                int m = append_pad_name(&in->kit.pads[i], out + n, (int)(cap - n));
-                if (m <= 0) ok = 0; else n += (size_t)m;
-            }
-            if (ok) {
-                w = snprintf(out + n, cap - n, "], ");
-                if (w <= 0 || n + (size_t)w >= cap) ok = 0; else n += (size_t)w;
-            }
-            if (ok) {
-                size_t tail = src_len - head;
-                if (n + tail >= cap) ok = 0;
-                else { memcpy(out + n, anchor, tail); n += tail; out[n] = '\0'; }
-            }
-        }
+
+    static const char ANCHOR[] = "\"child_index_param\"";
+    const size_t alen = sizeof(ANCHOR) - 1;
+    size_t n = 0, at = 0;
+    int ok = 1;
+    for (;;) {
+        const char *anchor = strstr(src + at, ANCHOR);
+        if (!anchor) break;
+        size_t head = (size_t)(anchor - (src + at));
+        if (n + head >= cap) { ok = 0; break; }
+        memcpy(out + n, src + at, head);
+        n += head;
+        at += head;
+        size_t after = append_child_names(&in->kit, out, n, cap);
+        if (!after) { ok = 0; break; }
+        n = after;
+        /* ⚠ STEP PAST THE ANCHOR, not just up to it. Resuming the search AT
+         * the anchor finds the same one again, and the loop re-splices into
+         * its own output until the buffer fills — which fails soft, as the
+         * plain document, so the only symptom is names that never appear. */
+        if (n + alen >= cap) { ok = 0; break; }
+        memcpy(out + n, src + at, alen);
+        n += alen;
+        at += alen;
     }
+    if (ok) {
+        size_t tail = src_len - at;
+        if (n + tail >= cap) ok = 0;
+        else { memcpy(out + n, src + at, tail); n += tail; out[n] = '\0'; }
+    }
+
     if (!ok) {
         if (src_len >= cap) { free(out); return; }
         memcpy(out, src, src_len + 1);

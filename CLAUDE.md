@@ -10,16 +10,53 @@ used `label` where the schema wants `name`, invented a kit-browser arrangement i
 `filepath` param type, and declared UI params the DSP had no `get_param` readback for. Symptom:
 loads fine, logs nothing, menu does nothing.
 
-## 🧭 The four pages, and why each one is shaped that way (2026-09-08)
+## 🧭 The six pages, and why each one is shaped that way (2026-09-09)
 
 ```
-Kits    <items>   Acoustic · Electronic · Hybrid · My Kits   <- first bank
-  Kit   <preset>  a flat list of just that category
-Pads    PAD   SMPL  STRT  END   TRSP  DETN  CHOKE BRWS
-Pads-2  ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT
-Pads-3  VVOL  VOL   PAN   ␣     SNDA  SNDB  PUNCH PTIME
-Master  MASTR
+Category <items>   Acoustic · Electronic · Hybrid · My Kits   <- first bank
+  Kit    <preset>  a flat list of just that category
+Sample   PAD   SMPL  STRT  END   TRSP  DETN  CHOKE BRWS   <- level `pads`
+Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape`
+Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  PUNCH PTIME  <- level `pad_mix`
+Master   MASTR
 ```
+
+- ⭑⭑ **THE PAD KNOBS ARE THREE SIBLING CHILD LEVELS, ONE PER BANK** (Josh, 2026-09-09: *"put each
+  pad page on its own bank so the list is easy to navigate"*). They were one 24-knob level that the
+  planner chunked into "Pads / Pads 2 / Pads 3" — pages with no names, reachable only by jogging
+  past each other. Three levels give three named banks in the nav list at no cost, because
+  everything that makes them ONE rack is declared rather than inferred:
+  - **All three name the same `child_index_param`** (`ui_current_pad`), so they are three views of
+    one focus. `childPickerNeeded` (`page_plan.mjs`) dedupes on exactly that — the FIRST level to
+    plan a picker keeps it, the rest defer — and `allListedKeys` is GLOBAL, so the PAD knob on the
+    Sample bank suppresses the picker for all three. **Do not take the PAD knob off the Sample
+    bank**: three picker pages come back.
+  - 🔴 **`child_note_base` is declared ONCE, on `pads`, and nowhere else.** `voicesOf`
+    (`voices.mjs`) emits a voice per child of EVERY level that declares a note map, so all three
+    declaring it published **96 voices at notes 36..131** and the drum surface seated three copies
+    of the kit. Caught by `pages_check`, which walks the voice list; the pages themselves looked
+    perfect. Shape and Mix are further EDITING VIEWS of the same 32 pads, not 32 more pads.
+  - ⚠ **`child_press_param` / `child_press_note_param` stay on `pads` alone.** dAVEBOx takes *"the
+    FIRST child level declaring `child_press_param`"* (`davebox/ui/ui_discover.mjs`), and the host's
+    rule is the same — a second declaration is a second answer to a question with one answer.
+  - The three banks **partition** the pad params: every key on exactly one, none dropped.
+    `tools/check_module_json.mjs` pins the partition, the single note map, the single press
+    declaration, the shared index base and the 8-knob ceiling per bank; six mutations fire.
+  - ⚠ **`pads` keeps its name.** It is the level `check_module_json.mjs` addresses by name and the
+    first davebox walks; renaming it to `pad_sample` reads better and breaks both.
+- ⚠ **`child_names` is spliced before EVERY `"child_index_param"`, not the first.** Each bank names
+  the pads it draws, so a splice that stopped at the first anchor left Shape and Mix reading
+  "Pad 7" while Sample said "Kick 707" — not a page that looks broken, one that looks like a
+  different pad. `dr32_refresh_hierarchy` loops, and ⚠ it must **step past** the anchor each time:
+  resuming the search AT it finds the same one again and re-splices into its own output until the
+  buffer fills, which fails soft as the plain document, so the only symptom is names that never
+  appear at all.
+- **The OLED header reads `module.json`'s `name`, so `name` is `"DR32"`** (Josh, 2026-09-09: *"can
+  we replace the drum rack 32 on the header with dr32 to save space"*). `headerTitle`
+  (`shadow_ui_param_pages.mjs`) resolves `getModuleDisplayName` → `moduleNameCache[id]` → the
+  `name` field; **`abbrev` is only the fallback until module.json has been read**, so setting
+  `abbrev: "DR32"` alone changed nothing. The long form lives in `description`, `docs/manual.html`
+  and `src/help.json`.
 
 - **DR32 opens EMPTY** (Josh, 2026-09-09). No default kit — it used to load the 707.
   `create_instance` is on the SPI callback and a kit load reads up to 32 WAVs there, so this is
@@ -86,7 +123,7 @@ Master  MASTR
   "Vel Vol" reads as one, but it is a modulation AMOUNT — a fader would be the same lie about it
   that a fader would be about Pan.
 - ⚠ **A knob GAP cannot be declared.** `knobKeys` filters null entries out, so authored knobs are
-  packed; `master` sits at k8 only because `vel_vol` occupies k7. Remove one and master moves.
+  packed — an intended blank in a `knobs` array closes up rather than reserving a slot.
 
 ## 🎛 The UI is the host's param-pages grid — DR32 ships no UI of its own (since 0.2.0, 2026-09-05)
 
@@ -106,19 +143,22 @@ Key facts for this module specifically:
   into the `pads` level, **immediately before `"child_index_param"`**. That key is the splice
   anchor; `tools/check_module_json.mjs` pins it. Lose it and the DSP silently serves the plain
   document: pages still plan, focus stops following, every voice reads "Pad N".
-- **The 32 pads are one child level** (`child_prefix: "pad"`, `child_count: 32`), which is why
+- **The 32 pads are three child levels sharing one focus** (each `child_prefix: "pad"`,
+  `child_count: 32` — see the page map above), which is why
   `dsp/dr32_params.c` speaks `pad<N>_<key>` (0-based) and the `pad_<key>` alias for the focused
   pad. `child_index_param: "ui_current_pad"` makes the DSP the owner of focus in both
   directions (the host reads it to follow, the Pad knob writes it). `child_note_base: 36`.
-- **`child_key_overrides` carries the two keys that are NOT per-pad.** `ui_current_pad` and
-  `master` sit on the `pads` level so they can have cells there, and a template with no
+- **`child_key_overrides` carries the keys that are NOT per-pad.** `ui_current_pad` (all three
+  banks) and `link` (Mix) sit on child levels so they can have cells there, and a template with no
   `{index}` resolves to the literal key (`child_key.mjs`, `resolveChildKey`) — without the
-  override they would become `pad3_master`, which addresses nothing.
+  override they would become `pad3_link`, which addresses nothing. `master` needs no override: it
+  is on its own `output` level, which has no children.
 - **Every key the UI displays must be readable back via `dr32_read_param`.** `end` is a UI
   alias of `length` (`start + length`, written back as a length) so the host's trim editor can
   draw start..end while the `.ablpreset` keeps Move's own `Voice_PlaybackLength`.
-- **A viz group must sit contiguously on ONE row of four.** Knob order in the `pads` level is
-  therefore load-bearing: attack/decay, cutoff/resonance/filter_type. Verify with
+- **A viz group must sit contiguously on ONE row of four.** Knob order within a bank is
+  therefore load-bearing: attack/decay/hold and cutoff/resonance/filter_type are the two rows of
+  Shape for exactly that reason, and start/end are k3/k4 of Sample. Verify with
   `node tools/pages_check.mjs` (below) — it runs upstream's validator and prints every page.
 
 ### How pad focus follows a hit — two regimes, and why

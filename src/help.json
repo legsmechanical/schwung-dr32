@@ -27,12 +27,16 @@
         "",
         "Category",
         " pick a kit",
-        "Pads",
-        " sample and tuning",
-        "Pads 2",
-        " envelope and filter",
-        "Pads 3",
-        " level, sends, punch",
+        "Sample",
+        " what each pad",
+        " plays, and where",
+        " in the file",
+        "Shape",
+        " envelope and",
+        " filter",
+        "Mix",
+        " level, pan, sends",
+        " and punch",
         "Master",
         " level for the kit"
       ]
@@ -96,11 +100,18 @@
             "",
             "The PAD knob picks",
             "a pad by hand,",
-            "1 to 32."
+            "1 to 32.",
+            "",
+            "Sample, Shape and",
+            "Mix all edit the",
+            "SAME pad. Changing",
+            "it on one page",
+            "changes it on all",
+            "three."
           ]
         },
         {
-          "title": "Page 1",
+          "title": "Sample",
           "lines": [
             "PAD   which pad",
             "SMPL  open a",
@@ -119,7 +130,7 @@
           ]
         },
         {
-          "title": "Page 2",
+          "title": "Shape",
           "lines": [
             "ATK   attack",
             "DCY   decay",
@@ -134,7 +145,7 @@
           ]
         },
         {
-          "title": "Page 3",
+          "title": "Mix",
           "lines": [
             "VVOL  how much",
             " velocity moves",

@@ -260,10 +260,23 @@ int main(void) {
             CHECK(strstr(h, "\"pad_layout\": \"drums\"") != NULL, "pad_layout missing");
             CHECK(strstr(h, "\"child_index_param\": \"ui_current_pad\"") != NULL,
                   "child_index_param missing — the splice anchor is gone");
-            const char *names = strstr(h, "\"child_names\": [");
-            CHECK(names != NULL, "child_names not spliced in");
-            CHECK(names && strstr(names, "\"dr32_state_kick\", \"dr32_state_snare\", \"\"") != NULL,
-                  "pad names wrong: %.80s", names ? names : "");
+            /* ⭑ ONCE PER PAD BANK. Sample / Shape / Mix are three sibling
+             * child levels, each naming the pads it draws, and a splice that
+             * stopped at the first anchor left two of the three banks reading
+             * "Pad 7" — a page that does not look broken, just like a
+             * different pad. So count the anchors in the SOURCE and require
+             * the same number of name arrays out. */
+            int anchors = 0, spliced = 0;
+            for (const char *q = h; (q = strstr(q, "\"child_index_param\"")); q++) anchors++;
+            for (const char *q = h; (q = strstr(q, "\"child_names\": [")); q++) {
+                spliced++;
+                CHECK(strstr(q, "\"dr32_state_kick\", \"dr32_state_snare\", \"\"") == q + 16,
+                      "pad names wrong at splice %d: %.80s", spliced, q);
+            }
+            CHECK(anchors >= 3, "only %d child_index_param anchors — the three pad banks are gone", anchors);
+            CHECK(spliced == anchors,
+                  "child_names spliced %d times for %d anchors — every pad bank needs its own names",
+                  spliced, anchors);
             FILE *f = fopen("dist/tests/served_hierarchy.json", "w");
             if (f) { fputs(h, f); fclose(f); }
             api->destroy_instance(inst);

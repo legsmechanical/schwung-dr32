@@ -67,26 +67,78 @@ for (const [lname, level] of Object.entries(levels)) {
     }
 }
 
-// 5. the pads level must keep the drum-surface contract AND the splice anchor.
+// 5. every pad level must keep the drum-surface contract AND the splice anchor.
 //    dsp/dr32.c inserts the loaded kit's pad names into the served hierarchy
-//    immediately before `"child_index_param"`; lose that key and the DSP
+//    immediately before EACH `"child_index_param"`; lose that key and the DSP
 //    silently serves module.json verbatim — pages still plan, focus just
 //    stops following and every voice is "Pad N" again.
+//
+//    ⭑ THE PAD KNOBS ARE THREE SIBLING LEVELS (Sample / Shape / Mix), one per
+//    bank, sharing one focus. They must agree about the children they address,
+//    or two banks are editing two different pads while showing one pad number.
+const PAD_LEVELS = ['pads', 'pad_shape', 'pad_mix'];
 {
-    const pads = levels.pads || {};
     if (caps.ui_hierarchy && caps.ui_hierarchy.pad_layout !== 'drums')
         errors.push('ui_hierarchy.pad_layout must be "drums" (upstream 1.2 drum-surface contract)');
-    if (pads.child_index_param !== 'ui_current_pad')
-        errors.push('levels.pads.child_index_param must be "ui_current_pad" — it is also the child_names splice anchor in dsp/dr32.c');
-    if (pads.child_note_base !== 36)
-        errors.push('levels.pads.child_note_base must be 36 (DR32_FIRST_NOTE)');
-    if (pads.child_count !== 32 || pads.child_prefix !== 'pad')
-        errors.push('levels.pads must declare child_prefix "pad" and child_count 32 — dr32_params.c speaks pad<N>_<key>');
-    for (const k of ['child_press_param', 'child_press_note_param'])
-        if (!pads[k]) errors.push(`levels.pads.${k} missing — dAVEBOx sound mode reads it (see CLAUDE.md)`);
+    for (const name of PAD_LEVELS) {
+        const lvl = levels[name];
+        if (!lvl) { errors.push(`levels.${name} missing — it is one of the three pad banks`); continue; }
+        if (lvl.child_index_param !== 'ui_current_pad')
+            errors.push(`levels.${name}.child_index_param must be "ui_current_pad" — one shared focus, and also the child_names splice anchor in dsp/dr32.c`);
+        if (lvl.child_count !== 32 || lvl.child_prefix !== 'pad')
+            errors.push(`levels.${name} must declare child_prefix "pad" and child_count 32 — dr32_params.c speaks pad<N>_<key>`);
+        if (lvl.child_index_base !== 1)
+            errors.push(`levels.${name}.child_index_base must be 1 — the pad selector reads 1-32`);
+    }
+    // ⭑⭑ THE NOTE MAP IS DECLARED ONCE, ON `pads`, AND THAT IS WHAT MAKES
+    //    THREE BANKS ONE RACK. voicesOf (upstream voices.mjs) emits a voice
+    //    per child of every level that declares child_note_base — so all three
+    //    declaring it published 96 voices at notes 36..131, and the drum
+    //    surface seated three copies of the kit. Shape and Mix are further
+    //    EDITING VIEWS of the same 32 pads, not 32 more pads.
+    {
+        const noted = PAD_LEVELS.filter((n) => levels[n] && levels[n].child_note_base !== undefined);
+        if (noted.length !== 1 || noted[0] !== 'pads')
+            errors.push(`child_note_base is declared on [${noted.join(', ')}]; exactly one pad level ("pads") may declare it, or voicesOf publishes ${32 * Math.max(noted.length, 1)} voices instead of 32`);
+        if ((levels.pads || {}).child_note_base !== 36)
+            errors.push('levels.pads.child_note_base must be 36 (DR32_FIRST_NOTE)');
+    }
+
+    // ⚠ The press params stay on ONE level. dAVEBOx takes "the FIRST child
+    //   level declaring child_press_param" (davebox/ui/ui_discover.mjs), so a
+    //   second declaration is a second answer to a question with one answer.
+    for (const k of ['child_press_param', 'child_press_note_param']) {
+        if (!(levels.pads || {})[k])
+            errors.push(`levels.pads.${k} missing — dAVEBOx sound mode reads it (see CLAUDE.md)`);
+        const on = PAD_LEVELS.filter((n) => levels[n] && levels[n][k]);
+        if (on.length !== 1)
+            errors.push(`${k} is declared on ${on.length} pad levels (${on.join(', ')}); dAVEBOx takes the FIRST, so exactly one must declare it`);
+    }
     const raw = readFileSync(path, 'utf8');
     const n = (raw.match(/"child_index_param"/g) || []).length;
-    if (n !== 1) errors.push(`"child_index_param" appears ${n} times; the splice anchor must be unique`);
+    if (n !== PAD_LEVELS.length)
+        errors.push(`"child_index_param" appears ${n} times; dsp/dr32.c splices at each one, so it must appear exactly once per pad level (${PAD_LEVELS.length})`);
+}
+
+// 5b. the three banks must partition the pad params — no key on two banks
+//     (two cells for one value) and none dropped on the way (a param the DSP
+//     answers that no page can reach).
+{
+    const seen = new Map();
+    for (const name of PAD_LEVELS) {
+        const lvl = levels[name] || {};
+        const declared = (lvl.params || []).map((p) => p && p.key).filter(Boolean);
+        for (const k of declared) {
+            if (seen.has(k)) errors.push(`pad param "${k}" is declared on both ${seen.get(k)} and ${name}`);
+            seen.set(k, name);
+        }
+        const knobs = (lvl.knobs || []).filter((k) => typeof k === 'string' && k);
+        for (const k of knobs)
+            if (!declared.includes(k) && !(lvl.child_key_overrides || {})[k])
+                errors.push(`levels.${name} puts "${k}" on a knob but declares it nowhere`);
+        if (knobs.length > 8)
+            errors.push(`levels.${name} has ${knobs.length} knobs; a bank that overflows 8 becomes two pages and stops being one bank`);
+    }
 }
 
 // 6. the host refuses module.json larger than 64 KB

@@ -1,6 +1,6 @@
 {
   "id": "dr32",
-  "name": "Drum Rack 32",
+  "name": "DR32",
   "abbrev": "DR32",
   "version": "0.2.0",
   "author": "legsmechanical",
@@ -66,7 +66,7 @@
       "pad_layout": "drums",
       "levels": {
         "root": {
-          "name": "Drum Rack 32",
+          "name": "DR32",
           "params": [
             {
               "level": "kits",
@@ -74,7 +74,15 @@
             },
             {
               "level": "pads",
-              "label": "Pads"
+              "label": "Sample"
+            },
+            {
+              "level": "pad_shape",
+              "label": "Shape"
+            },
+            {
+              "level": "pad_mix",
+              "label": "Mix"
             },
             {
               "level": "output",
@@ -84,15 +92,13 @@
           "knobs": []
         },
         "pads": {
-          "name": "Pads",
+          "name": "Sample",
           "child_prefix": "pad",
           "child_count": 32,
           "child_index_base": 1,
           "child_label": "Pad",
           "child_index_param": "ui_current_pad",
           "child_note_base": 36,
-          "child_press_param": "ui_live_press",
-          "child_press_note_param": "ui_live_note",
           "child_copy_keys": [
             "sample",
             "start",
@@ -125,6 +131,8 @@
             "fx_p1",
             "fx_p2"
           ],
+          "child_press_param": "ui_live_press",
+          "child_press_note_param": "ui_live_note",
           "params": [
             {
               "key": "ui_current_pad",
@@ -222,7 +230,62 @@
               "min": 0,
               "max": 255,
               "default": 0
-            },
+            }
+          ],
+          "knobs": [
+            "ui_current_pad",
+            "sample",
+            "start",
+            "end",
+            "transpose",
+            "detune",
+            "choke",
+            "browse"
+          ],
+          "child_key_overrides": {
+            "ui_current_pad": "ui_current_pad"
+          }
+        },
+        "pad_shape": {
+          "name": "Shape",
+          "child_prefix": "pad",
+          "child_count": 32,
+          "child_index_base": 1,
+          "child_label": "Pad",
+          "child_index_param": "ui_current_pad",
+          "child_copy_keys": [
+            "sample",
+            "start",
+            "end",
+            "transpose",
+            "detune",
+            "choke",
+            "gain",
+            "cell_volume",
+            "vel_vol",
+            "attack",
+            "hold",
+            "decay",
+            "env_mode",
+            "volume",
+            "pan",
+            "punch",
+            "punch_time",
+            "filter_on",
+            "filter_type",
+            "cutoff",
+            "resonance",
+            "peak_gain",
+            "mod_target",
+            "mod_amount",
+            "pitch_env",
+            "send_a",
+            "send_b",
+            "fx_type",
+            "fx_p1",
+            "fx_p2"
+          ],
+          "params": [
             {
               "key": "attack",
               "name": "Attack",
@@ -274,62 +337,6 @@
               ],
               "short_name": "ENV",
               "default": "A-H-D"
-            },
-            {
-              "key": "volume",
-              "name": "Volume",
-              "type": "float",
-              "min": -36.0,
-              "max": 12.0,
-              "step": 0.5,
-              "unit": "dB",
-              "short_name": "VOL",
-              "viz": {
-                "kind": "fader"
-              },
-              "default": 0.0
-            },
-            {
-              "key": "vel_vol",
-              "name": "Vel Vol",
-              "short_name": "VVOL",
-              "type": "float",
-              "min": 0.0,
-              "max": 1.0,
-              "step": 0.01,
-              "default": 0.35,
-              "viz": false
-            },
-            {
-              "key": "pan",
-              "name": "Pan",
-              "type": "float",
-              "min": -50.0,
-              "max": 50.0,
-              "step": 1.0,
-              "short_name": "PAN",
-              "default": 0.0
-            },
-            {
-              "key": "punch",
-              "name": "Punch",
-              "type": "float",
-              "min": 0.0,
-              "max": 1.0,
-              "step": 0.01,
-              "default": 0.0,
-              "short_name": "PUNCH"
-            },
-            {
-              "key": "punch_time",
-              "name": "Punch Time",
-              "type": "float",
-              "min": 0.06,
-              "max": 1.0,
-              "step": 0.01,
-              "unit": "s",
-              "default": 0.3,
-              "short_name": "PTIME"
             },
             {
               "key": "cutoff",
@@ -388,6 +395,110 @@
                 "kind": "switch"
               },
               "default": 0
+            }
+          ],
+          "knobs": [
+            "attack",
+            "decay",
+            "hold",
+            "env_mode",
+            "cutoff",
+            "resonance",
+            "filter_type",
+            "filter_on"
+          ],
+          "child_key_overrides": {
+            "ui_current_pad": "ui_current_pad"
+          }
+        },
+        "pad_mix": {
+          "name": "Mix",
+          "child_prefix": "pad",
+          "child_count": 32,
+          "child_index_base": 1,
+          "child_label": "Pad",
+          "child_index_param": "ui_current_pad",
+          "child_copy_keys": [
+            "sample",
+            "start",
+            "end",
+            "transpose",
+            "detune",
+            "choke",
+            "gain",
+            "cell_volume",
+            "vel_vol",
+            "attack",
+            "hold",
+            "decay",
+            "env_mode",
+            "volume",
+            "pan",
+            "punch",
+            "punch_time",
+            "filter_on",
+            "filter_type",
+            "cutoff",
+            "resonance",
+            "peak_gain",
+            "mod_target",
+            "mod_amount",
+            "pitch_env",
+            "send_a",
+            "send_b",
+            "fx_type",
+            "fx_p1",
+            "fx_p2"
+          ],
+          "params": [
+            {
+              "key": "vel_vol",
+              "name": "Vel Vol",
+              "short_name": "VVOL",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.35,
+              "viz": false
+            },
+            {
+              "key": "volume",
+              "name": "Volume",
+              "type": "float",
+              "min": -36.0,
+              "max": 12.0,
+              "step": 0.5,
+              "unit": "dB",
+              "short_name": "VOL",
+              "viz": {
+                "kind": "fader"
+              },
+              "default": 0.0
+            },
+            {
+              "key": "pan",
+              "name": "Pan",
+              "type": "float",
+              "min": -50.0,
+              "max": 50.0,
+              "step": 1.0,
+              "short_name": "PAN",
+              "default": 0.0
+            },
+            {
+              "key": "link",
+              "name": "Link",
+              "short_name": "LINK",
+              "type": "enum",
+              "options": [
+                "One",
+                "All"
+              ],
+              "default": "One",
+              "viz": {
+                "kind": "switch"
+              }
             },
             {
               "key": "send_a",
@@ -412,37 +523,28 @@
               "default": -70.0
             },
             {
-              "key": "link",
-              "name": "Link",
-              "short_name": "LINK",
-              "type": "enum",
-              "options": [
-                "One",
-                "All"
-              ],
-              "default": "One",
-              "viz": {
-                "kind": "switch"
-              }
+              "key": "punch",
+              "name": "Punch",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.0,
+              "short_name": "PUNCH"
+            },
+            {
+              "key": "punch_time",
+              "name": "Punch Time",
+              "type": "float",
+              "min": 0.06,
+              "max": 1.0,
+              "step": 0.01,
+              "unit": "s",
+              "default": 0.3,
+              "short_name": "PTIME"
             }
           ],
           "knobs": [
-            "ui_current_pad",
-            "sample",
-            "start",
-            "end",
-            "transpose",
-            "detune",
-            "choke",
-            "browse",
-            "attack",
-            "decay",
-            "hold",
-            "env_mode",
-            "cutoff",
-            "resonance",
-            "filter_type",
-            "filter_on",
             "vel_vol",
             "volume",
             "pan",
