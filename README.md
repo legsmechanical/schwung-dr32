@@ -1,7 +1,13 @@
 # DR32 — Drum Rack 32
 
+### 📖 [**Read the manual →**](https://legsmechanical.github.io/schwung-dr32/manual.html)
+
 > Version `0.3.0`. **Requires Schwung ≥ 1.3.0** — that is where the module-bus
 > contract landed, and the per-pad sends reach nothing without it.
+>
+> **Install** from Schwung Manager once
+> [the catalog entry](https://github.com/charlesvestal/schwung/pull/484) merges; until then, from
+> the [v0.3.0 release](https://github.com/legsmechanical/schwung-dr32/releases/tag/v0.3.0).
 
 A clone of Ableton Move's native **Drum Rack**, extended from 16 pads to **32**, running as a
 [Schwung](https://github.com/charlesvestal/schwung) sound-generator module.
@@ -128,7 +134,7 @@ and wrong), and velocity→volume is a dB law centred on velocity 70, not a line
 | `lib/` | `.ablpreset` reading/writing |
 | `tests/` | off-device unit tests |
 | `tools/` | the null-test harness and capture scripts |
-| `docs/manual.html` | the user manual |
+| `docs/manual.html` | the user manual — [published via Pages](https://legsmechanical.github.io/schwung-dr32/manual.html) |
 | `docs/specs/` | design notes |
 
 Development conventions and the traps worth knowing are in [`CLAUDE.md`](CLAUDE.md).
