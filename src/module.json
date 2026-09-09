@@ -69,8 +69,8 @@
           "name": "Drum Rack 32",
           "params": [
             {
-              "level": "kit_src",
-              "label": "Kit"
+              "level": "kits",
+              "label": "Kits"
             },
             {
               "level": "pads",
@@ -441,79 +441,6 @@
             "ui_current_pad": "ui_current_pad"
           }
         },
-        "kit_src": {
-          "name": "Kits",
-          "params": [
-            {
-              "key": "kit_move",
-              "name": "Move Kits",
-              "type": "filepath",
-              "root": "/data/CoreLibrary/Track Presets/Drums",
-              "start_path": "/data/CoreLibrary/Track Presets/Drums",
-              "filter": [
-                ".ablpreset",
-                ".json"
-              ],
-              "live_preview": true,
-              "browser_hooks": {
-                "on_open": [
-                  {
-                    "key": "kit_mark",
-                    "value": "1"
-                  }
-                ],
-                "on_cancel": [
-                  {
-                    "key": "kit_restore",
-                    "value": "1"
-                  }
-                ],
-                "on_commit": [
-                  {
-                    "key": "kit_mark",
-                    "value": "0"
-                  }
-                ]
-              },
-              "viz": false,
-              "short_name": "MOVE"
-            },
-            {
-              "key": "kit_user",
-              "name": "User Kits",
-              "type": "filepath",
-              "root": "/data/UserData/UserLibrary/Track Presets",
-              "start_path": "/data/UserData/UserLibrary/Track Presets",
-              "filter": [
-                ".ablpreset",
-                ".json"
-              ],
-              "live_preview": true,
-              "browser_hooks": {
-                "on_open": [
-                  {
-                    "key": "kit_mark",
-                    "value": "1"
-                  }
-                ],
-                "on_cancel": [
-                  {
-                    "key": "kit_restore",
-                    "value": "1"
-                  }
-                ],
-                "on_commit": [
-                  {
-                    "key": "kit_mark",
-                    "value": "0"
-                  }
-                ]
-              },
-              "viz": false,
-              "short_name": "USER"
-            }
-          ]
-        },
         "output": {
           "name": "Master",
           "params": [
@@ -531,6 +458,24 @@
           "knobs": [
             "master"
           ]
+        },
+        "kits": {
+          "name": "Kits",
+          "items_param": "kit_cat_items",
+          "select_param": "kit_cat",
+          "navigate_to": "kit_list",
+          "params": [
+            {
+              "level": "kit_list",
+              "label": "Kit"
+            }
+          ]
+        },
+        "kit_list": {
+          "name": "Kit",
+          "list_param": "kit_index",
+          "count_param": "kit_count",
+          "name_param": "kit_name"
         }
       }
     }

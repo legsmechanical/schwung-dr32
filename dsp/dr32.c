@@ -13,6 +13,7 @@
 #include "dr32_kit.h"
 #include "dr32_params.h"
 #include "dr32_preset.h"
+#include "dr32_kits.h"
 #include "dr32_state.h"
 
 #include <stdio.h>
@@ -54,6 +55,14 @@ typedef struct {
     // uses the exact same read path as the write. NULL = no baseline = full
     // dump, which is always a correct fallback.
     char    *state_baseline;
+
+    /* The kit catalogue behind the two-level Kits browser, and where the
+     * browser's cursor currently sits. Built incrementally — see dr32_kits.h
+     * for why a single-pass scan is not a legal shape here. */
+    dr32_kits *kits;
+    int        kit_cat;      /* category the browser is showing */
+    int        kit_idx;      /* entry within that category */
+    int        kit_located;  /* cursor has been aimed at the loaded kit once */
 } dr32_instance;
 
 /** Capture the freshly-loaded kit as the state baseline. Called after every
@@ -248,6 +257,10 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     dr32_instance *in = (dr32_instance *)calloc(1, sizeof(dr32_instance));
     if (!in) return NULL;
     dr32_kit_init(&in->kit);
+    /* Empty, and NOT scanned here: create_instance is on the SPI callback too,
+     * so walking ~442 files at this point would stall the load. The catalogue
+     * fills in from the browser's own reads — see get_param. */
+    in->kits = dr32_kits_create();
     in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
     dr32_refresh_hierarchy(in);
     if (in->ui_hierarchy) {
@@ -275,6 +288,7 @@ static void destroy_instance(void *instance) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
     dr32_kit_free(&in->kit);
+    dr32_kits_destroy(in->kits);
     free(in->ui_hierarchy_src);
     free(in->ui_hierarchy);
     free(in->state_baseline);
@@ -325,6 +339,39 @@ static void set_param(void *instance, const char *key, const char *val) {
     // The Kit menu is a PICKER of two roots: "Move" browses the Core Library's
     // drum kits, "User" the user library. The filepath type takes exactly one
     // root, so they are two params that mean the same thing.
+    /*
+     * The Kits browser: a category list, then that category's kits.
+     *
+     * Both are the host's own page kinds and need no host change —
+     * `items_param`/`select_param` for the categories, the
+     * `list_param`/`count_param`/`name_param` triple for the kits, joined by
+     * `navigate_to`. The host never asks for a LIST of kits: it writes an index
+     * and reads back the name at that index, so the cost is constant however
+     * many kits exist.
+     *
+     * ⚠ Writing kit_index LOADS. That is the page kind's contract, not a
+     * choice: it auditions as you scroll and there is no cancel — the host
+     * offers no `live_preview` or `browser_hooks` here. See the board item.
+     */
+    if (!strcmp(key, "kit_cat")) {
+        int v = atoi(val);
+        int n = dr32_kits_cat_count(in->kits);
+        in->kit_cat = (v < 0) ? 0 : (n > 0 && v >= n ? n - 1 : v);
+        in->kit_idx = 0;
+        return;
+    }
+    if (!strcmp(key, "kit_index")) {
+        int v = atoi(val);
+        int n = dr32_kits_count(in->kits, in->kit_cat);
+        if (n <= 0) return;
+        if (v < 0) v = 0;
+        if (v >= n) v = n - 1;
+        in->kit_idx = v;
+        const char *path = dr32_kits_path(in->kits, in->kit_cat, v);
+        if (path && path[0]) set_param(instance, "kit", path);
+        return;
+    }
+
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user")) {
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
         // Load HERE, on the host thread. This used to raise a dirty flag for
@@ -501,6 +548,53 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
      */
     if (!strcmp(key, "voice_send_params"))
         return snprintf(buf, buf_len, "[\"{id}_send_a\",\"{id}_send_b\"]");
+    /*
+     * The Kits browser's reads. Every one of these PUMPS the catalogue a little
+     * first: the host polls this page (count -> index -> name, one read per
+     * tick), so its own polling drives the scan to completion over a few dozen
+     * ticks while the user is looking at the page. A budget of 24 entries keeps
+     * any single call far inside the ~900us SPI budget; scanning all ~442 files
+     * in one call would drop frames, which is the whole reason the catalogue is
+     * incremental. Once complete, pump() returns immediately.
+     */
+    if (!strncmp(key, "kit_", 4) &&
+        (!strcmp(key, "kit_cat_items") || !strcmp(key, "kit_cat") ||
+         !strcmp(key, "kit_count") || !strcmp(key, "kit_index") ||
+         !strcmp(key, "kit_name"))) {
+        dr32_kits_pump(in->kits, 24);
+        /* Once the scan finishes, point the cursor at the kit that is actually
+         * loaded. Otherwise the browser opens at entry 0 and the first detent
+         * loads something the user did not ask for — on a page that auditions
+         * with no undo, that is the difference between a browser and a trap. */
+        if (dr32_kits_ready(in->kits) && !in->kit_located) {
+            int c = 0, i = 0;
+            if (dr32_kits_locate(in->kits, in->kit_path, &c, &i) == 0) {
+                in->kit_cat = c;
+                in->kit_idx = i;
+            }
+            in->kit_located = 1;
+        }
+
+        if (!strcmp(key, "kit_cat_items")) {
+            int n = dr32_kits_cat_count(in->kits), w = 0;
+            w += snprintf(buf + w, buf_len - w, "[");
+            for (int i = 0; i < n && w < buf_len; i++)
+                w += snprintf(buf + w, buf_len - w, "%s{\"index\":%d,\"label\":\"%s\"}",
+                              i ? "," : "", i, dr32_kits_cat_name(in->kits, i));
+            if (w < buf_len) w += snprintf(buf + w, buf_len - w, "]");
+            return w;
+        }
+        if (!strcmp(key, "kit_cat"))   return snprintf(buf, buf_len, "%d", in->kit_cat);
+        if (!strcmp(key, "kit_count")) return snprintf(buf, buf_len, "%d",
+                                                       dr32_kits_count(in->kits, in->kit_cat));
+        if (!strcmp(key, "kit_index")) return snprintf(buf, buf_len, "%d", in->kit_idx);
+        /* kit_name — an array lookup, never disk. REALTIME_SAFETY names
+         * "get_param that rescans a directory" as a known budget-blower, and
+         * this is the key the host reads most often. */
+        return snprintf(buf, buf_len, "%s",
+                        dr32_kits_name(in->kits, in->kit_cat, in->kit_idx));
+    }
+
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user"))
         return snprintf(buf, buf_len, "%s", in->kit_path);
     // The blob Schwung stores in the set's slot_N.json. Without this the host
