@@ -110,6 +110,10 @@ typedef struct {
     // the host does file I/O, and only one directory is ever held — the user
     // Samples tree is ~3.8 GB, so nothing scans it wholesale.
     char          browse_dir[DR32_MAX_PATH];   // "" = nothing cached
+    /* The last value the HOST wrote to `browse`, so a turn can be read as a
+     * DELTA. See dr32_kit_browse_step. */
+    int           browse_wire;
+    int           browse_wire_seen;            // 0 until the host has written once
     char        **browse;                      // browse_n entries, owned
     int           browse_n;
 } dr32_kit;
@@ -151,6 +155,25 @@ int dr32_kit_browse_count(dr32_kit *k, int pad);
 int dr32_kit_browse_index(dr32_kit *k, int pad);
 /** Load the idx'th neighbour into the pad. Clamps. Returns the index used. */
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx);
+
+/** Move by the DELTA implied by the knob's new absolute value.
+ *
+ * ⚠⚠ WHY NOT JUST USE THE VALUE. `browse` is declared int 0..255 because a knob
+ * needs a static range, but a folder has however many files it has — usually a
+ * handful. Used absolutely, a 3-file folder left 253 of the knob's positions
+ * doing nothing: you turn right, nothing happens, and you have to wind all the
+ * way back before it responds. Reported from the device as browse "not being
+ * bounded to the folder".
+ *
+ * The clamped index IS read back, but that does not rescue it while you turn:
+ * the host sets a settle window after every knob write and SKIPS reads inside
+ * it, so it does not adopt the clamp until you stop.
+ *
+ * So the value is read as a delta from whatever the host last wrote, and the
+ * step is clamped to the folder. The knob's own range then stops mattering, and
+ * reporting the true index keeps the two converging whenever the host does
+ * read. */
+int dr32_kit_browse_step(dr32_kit *k, int pad, int wire);
 
 void dr32_kit_note_on(dr32_kit *k, int note, int velocity);
 void dr32_kit_note_off(dr32_kit *k, int note);

@@ -80,6 +80,7 @@ static int browse_ensure(dr32_kit *k, int pad) {
     if (k->browse && !strcmp(k->browse_dir, dir)) return k->browse_n;   /* cache hit */
 
     browse_free(k);
+    k->browse_wire_seen = 0;      /* new folder: the next write is a baseline */
     DIR *d = opendir(dir);
     if (!d) return 0;
     char **v = (char **)calloc(DR32_BROWSE_MAX, sizeof(char *));
@@ -113,6 +114,33 @@ int dr32_kit_browse_index(dr32_kit *k, int pad) {
     const char *cur = base_name(k->pads[pad].path);
     for (int i = 0; i < n; i++) if (!strcmp(k->browse[i], cur)) return i;
     return -1;
+}
+
+int dr32_kit_browse_step(dr32_kit *k, int pad, int wire) {
+    if (!k) return -1;
+    int n = browse_ensure(k, pad);
+    if (n <= 0) { k->browse_wire = wire; k->browse_wire_seen = 1; return -1; }
+
+    int cur = dr32_kit_browse_index(k, pad);
+    if (cur < 0) cur = 0;
+
+    /* The FIRST write after the folder changed is a baseline, not a move — the
+     * host's knob still holds whatever it showed for the previous pad, and
+     * treating that difference as a delta would jump the selection. */
+    if (!k->browse_wire_seen) {
+        k->browse_wire = wire;
+        k->browse_wire_seen = 1;
+        return cur;
+    }
+
+    int delta = wire - k->browse_wire;
+    k->browse_wire = wire;
+    if (delta == 0) return cur;
+
+    /* No clamp here on purpose: dr32_kit_browse_select clamps, and it is the
+     * one place that should. A second copy passed every test with it removed —
+     * mutation-testing showed it was guarding nothing. */
+    return dr32_kit_browse_select(k, pad, cur + delta);
 }
 
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {

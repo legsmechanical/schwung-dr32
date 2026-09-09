@@ -476,7 +476,7 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
      * shift every pad behind them onto the wrong buffer. An empty pad simply
      * renders silence, exactly as it does today.
      *
-     * 🔴 THE ID IS THE PAD'S OWN PARAM PREFIX, AND IT IS 0-BASED: `pad0`..`pad31`.
+     * 🔴 THE ID IS THE PAD'S OWN PARAM PREFIX, AND IT IS 1-BASED: `pad1`..`pad32`.
      *
      * That is not cosmetic and it was wrong until 2026-09-08. `voice_send_params`
      * below publishes the TEMPLATE `{id}_send_a`, and the host substitutes each
@@ -507,7 +507,7 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
                 if (n + 1 >= buf_len) return 0;
                 buf[n++] = ',';
             }
-            w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i);
+            w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i + 1);
             if (w <= 0 || n + w >= buf_len) return 0;
             n += w;
             int m = in->kit.pads[i].path[0]

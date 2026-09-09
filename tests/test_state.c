@@ -71,10 +71,10 @@ int main(void) {
 
         /* Spread across the kinds of field that exist: a bipolar int, a float,
          * an enum-ish, a global, and a send. */
-        dr32_apply_param(&a, "pad0_transpose", "-5");
-        dr32_apply_param(&a, "pad0_decay",     "0.25");
-        dr32_apply_param(&a, "pad0_choke",     "3");
-        dr32_apply_param(&a, "pad3_pan",       "-20");
+        dr32_apply_param(&a, "pad1_transpose", "-5");
+        dr32_apply_param(&a, "pad1_decay",     "0.25");
+        dr32_apply_param(&a, "pad1_choke",     "3");
+        dr32_apply_param(&a, "pad4_pan",       "-20");
         dr32_apply_param(&a, "master",         "0.5");
 
         int n = dr32_state_write(&a, "/data/UserData/Kits/MyKit.ablpreset",
@@ -82,7 +82,7 @@ int main(void) {
         CHECK(n > 0, "state_write returned %d (expected > 0)", n);
         CHECK(strstr(blob, "\"kit\":\"/data/UserData/Kits/MyKit.ablpreset\"") != NULL,
               "blob does not carry the kit path");
-        CHECK(strstr(blob, "pad0_transpose") != NULL, "blob omits an edited pad field");
+        CHECK(strstr(blob, "pad1_transpose") != NULL, "blob omits an edited pad field");
 
         /* A fresh kit, restored from the blob. No load_kit callback: this test
          * is about the params, and a real preset load needs files on disk. */
@@ -91,8 +91,8 @@ int main(void) {
         CHECK(dr32_state_read(&b, blob, NULL, NULL) == 1, "state_read rejected its own output");
 
         char va[64], vb[64];
-        const char *keys[] = { "pad0_transpose", "pad0_decay", "pad0_choke",
-                               "pad3_pan", "master", NULL };
+        const char *keys[] = { "pad1_transpose", "pad1_decay", "pad1_choke",
+                               "pad4_pan", "master", NULL };
         for (int i = 0; keys[i]; i++) {
             rd(&a, keys[i], va, sizeof(va));
             rd(&b, keys[i], vb, sizeof(vb));
@@ -105,13 +105,13 @@ int main(void) {
     {
         dr32_kit a; dr32_kit_init(&a);
         occupy(&a, 1, "/s.wav");
-        dr32_apply_param(&a, "pad1_transpose", "-5");
+        dr32_apply_param(&a, "pad2_transpose", "-5");
         CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob), NULL) > 0, "write failed");
 
         dr32_kit b; dr32_kit_init(&b);
         occupy(&b, 1, "/s.wav");
         dr32_state_read(&b, blob, NULL, NULL);
-        char v[64]; rd(&b, "pad1_transpose", v, sizeof(v));
+        char v[64]; rd(&b, "pad2_transpose", v, sizeof(v));
         CHECK(atof(v) == -5.0, "transpose came back as '%s', expected -5", v);
     }
 
@@ -136,7 +136,7 @@ int main(void) {
         CHECK(dr32_state_read(&b, "", NULL, NULL) == 0, "empty blob was accepted");
         /* Unknown keys must be ignored, not fatal: a blob from a newer build
          * has to load on an older one rather than failing whole. */
-        CHECK(dr32_state_read(&b, "{\"v\":1,\"params\":{\"pad0_nosuchfield\":\"1\"}}",
+        CHECK(dr32_state_read(&b, "{\"v\":1,\"params\":{\"pad1_nosuchfield\":\"1\"}}",
                               NULL, NULL) == 1, "an unknown key made the whole restore fail");
         /* A truncating buffer must yield nothing rather than half a blob. */
         char tiny[80];
@@ -160,35 +160,35 @@ int main(void) {
               "baseline write failed");
 
         /* One edit; a delta blob must carry it and no unedited siblings. */
-        dr32_apply_param(&a, "pad0_transpose", "-5");
+        dr32_apply_param(&a, "pad1_transpose", "-5");
         int n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), base);
         CHECK(n > 0, "delta write failed");
-        CHECK(strstr(blob, "pad0_transpose") != NULL, "delta blob omits the edit");
-        CHECK(strstr(blob, "pad1_") == NULL,
+        CHECK(strstr(blob, "pad1_transpose") != NULL, "delta blob omits the edit");
+        CHECK(strstr(blob, "pad2_") == NULL,
               "delta blob carries unedited pad1 fields: %.200s", blob);
         CHECK(n < 512, "delta blob is %d bytes — not a delta", n);
 
         /* An edit reverted to its baseline value drops back out. */
-        char orig[64]; rd(&a, "pad0_transpose", orig, sizeof(orig));
+        char orig[64]; rd(&a, "pad1_transpose", orig, sizeof(orig));
         (void)orig;
         dr32_kit c; dr32_kit_init(&c);
         occupy(&c, 0, "/s0.wav");
-        char base_v[64]; rd(&c, "pad0_transpose", base_v, sizeof(base_v));
-        dr32_apply_param(&a, "pad0_transpose", base_v);
+        char base_v[64]; rd(&c, "pad1_transpose", base_v, sizeof(base_v));
+        dr32_apply_param(&a, "pad1_transpose", base_v);
         n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), base);
-        CHECK(n > 0 && strstr(blob, "pad0_transpose") == NULL,
+        CHECK(n > 0 && strstr(blob, "pad1_transpose") == NULL,
               "a reverted edit still appears in the delta blob");
 
         /* A baseline for a DIFFERENT kit path must be IGNORED — comparing
          * against another kit's values would silently drop real edits. */
-        dr32_apply_param(&a, "pad0_transpose", "-5");
+        dr32_apply_param(&a, "pad1_transpose", "-5");
         n = dr32_state_write(&a, "/OTHER.ablpreset", blob, (int)sizeof(blob), base);
-        CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
+        CHECK(n > 0 && strstr(blob, "pad2_") != NULL,
               "a mismatched-kit baseline was honoured (blob still a delta)");
 
         /* A garbage baseline degrades to the full dump, never an error. */
         n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), "not json");
-        CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
+        CHECK(n > 0 && strstr(blob, "pad2_") != NULL,
               "a malformed baseline did not fall back to the full dump");
     }
 
@@ -252,8 +252,8 @@ int main(void) {
             const char *wa = "/tmp/dr32_state_kick.wav", *wb = "/tmp/dr32_state_snare.wav";
             make_wav(wa);
             make_wav(wb);
-            api->set_param(inst, "pad0_sample", wa);
-            api->set_param(inst, "pad1_sample", wb);
+            api->set_param(inst, "pad1_sample", wa);
+            api->set_param(inst, "pad2_sample", wb);
             static char h[65536];
             int n = api->get_param(inst, "ui_hierarchy", h, (int)sizeof(h));
             CHECK(n > 2, "ui_hierarchy not served (%d bytes)", n);
@@ -322,8 +322,8 @@ int main(void) {
                 while (*q && *q != '"' && k + 1 < sizeof id) id[k++] = *q++;
                 id[k] = '\0';
 
-                if (n_ids == 0)  CHECK(strcmp(id, "pad0") == 0,  "first id is '%s'", id);
-                if (n_ids == 31) CHECK(strcmp(id, "pad31") == 0, "last id is '%s'", id);
+                if (n_ids == 0)  CHECK(strcmp(id, "pad1") == 0,  "first id is '%s'", id);
+                if (n_ids == 31) CHECK(strcmp(id, "pad32") == 0, "last id is '%s'", id);
 
                 static const char *const suffix[2] = { "_send_a", "_send_b" };
                 for (int sd = 0; sd < 2; sd++) {
@@ -355,8 +355,8 @@ int main(void) {
              * old 1-based ids produced for the last pad; if this reads back a
              * value, the check above proves nothing. */
             char dead[64];
-            CHECK(api->get_param(inst, "pad32_send_a", dead, (int)sizeof(dead)) == 0,
-                  "pad32_send_a resolved — the negative control is broken, so the "
+            CHECK(api->get_param(inst, "pad33_send_a", dead, (int)sizeof(dead)) == 0,
+                  "pad33_send_a resolved — the negative control is broken, so the "
                   "substitution checks above cannot be trusted");
 
             api->destroy_instance(inst);

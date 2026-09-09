@@ -70,7 +70,7 @@
           "params": [
             {
               "level": "kits",
-              "label": "Kits"
+              "label": "Category"
             },
             {
               "level": "pads",
@@ -87,6 +87,7 @@
           "name": "Pads",
           "child_prefix": "pad",
           "child_count": 32,
+          "child_index_base": 1,
           "child_label": "Pad",
           "child_index_param": "ui_current_pad",
           "child_note_base": 36,
@@ -130,9 +131,9 @@
               "name": "Pad",
               "short_name": "PAD",
               "type": "int",
-              "min": 0,
-              "max": 31,
-              "default": 0
+              "min": 1,
+              "max": 32,
+              "default": 1
             },
             {
               "key": "sample",
@@ -475,7 +476,7 @@
           ]
         },
         "kits": {
-          "name": "Kits",
+          "name": "Category",
           "items_param": "kit_cat_items",
           "select_param": "kit_cat",
           "navigate_to": "kit_list",

@@ -11,7 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/** Parse "pad12_attack" -> pad index 12, key "attack". Returns -1 if not a pad key. */
+/** Parse "pad12_attack" -> pad index 11, key "attack". Returns -1 if not a pad key.
+ *
+ * ⚠⚠ THE WIRE IS 1-BASED, THE ENGINE IS 0-BASED, and the conversion lives HERE
+ * so it happens exactly once. `child_index_base: 1` on the pads level is what
+ * makes the host speak this numbering — it drives BOTH the value of
+ * `child_index_param` and the {index} in generated keys, so they cannot be
+ * chosen separately. Move numbers its pads from 1 and the selector now reads
+ * 1..32 to match (Josh, 2026-09-09); "pad0_" is not a valid key any more. */
 /* "pad<N>_<sub>" addresses a pad explicitly. "pad_<sub>" — no digits — is the
  * ALIAS: it addresses whichever pad currently has focus.
  *
@@ -33,6 +40,7 @@ static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) 
     while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; digits++; }
     if (!digits || *p != '_') return -1;
     *rest = p + 1;
+    idx -= 1;                                   /* wire 1..32 -> engine 0..31 */
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
 }
 
@@ -224,8 +232,8 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         return 0;
     }
 
-    if (!strcmp(key, "ui_current_pad"))
-        return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
+    if (!strcmp(key, "ui_current_pad"))          /* 1-based on the wire */
+        return snprintf(buf, buf_len, "%d", kit->ui_current_pad + 1);
     if (!strcmp(key, "ui_auto_select_pad"))
         return snprintf(buf, buf_len, "%s", kit->ui_auto_select_pad ? "on" : "off");
     if (!strcmp(key, "link"))
@@ -270,7 +278,7 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         // takes one root each, so they are two keys meaning the same thing.
         if      (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
                  || !strcmp(sub, "sample_user"))  dr32_kit_load_sample(kit, pad, val);
-        else if (!strcmp(sub, "browse"))          dr32_kit_browse_select(kit, pad, atoi(val));
+        else if (!strcmp(sub, "browse"))          dr32_kit_browse_step(kit, pad, atoi(val));
         else if (!strcmp(sub, "note"))          dr32_kit_set_note(kit, pad, atoi(val));
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
         else if (!strcmp(sub, "start"))         p->play_start = f;
@@ -378,7 +386,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         return 1;
     }
     if (!strcmp(key, "ui_current_pad")) {
-        int v = atoi(val);
+        int v = atoi(val) - 1;                   /* 1-based on the wire */
         kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);
         return 1;
     }

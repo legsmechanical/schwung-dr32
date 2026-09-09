@@ -336,13 +336,13 @@ int main(void) {
         dr32_kit t;
         dr32_kit_init(&t);
         char buf[32];
-        dr32_apply_param(&t, "pad4_start", "0.25");
-        dr32_apply_param(&t, "pad4_length", "0.5");
-        dr32_read_param(&t, "pad4_end", buf, sizeof(buf));
+        dr32_apply_param(&t, "pad5_start", "0.25");
+        dr32_apply_param(&t, "pad5_length", "0.5");
+        dr32_read_param(&t, "pad5_end", buf, sizeof(buf));
         CHECK(!strcmp(buf, "0.75"), "end read %s, want 0.75", buf);
 
-        dr32_apply_param(&t, "pad4_end", "0.6");
-        dr32_read_param(&t, "pad4_length", buf, sizeof(buf));
+        dr32_apply_param(&t, "pad5_end", "0.6");
+        dr32_read_param(&t, "pad5_length", buf, sizeof(buf));
         CHECK(!strcmp(buf, "0.35"), "length after end write %s, want 0.35", buf);
 
         // The alias follows the focused pad too.
@@ -352,11 +352,11 @@ int main(void) {
 
         // Clamped: an end before the start is an empty region, never negative,
         // and start + length never reads past the file.
-        dr32_apply_param(&t, "pad4_end", "0.1");
-        dr32_read_param(&t, "pad4_length", buf, sizeof(buf));
+        dr32_apply_param(&t, "pad5_end", "0.1");
+        dr32_read_param(&t, "pad5_length", buf, sizeof(buf));
         CHECK(!strcmp(buf, "0"), "end before start gave length %s, want 0", buf);
-        dr32_apply_param(&t, "pad4_length", "1");
-        dr32_read_param(&t, "pad4_end", buf, sizeof(buf));
+        dr32_apply_param(&t, "pad5_length", "1");
+        dr32_read_param(&t, "pad5_end", buf, sizeof(buf));
         CHECK(!strcmp(buf, "1"), "overlong region read end %s, want 1", buf);
 
         dr32_kit_free(&t);
@@ -445,26 +445,26 @@ int main(void) {
         /* OFF by default — a mode that armed itself would flatten a kit on the
          * next knob turn. */
         CHECK(k.link_all == 0, "link_all is not off at init");
-        dr32_apply_param(&k, "pad3_attack", "0.25");
+        dr32_apply_param(&k, "pad4_attack", "0.25");
         CHECK(k.pads[3].params.attack == 0.25f, "the addressed pad did not take the value");
         CHECK(k.pads[7].params.attack == 0.5f, "link OFF still wrote to another pad");
 
         dr32_apply_param(&k, "link", "All");
         CHECK(k.link_all == 1, "link did not arm");
-        dr32_apply_param(&k, "pad3_decay", "2.0");
+        dr32_apply_param(&k, "pad4_decay", "2.0");
         int all = 1;
         for (int i = 0; i < DR32_PADS; i++) if (k.pads[i].params.decay != 2.0f) all = 0;
         CHECK(all, "link ON did not reach every pad");
 
         /* The exclusions, each named because each has its own failure. */
         int base_note = k.pads[9].note;
-        dr32_apply_param(&k, "pad3_note", "40");
+        dr32_apply_param(&k, "pad4_note", "40");
         CHECK(k.pads[9].note == base_note,
               "LINK fanned out `note` — every pad would answer one MIDI note and the rack is dead");
         CHECK(k.pads[3].note == 40, "the addressed pad's note did not change");
 
         k.pads[5].params.sending_note = 61;
-        dr32_apply_param(&k, "pad3_sending_note", "70");
+        dr32_apply_param(&k, "pad4_sending_note", "70");
         CHECK(k.pads[5].params.sending_note == 61, "LINK fanned out `sending_note`");
 
         /* `sample` is the destructive one: 32 pads on one sample is not a kit.
@@ -482,7 +482,7 @@ int main(void) {
                 fwrite(hdr, 1, sizeof hdr, wf);
                 fclose(wf);
             }
-            dr32_apply_param(&k, "pad3_sample", wav);
+            dr32_apply_param(&k, "pad4_sample", wav);
             CHECK(k.pads[3].path[0] != '\0',
                   "the probe WAV did not load at all — this check would be vacuous");
             CHECK(k.pads[11].path[0] == '\0',
@@ -498,15 +498,15 @@ int main(void) {
             dr32_apply_param(&t, "link", "All");
 
             /* Sweeping the SAME field keeps linking — a knob emits many writes. */
-            dr32_apply_param(&t, "pad3_transpose", "5");
-            dr32_apply_param(&t, "pad3_transpose", "7");
+            dr32_apply_param(&t, "pad4_transpose", "5");
+            dr32_apply_param(&t, "pad4_transpose", "7");
             int all = 1;
             for (int i = 0; i < DR32_PADS; i++) if (t.pads[i].params.transpose != 7.0f) all = 0;
             CHECK(all, "a second write of the SAME field stopped linking mid-sweep");
             CHECK(t.link_all == 1, "link released while still on the same field");
 
             /* A DIFFERENT field releases, and is NOT itself linked. */
-            dr32_apply_param(&t, "pad3_send_a", "-6");
+            dr32_apply_param(&t, "pad4_send_a", "-6");
             CHECK(t.link_all == 0, "link did not release on a different parameter");
             CHECK(t.pads[3].params.send_db[0] == -6.0f, "the releasing write did not reach its own pad");
             CHECK(t.pads[9].params.send_db[0] != -6.0f,
@@ -514,16 +514,16 @@ int main(void) {
                   "is the signal you are done, not a last instruction");
 
             /* And it stays off until armed again. */
-            dr32_apply_param(&t, "pad3_pan", "20");
+            dr32_apply_param(&t, "pad4_pan", "20");
             CHECK(t.pads[9].params.pan != 20.0f, "still linking after release");
 
             /* ui_* must not count as "a different parameter" — focus following a
              * hit while you sweep would otherwise disarm mid-gesture. */
             dr32_kit t2; dr32_kit_init(&t2);
             dr32_apply_param(&t2, "link", "All");
-            dr32_apply_param(&t2, "pad3_decay", "3.0");
+            dr32_apply_param(&t2, "pad4_decay", "3.0");
             dr32_apply_param(&t2, "ui_current_pad", "5");
-            dr32_apply_param(&t2, "pad3_decay", "4.0");
+            dr32_apply_param(&t2, "pad4_decay", "4.0");
             int still = 1;
             for (int i = 0; i < DR32_PADS; i++) if (t2.pads[i].params.decay != 4.0f) still = 0;
             CHECK(still, "a ui_ write released the mode mid-sweep");
@@ -534,10 +534,81 @@ int main(void) {
         /* Disarming must actually disarm. */
         dr32_apply_param(&k, "link", "One");
         CHECK(k.link_all == 0, "link did not disarm");
-        dr32_apply_param(&k, "pad3_hold", "0.9");
+        dr32_apply_param(&k, "pad4_hold", "0.9");
         CHECK(k.pads[7].params.hold != 0.9f, "link stayed armed after being turned off");
 
         dr32_kit_free(&k);
+    }
+
+    /* ---- BROWSE is a RELATIVE stepper -------------------------------------
+     *
+     * ⭐ THE POINT IS THAT THE KNOB'S RANGE STOPS MATTERING. `browse` is
+     * declared 0..255 because a knob needs a static range; a folder has a
+     * handful of files. Used absolutely, a 3-file folder left 253 knob
+     * positions dead — turn right, nothing happens, wind all the way back
+     * before it responds. Reported from the device as browse "not being bounded
+     * to the folder". The clamped index is read back, but the host skips reads
+     * inside its post-write settle window, so that does not rescue it mid-turn.
+     */
+    {
+        system("rm -rf /tmp/dr32_br && mkdir -p /tmp/dr32_br");
+        for (int i = 0; i < 3; i++) {
+            char p2[128];
+            snprintf(p2, sizeof p2, "/tmp/dr32_br/s%d.wav", i);
+            make_wav(p2, 0.5f);
+        }
+        dr32_kit b; dr32_kit_init(&b);
+        dr32_kit_load_sample(&b, 0, "/tmp/dr32_br/s0.wav");
+        CHECK(dr32_kit_browse_count(&b, 0) == 3, "fixture folder is not 3 files");
+
+        /* First write after a folder change is a BASELINE, not a move: the
+         * host's knob still holds whatever the previous pad showed. */
+        dr32_apply_param(&b, "pad1_browse", "120");
+        CHECK(dr32_kit_browse_index(&b, 0) == 0, "the first write moved the selection");
+
+        /* One detent = one file, wherever the knob's absolute value happens to be. */
+        dr32_apply_param(&b, "pad1_browse", "121");
+        CHECK(dr32_kit_browse_index(&b, 0) == 1, "a +1 detent did not advance one file");
+        dr32_apply_param(&b, "pad1_browse", "122");
+        CHECK(dr32_kit_browse_index(&b, 0) == 2, "a second detent did not advance");
+
+        /* Past the end it STOPS, and coming back moves immediately — the whole
+         * complaint was having to wind back through dead travel. */
+        dr32_apply_param(&b, "pad1_browse", "160");
+        CHECK(dr32_kit_browse_index(&b, 0) == 2, "ran past the end of the folder");
+        dr32_apply_param(&b, "pad1_browse", "159");
+        CHECK(dr32_kit_browse_index(&b, 0) == 1,
+              "after overshooting, one detent back did not move — that is the dead travel");
+
+        /* And it never leaves the folder. */
+        CHECK(strstr(b.pads[0].path, "/tmp/dr32_br/") != NULL, "browse left the pad's folder");
+
+        /* ⚠ SWITCHING PAD, i.e. switching FOLDER, must re-baseline. The host's
+         * knob still holds the value it showed for the previous pad, and
+         * treating that difference as a delta would jump the new pad's
+         * selection the instant you touched it. Only a second folder can test
+         * this — the single-folder case above passes either way, which is how
+         * mutation-testing caught that this check was missing. */
+        system("mkdir -p /tmp/dr32_br2");
+        for (int i = 0; i < 5; i++) {
+            char p3[128];
+            snprintf(p3, sizeof p3, "/tmp/dr32_br2/t%d.wav", i);
+            make_wav(p3, 0.5f);
+        }
+        dr32_kit_load_sample(&b, 1, "/tmp/dr32_br2/t0.wav");
+        CHECK(dr32_kit_browse_count(&b, 1) == 5, "second fixture folder is not 5 files");
+        /* ⚠ A DIFFERENT value from where the knob sat on the previous pad (159).
+         * Using the same one made this check vacuous — the delta was zero
+         * whether or not the folder change re-baselined. */
+        dr32_apply_param(&b, "pad2_browse", "200");
+        CHECK(dr32_kit_browse_index(&b, 1) == 0,
+              "switching pad jumped the new pad's selection — the folder change did not re-baseline");
+        dr32_apply_param(&b, "pad2_browse", "201");
+        CHECK(dr32_kit_browse_index(&b, 1) == 1, "the new pad does not step after re-baselining");
+        system("rm -rf /tmp/dr32_br2");
+
+        dr32_kit_free(&b);
+        system("rm -rf /tmp/dr32_br");
     }
 
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);
