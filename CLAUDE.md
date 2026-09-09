@@ -230,14 +230,21 @@ more block loop.
   render. A `memset` there erases another pad's audio.
 - **All 32 pads are listed, empties included.** The index IS the `voice_out[]` index, so dropping
   empties shifts every pad behind them onto the wrong buffer.
-- 🔴 **Ids are `pad0..pad31` — 0-BASED, because that is what `dr32_params.c` parses.** They were
-  `pad1..pad32` until 2026-09-08 and it was a live bug the moment `voice_send_params` arrived:
-  the host substitutes an id into `{id}_send_a` VERBATIM, so every send level landed on the pad
-  next door and `pad32_send_a` addressed nothing. **Nothing errors on a key that does not
-  resolve** — it is simply a send that never moves. `tests/test_state.c` walks id → template →
-  `set_param`/`get_param` for all 32, and carries a negative control (`pad32_send_a` must resolve
-  to nothing) so the check cannot pass vacuously. Ids stay stable across content changes; the
-  LABELS follow the loaded sample, which is what lets a saved bus assignment survive a kit change.
+- 🔴 **Ids are `pad1..pad32` — 1-BASED, and they must MATCH `split_pad_key`.** The host substitutes
+  an id into `{id}_send_a` **verbatim**, so the two have to agree or every send level lands on the
+  pad next door and the end one addresses nothing — **silently**, because nothing in the host errors
+  on a key that does not resolve. It is simply a send that never moves.
+  ⚠⚠ **The base has flipped twice, so verify it against the code rather than against prose.** Ids
+  were 1-based, went 0-based on 2026-09-08 to match a 0-based param surface, and went back to
+  1-based on 09-09 when the whole surface became 1-based (the Pad knob reads 1–32 and
+  `split_pad_key` now does `idx -= 1`). **This paragraph itself claimed 0-BASED until 09-09, three
+  releases after it stopped being true** — a reader "fixing" the code to match would have broken
+  every send with nothing to show for it.
+  ⭑ The check that settles it is not prose: `tests/test_state.c` SUBSTITUTES each published id into
+  the template and drives the result through `set_param`/`get_param` with a distinct value per pad
+  and per send, so a key resolving to the wrong pad reads back somebody else's number. It also pins
+  the first id as `pad1` and the 32nd as `pad32`. Ids stay stable across content changes; the LABELS
+  follow the loaded sample, which is what lets a saved bus assignment survive a kit change.
 - **A short `n_voices`, or a NULL entry, falls back to `main_out`** — a host that asks about fewer
   voices than we have must still hear the whole kit.
 - **Never a `static` scratch buffer.** DR32 is MULTI-INSTANCE; two slots would share it on the
