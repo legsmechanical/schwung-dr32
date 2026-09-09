@@ -1,15 +1,16 @@
-/* ⚠ THE TESTS BUILD -std=c11, AND glibc HIDES EVERYTHING NOT IN IT.
- * mkdtemp, setenv, utimensat and struct timespec are POSIX; M_PI is XSI.
- * macOS headers expose all of them regardless, so an omission here is
- * invisible locally and a hard -Werror failure on Linux — which is where
- * the module is actually built.
+/* ⚠ THE TESTS BUILD -std=c11, AND THE TWO LIBCS DISAGREE ABOUT WHAT THAT HIDES.
+ * glibc declares nothing outside the standard unless asked, so mkdtemp,
+ * setenv, utimensat, struct timespec and M_PI all vanish. Darwin exposes
+ * everything by DEFAULT and only starts restricting once you name a
+ * standard — so _XOPEN_SOURCE fixes Linux and then hides mkdtemp on macOS,
+ * which is the second failure caused by the fix for the first.
  *
- * ⚠ _XOPEN_SOURCE 700, not _POSIX_C_SOURCE 200809L. The POSIX macro alone
- * implies the same POSIX level but SUPPRESSES the XSI additions, so it
- * fixes mkdtemp and then takes M_PI away — asking for less, not more.
- * One macro, uniform across the suite, so a new test file cannot pick the
- * one that happens not to cover what it uses. */
-#define _XOPEN_SOURCE 700
+ * _GNU_SOURCE is the one that asks for MORE on glibc and is simply not
+ * consulted on Darwin, so it is additive on both. Verified by running the
+ * suite on macOS, debian:bookworm and ubuntu:24.04 — not by reasoning about
+ * headers. Keep it uniform across the suite: a new test file must not have
+ * to pick, and picking wrong is invisible on whichever platform you use. */
+#define _GNU_SOURCE
 
 // Kit-layer tests: note map, choke groups, sample swap safety, 32-pad range.
 
@@ -31,6 +32,16 @@ static int failures = 0, checks = 0;
     checks++; \
     if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } \
 } while (0)
+
+/* ⚠ `system` is `warn_unused_result` on a hardened glibc (Ubuntu defaults
+ * -D_FORTIFY_SOURCE at -O2; Debian does not), so ignoring it is a -Werror
+ * failure on some builders and silence on others. Checking it is the right
+ * thing anyway: a fixture directory that failed to appear makes every check
+ * below it pass or fail for a reason that has nothing to do with the code. */
+static void sh(const char *cmd) {
+    int rc = system(cmd);
+    if (rc != 0) { failures++; printf("  FAIL setup command failed (%d): %s\n", rc, cmd); }
+}
 
 #define SR 44100
 static float out[2 * 512];
@@ -566,7 +577,7 @@ int main(void) {
      * knob's declared range never has to match the folder's size.
      */
     {
-        system("rm -rf /tmp/dr32_br && mkdir -p /tmp/dr32_br");
+        sh("rm -rf /tmp/dr32_br && mkdir -p /tmp/dr32_br");
         for (int i = 0; i < 3; i++) {
             char p2[128];
             snprintf(p2, sizeof p2, "/tmp/dr32_br/s%d.wav", i);
@@ -609,7 +620,7 @@ int main(void) {
         /* ⚠ EACH PAD HAS ITS OWN COUNTER — its knob is a separate key with its
          * own state in the host, so one shared counter made switching pad look
          * like an enormous turn. */
-        system("mkdir -p /tmp/dr32_br2");
+        sh("mkdir -p /tmp/dr32_br2");
         for (int i = 0; i < 5; i++) {
             char p3[128];
             snprintf(p3, sizeof p3, "/tmp/dr32_br2/t%d.wav", i);
@@ -621,10 +632,10 @@ int main(void) {
         dr32_apply_param(&b, "pad2_browse", "1");
         CHECK(dr32_kit_browse_index(&b, 1) == 1, "the second pad did not step");
         CHECK(dr32_kit_browse_index(&b, 0) == 1, "stepping one pad moved another");
-        system("rm -rf /tmp/dr32_br2");
+        sh("rm -rf /tmp/dr32_br2");
 
         dr32_kit_free(&b);
-        system("rm -rf /tmp/dr32_br");
+        sh("rm -rf /tmp/dr32_br");
     }
 
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);

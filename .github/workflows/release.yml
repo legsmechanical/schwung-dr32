@@ -35,11 +35,25 @@ jobs:
           node-version: '20'
 
       # A tag that does not pass its own suite must not become a release.
+      #
+      # ⚠⚠ RUN IN debian:bookworm, NOT ON THE BARE RUNNER. The distro chooses
+      #    the compiler's defaults, and two of them differ in ways that are
+      #    -Werror failures rather than warnings: Ubuntu turns on
+      #    _FORTIFY_SOURCE at -O2 (making `system` warn_unused_result) and
+      #    Debian does not. Both of DR32's first two release attempts died here
+      #    on errors no local run could produce. Pinning the image to the one
+      #    scripts/Dockerfile builds from means "green locally" and "green in
+      #    CI" are finally the same sentence — the command in CLAUDE.md is this
+      #    command.
+      #
       # ⚠ check_help SKIPS here — it measures against the HOST's font table and
       #   there is no host checkout on the runner — and a skip counts as a pass.
       #   That check is a content check; run it locally before tagging.
       - name: Test
-        run: tests/run.sh
+        run: |
+          docker run --rm -v "$PWD":/work -w /work debian:bookworm bash -c '
+            apt-get -qq update >/dev/null && apt-get -qq install -y gcc nodejs >/dev/null
+            tests/run.sh'
 
       # build.sh builds its own toolchain image from scripts/Dockerfile when no
       # local builder is present, and then ASSERTS the compiler out of the

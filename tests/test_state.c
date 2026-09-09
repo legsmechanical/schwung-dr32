@@ -1,15 +1,16 @@
-/* ⚠ THE TESTS BUILD -std=c11, AND glibc HIDES EVERYTHING NOT IN IT.
- * mkdtemp, setenv, utimensat and struct timespec are POSIX; M_PI is XSI.
- * macOS headers expose all of them regardless, so an omission here is
- * invisible locally and a hard -Werror failure on Linux — which is where
- * the module is actually built.
+/* ⚠ THE TESTS BUILD -std=c11, AND THE TWO LIBCS DISAGREE ABOUT WHAT THAT HIDES.
+ * glibc declares nothing outside the standard unless asked, so mkdtemp,
+ * setenv, utimensat, struct timespec and M_PI all vanish. Darwin exposes
+ * everything by DEFAULT and only starts restricting once you name a
+ * standard — so _XOPEN_SOURCE fixes Linux and then hides mkdtemp on macOS,
+ * which is the second failure caused by the fix for the first.
  *
- * ⚠ _XOPEN_SOURCE 700, not _POSIX_C_SOURCE 200809L. The POSIX macro alone
- * implies the same POSIX level but SUPPRESSES the XSI additions, so it
- * fixes mkdtemp and then takes M_PI away — asking for less, not more.
- * One macro, uniform across the suite, so a new test file cannot pick the
- * one that happens not to cover what it uses. */
-#define _XOPEN_SOURCE 700
+ * _GNU_SOURCE is the one that asks for MORE on glibc and is simply not
+ * consulted on Darwin, so it is additive on both. Verified by running the
+ * suite on macOS, debian:bookworm and ubuntu:24.04 — not by reasoning about
+ * headers. Keep it uniform across the suite: a new test file must not have
+ * to pick, and picking wrong is invisible on whichever platform you use. */
+#define _GNU_SOURCE
 
 // State round-trip: what Schwung stores in a set's slot_N.json.
 //
@@ -41,6 +42,16 @@ static int failures = 0, checks = 0;
     checks++; \
     if (!(cond)) { failures++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } \
 } while (0)
+
+/* ⚠ `system` is `warn_unused_result` on a hardened glibc (Ubuntu defaults
+ * -D_FORTIFY_SOURCE at -O2; Debian does not), so ignoring it is a -Werror
+ * failure on some builders and silence on others. Checking it is the right
+ * thing anyway: a fixture directory that failed to appear makes every check
+ * below it pass or fail for a reason that has nothing to do with the code. */
+static void sh(const char *cmd) {
+    int rc = system(cmd);
+    if (rc != 0) { failures++; printf("  FAIL setup command failed (%d): %s\n", rc, cmd); }
+}
 
 static char blob[65536];
 
@@ -471,7 +482,7 @@ int main(void) {
         /* A REAL catalogue, or the assertions below are vacuous: with an empty
          * one the kit_index write returns early, nothing is ever pending, and
          * "a detent did not load" is true for the wrong reason. */
-        system("rm -rf /tmp/dr32_kr && mkdir -p /tmp/dr32_kr/core/Electronic /tmp/dr32_kr/user");
+        sh("rm -rf /tmp/dr32_kr && mkdir -p /tmp/dr32_kr/core/Electronic /tmp/dr32_kr/user");
         for (int i = 0; i < 4; i++) {
             char pth[128];
             snprintf(pth, sizeof pth, "/tmp/dr32_kr/core/Electronic/k%d.json", i);
@@ -528,7 +539,7 @@ int main(void) {
             api->destroy_instance(inst);
         }
         unsetenv("DR32_KIT_ROOTS");
-        system("rm -rf /tmp/dr32_kr");
+        sh("rm -rf /tmp/dr32_kr");
     }
 
     printf("%s  (%d checks, %d failures)\n", failures ? "FAILED" : "ok", checks, failures);

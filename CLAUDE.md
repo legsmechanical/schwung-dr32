@@ -306,17 +306,25 @@ and glibc then declares nothing outside it: `mkdtemp`, `setenv`, `utimensat` and
 vanish, and so does `M_PI`. macOS headers expose all of them regardless, so the whole suite passed
 locally and **failed the release build with `-Werror` errors across three files** — none of which
 had ever been compiled on glibc (2026-09-09).
-⚠ **`_XOPEN_SOURCE 700`, not `_POSIX_C_SOURCE 200809L`.** The POSIX macro implies the same POSIX
-level but *suppresses* the XSI additions, so it fixes `mkdtemp` and then takes `M_PI` away — the
-second failure caused by the fix for the first. One macro, uniform across the suite, so a new test
-file cannot pick the one that happens not to cover what it uses.
+⚠⚠ **`_GNU_SOURCE`, and it took three wrong macros to get there — each fix causing the next
+failure.** `_POSIX_C_SOURCE 200809L` restored `mkdtemp` and took `M_PI` away (XSI, not POSIX).
+`_XOPEN_SOURCE 700` restored both on glibc and then hid `mkdtemp` **on macOS** — because Darwin
+exposes everything by DEFAULT and only begins restricting once you name a standard, so naming one
+asks for *less* there. `_GNU_SOURCE` is the only one that is purely additive on glibc and simply
+not consulted on Darwin. Keep it uniform across the suite; a new test file must not have to pick,
+and picking wrong is invisible on whichever platform you happen to use.
 ⭑ **Verify a C change in the container, not just locally:**
 ```sh
 docker run --rm -v "$PWD":/work -w /work debian:bookworm bash -c \
   'apt-get -qq update >/dev/null && apt-get -qq install -y gcc nodejs >/dev/null; tests/run.sh'
 ```
-(`check_help` SKIPS there — no host checkout on the runner — and a skip counts as a pass, so run it
-locally before tagging.) [[local-green-on-a-different-libc-is-not-green]]
+⚠ **The DISTRO also chooses whether code compiles**, not just the libc: Ubuntu enables
+`_FORTIFY_SOURCE` at `-O2` and Debian does not, which makes `system()` `warn_unused_result` on one
+and not the other. That killed a release build no local run could reproduce. **The CI test step now
+runs inside `debian:bookworm` too**, so the command above IS the command the workflow runs — and a
+change touching platform surface is worth a pass on `ubuntu:24.04` as well.
+(`check_help` SKIPS in a container — no host checkout — and a skip counts as a pass, so run the
+suite locally before tagging.) [[local-green-on-a-different-libc-is-not-green]]
 
 ⚠ **The order matters and it is not optional.** `tests/run.sh` WIPES `dist/tests` (its link
 lines glob `dr32_*.o`, so a stale object from a deleted source would still be linked), and it is
