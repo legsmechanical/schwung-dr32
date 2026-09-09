@@ -73,36 +73,11 @@
               "label": "Kit"
             },
             {
-              "key": "ui_auto_select_pad",
-              "name": "Follow Pads",
-              "type": "enum",
-              "options": [
-                "on",
-                "off"
-              ],
-              "short_name": "FOLLW",
-              "viz": {
-                "kind": "switch"
-              }
-            },
-            {
               "level": "pads",
               "label": "Pads"
-            },
-            {
-              "key": "master",
-              "name": "Master",
-              "type": "float",
-              "min": 0.0,
-              "max": 2.0,
-              "step": 0.02,
-              "short_name": "MASTR"
             }
           ],
-          "knobs": [
-            "master",
-            "ui_auto_select_pad"
-          ]
+          "knobs": []
         },
         "pads": {
           "name": "Pads",
@@ -114,7 +89,7 @@
           "child_press_param": "ui_live_press",
           "child_press_note_param": "ui_live_note",
           "child_copy_keys": [
-            "sample_move",
+            "sample",
             "start",
             "end",
             "transpose",
@@ -147,35 +122,21 @@
           ],
           "params": [
             {
-              "key": "sample_move",
-              "name": "Move",
-              "short_name": "MOVE",
-              "type": "filepath",
-              "root": "/data/CoreLibrary/Samples",
-              "start_path": "/data/CoreLibrary/Samples",
-              "filter": [
-                ".wav",
-                ".aif",
-                ".aiff"
-              ],
-              "live_preview": true,
-              "browser_hooks": {
-                "on_open": [
-                  {
-                    "key": "ui_auto_select_pad",
-                    "value": "off",
-                    "restore": true
-                  }
-                ]
-              }
+              "key": "ui_current_pad",
+              "name": "Pad",
+              "short_name": "PAD",
+              "type": "int",
+              "min": 0,
+              "max": 31,
+              "default": 0
             },
             {
-              "key": "sample_user",
-              "name": "User",
-              "short_name": "USER",
+              "key": "sample",
+              "name": "Sample",
+              "short_name": "SMPL",
               "type": "filepath",
-              "root": "/data/UserData/UserLibrary/Samples",
-              "start_path": "/data/UserData/UserLibrary/Samples",
+              "root": "/data",
+              "start_path": "/data",
               "filter": [
                 ".wav",
                 ".aif",
@@ -202,7 +163,7 @@
               "short_name": "STRT",
               "mode": "start",
               "display_unit": "percent",
-              "filepath_param": "sample_move",
+              "filepath_param": "sample",
               "default": 0.0
             },
             {
@@ -212,7 +173,7 @@
               "type": "wav_position",
               "mode": "end",
               "display_unit": "percent",
-              "filepath_param": "sample_move",
+              "filepath_param": "sample",
               "min": 0.0,
               "max": 1.0,
               "step": 0.01,
@@ -324,6 +285,17 @@
               "default": 0.0
             },
             {
+              "key": "vel_vol",
+              "name": "Vel Vol",
+              "short_name": "VVOL",
+              "type": "float",
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.01,
+              "default": 0.35,
+              "viz": false
+            },
+            {
               "key": "pan",
               "name": "Pan",
               "type": "float",
@@ -433,11 +405,21 @@
               "unit": "dB",
               "short_name": "SNDB",
               "default": -70.0
+            },
+            {
+              "key": "master",
+              "name": "Master",
+              "short_name": "MASTR",
+              "type": "float",
+              "min": 0.0,
+              "max": 2.0,
+              "step": 0.02,
+              "default": 1.0
             }
           ],
           "knobs": [
-            "sample_move",
-            "sample_user",
+            "ui_current_pad",
+            "sample",
             "start",
             "end",
             "transpose",
@@ -457,15 +439,21 @@
             "filter_type",
             "filter_on",
             "send_a",
-            "send_b"
-          ]
+            "send_b",
+            "vel_vol",
+            "master"
+          ],
+          "child_key_overrides": {
+            "ui_current_pad": "ui_current_pad",
+            "master": "master"
+          }
         },
         "kit_src": {
-          "name": "Kit",
+          "name": "Kits",
           "params": [
             {
               "key": "kit_move",
-              "name": "Move",
+              "name": "Move Kits",
               "type": "filepath",
               "root": "/data/CoreLibrary/Track Presets/Drums",
               "start_path": "/data/CoreLibrary/Track Presets/Drums",
@@ -494,11 +482,12 @@
                   }
                 ]
               },
-              "viz": false
+              "viz": false,
+              "short_name": "MOVE"
             },
             {
               "key": "kit_user",
-              "name": "User",
+              "name": "User Kits",
               "type": "filepath",
               "root": "/data/UserData/UserLibrary/Track Presets",
               "start_path": "/data/UserData/UserLibrary/Track Presets",
@@ -527,7 +516,8 @@
                   }
                 ]
               },
-              "viz": false
+              "viz": false,
+              "short_name": "USER"
             }
           ]
         }

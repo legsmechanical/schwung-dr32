@@ -400,8 +400,6 @@ static void set_param(void *instance, const char *key, const char *val) {
      * the contract on a settle, so this is never per-frame work. */
     size_t kl = strlen(key);
     if ((kl >= 7 && !strcmp(key + kl - 7, "_sample")) ||
-        (kl >= 12 && !strcmp(key + kl - 12, "_sample_move")) ||
-        (kl >= 12 && !strcmp(key + kl - 12, "_sample_user")) ||
         (kl >= 7 && !strcmp(key + kl - 7, "_browse")))
         dr32_refresh_hierarchy(in);
 }

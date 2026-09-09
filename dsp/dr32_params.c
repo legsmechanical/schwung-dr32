@@ -129,6 +129,10 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
             }
             return off;
         }
+        /* `sample` is the key, and since 2026-09-08 the only one the UI uses:
+         * the Move/User pair collapsed into ONE browser cell rooted at /data.
+         * The two old spellings stay accepted because they cost a strcmp and
+         * anything still holding them keeps working. */
         if (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
             || !strcmp(sub, "sample_user"))  return snprintf(buf, buf_len, "%s", s->path);
         if (!strcmp(sub, "loaded"))      return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);

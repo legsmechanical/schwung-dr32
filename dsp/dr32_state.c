@@ -41,9 +41,10 @@
  *
  * Deliberately NOT the whole vocabulary: `browse*`, `frames`, `loaded`,
  * `waveform` and `voices` are derived or read-only, `play` and `panic` are
- * actions, and `sample_move` / `sample_user` are alternate SETTERS for the same
- * value `sample` reads back — persisting them would restore the same sample
- * twice. `ui_current_pad` / `ui_auto_select_pad` are editor focus, not sound;
+ * actions, and `sample_move` / `sample_user` are legacy aliases for the same
+ * value `sample` reads back (the UI collapsed to one browser cell on
+ * 2026-09-08) — persisting them would restore the same sample twice.
+ * `ui_current_pad` / `ui_auto_select_pad` are editor focus, not sound;
  * restoring them would move the user's cursor on load.
  *
  * `sample` is first so a pad's audio is in place before anything shapes it. */

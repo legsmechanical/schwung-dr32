@@ -10,6 +10,43 @@ used `label` where the schema wants `name`, invented a kit-browser arrangement i
 `filepath` param type, and declared UI params the DSP had no `get_param` readback for. Symptom:
 loads fine, logs nothing, menu does nothing.
 
+## 🧭 The four pages, and why each one is shaped that way (2026-09-08)
+
+```
+Kits    MOVE  USER                                    <- first bank; two door cells
+Pads    PAD   SMPL  STRT  END   TRSP  DETN  CHOKE BRWS
+Pads-2  ATK   DCY   HOLD  ENV   VOL   PAN   PUNCH PTIME
+Pads-3  CUT   RES   TYPE  FILT  SNDA  SNDB  VVOL  MASTR
+```
+
+- **Kits is FIRST because `root` has no knobs at all.** Root's own grid page is always emitted
+  first and always named "Main"; a level with no knobs emits no page (`isMenuLevel` in
+  `page_plan.mjs`), so stripping root leaves the first bank to be whatever it navigates to
+  first. **Do not put a knob on `root`** — it would silently become page 1 and push Kits behind
+  it.
+- ⚠ **There is no "Follow Pads" toggle any more** (Josh, 2026-09-08): DR32 always follows. The
+  `ui_auto_select_pad` FIELD and its `set_param` path are still there and must stay — the file
+  browsers suspend follow through `browser_hooks` while open, and `tests/test_kit.c` drives both
+  focus regimes. It initialises to 1 and is declared nowhere.
+- ⚠ **The host's "Selected Pad" page is suppressed by the PAD knob at k1, and that is the only
+  way to suppress it.** `childPickerNeeded` (`page_plan.mjs`) drops the generated picker exactly
+  when the `child_index_param` is reachable — and only a `knobs[]` entry counts, because
+  `allListedKeys` deliberately ignores `ui_`-prefixed keys listed in `params[]`. Take the k1
+  knob away and the picker page comes back. **`node tools/pages_check.mjs` prints every page
+  with its kind**, so this is visible rather than something to reason about.
+- **One `sample` cell, not a Move/User pair.** Rooted at `/data` because the two sample
+  libraries have no closer common ancestor and one cell means one root. It costs nothing in
+  practice: `buildFilepathBrowserState` prefers the CURRENT VALUE's directory over `start_path`,
+  so a pad that holds a sample opens where that sample lives, and only an empty pad ever sees
+  `/data`. `start`/`end` point at it via `filepath_param: "sample"` — **davebox reads that
+  declaration to find the wave editor's file**, so changing the key changes what davebox
+  resolves.
+- **`vel_vol` carries `viz: false`.** The fader detector claims params NAMED like a level and
+  "Vel Vol" reads as one, but it is a modulation AMOUNT — a fader would be the same lie about it
+  that a fader would be about Pan.
+- ⚠ **A knob GAP cannot be declared.** `knobKeys` filters null entries out, so authored knobs are
+  packed; `master` sits at k8 only because `vel_vol` occupies k7. Remove one and master moves.
+
 ## 🎛 The UI is the host's param-pages grid — DR32 ships no UI of its own (since 0.2.0, 2026-09-05)
 
 DR32 targets **upstream Schwung ≥ 1.2.0** (and needs **≥ 1.3.0** for its per-pad sends to reach
@@ -31,7 +68,11 @@ Key facts for this module specifically:
 - **The 32 pads are one child level** (`child_prefix: "pad"`, `child_count: 32`), which is why
   `dsp/dr32_params.c` speaks `pad<N>_<key>` (0-based) and the `pad_<key>` alias for the focused
   pad. `child_index_param: "ui_current_pad"` makes the DSP the owner of focus in both
-  directions (the host reads it to follow, the pad picker writes it). `child_note_base: 36`.
+  directions (the host reads it to follow, the Pad knob writes it). `child_note_base: 36`.
+- **`child_key_overrides` carries the two keys that are NOT per-pad.** `ui_current_pad` and
+  `master` sit on the `pads` level so they can have cells there, and a template with no
+  `{index}` resolves to the literal key (`child_key.mjs`, `resolveChildKey`) — without the
+  override they would become `pad3_master`, which addresses nothing.
 - **Every key the UI displays must be readable back via `dr32_read_param`.** `end` is a UI
   alias of `length` (`start + length`, written back as a length) so the host's trim editor can
   draw start..end while the `.ablpreset` keeps Move's own `Voice_PlaybackLength`.
@@ -55,8 +96,8 @@ time it reaches `on_midi` (measured on device: identical status/channel/note/sou
 - A host that has vouched even once OWNS liveness from then on (`dr32_kit.host_vouches`): bare
   notes never move focus again, whatever the transport says — davebox's sequencer dragged focus
   because davebox reports no transport to the plugin.
-- `ui_auto_select_pad` ("Follow Pads") gates both. The kit browser suspends it via
-  `browser_hooks` while open.
+- `ui_auto_select_pad` gates both. It is **always on** — there is no toggle since 2026-09-08 —
+  and the file browsers suspend it via `browser_hooks` while open.
 
 Pinned by `tests/test_kit.c` (both regimes, vouch consumption across a transport start, the
 upper bank). **Before changing any of this, say so**: dAVEBOx sound mode depends on it.
@@ -162,12 +203,22 @@ centred on velocity 70, not a linear blend.
 
 ## Testing
 
+⚠ **The order matters and it is not optional.** `tests/run.sh` WIPES `dist/tests` (its link
+lines glob `dr32_*.o`, so a stale object from a deleted source would still be linked), and it is
+`pages_check` — not the test run — that writes the preview fixture.
+
 ```sh
-tests/run.sh                     # off-device: WAV loader, voice, kit, state, JSON round-trip
-node tools/pages_check.mjs       # upstream's validator + voice resolver over the SERVED hierarchy
-node ../schwung-current/tools/param-pages/preview.mjs dr32 --all --layout movy \
-     --fixture dist/tests/dr32-fixture.json --png dist/tests/pages   # render every page
+export SCHWUNG_SRC=../schwung-current/.worktrees/v1.3.3   # the host DR32 actually targets
+tests/run.sh                     # 1. off-device suite; writes dist/tests/served_hierarchy.json
+node tools/pages_check.mjs       # 2. upstream's validator over the SERVED hierarchy; writes the fixture
+node "$SCHWUNG_SRC/tools/param-pages/preview.mjs" dr32 --all --layout movy \
+     --fixture dist/tests/dr32-fixture.json --png dist/tests/pages   # 3. render every page
 ```
+
+⚠ **`../schwung-current` itself is STALE at v1.2.0-16** — it is the upstream-PR home and its
+checkout belongs to whatever branch is being prepared there. DR32 targets 1.3.x, so point
+`SCHWUNG_SRC` at a worktree of the tag instead of switching that checkout:
+`git -C ../schwung-current worktree add --detach .worktrees/v1.3.3 v1.3.3`.
 
 `tests/test_state.c` writes the hierarchy the plugin actually serves to
 `dist/tests/served_hierarchy.json`; `pages_check` reads THAT, not `module.json`, and writes a

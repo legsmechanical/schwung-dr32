@@ -16,7 +16,8 @@ here and sounds like itself, with twice the pads.
 
 **32 pads, Move's own kits.** Kits load from `/data/CoreLibrary/Track Presets/Drums` and
 `/data/UserData/UserLibrary/Track Presets`, with live preview while browsing. Samples can be
-swapped per pad from either library.
+swapped per pad from either library through a single **Sample** browser, which opens in the
+folder that pad's current sample came from.
 
 **The Drum Sampler voice**, per pad: playback region (start / length), transpose and detune, choke
 groups, velocity modulation, pan and volume, sends, and Punch. Two envelope modes (**A-H-D** and
@@ -37,11 +38,22 @@ pointer to them.
 
 **Native Schwung pages, no custom UI.** Since 0.2.0 every page is the host's own knob grid, planned
 from the hierarchy the module serves: the pads are one 32-instance child level with `pad_layout:
-"drums"`, so the header shows a pad map, the grid follows the pad you hit, and each pad's page draws
-the sample waveform with a trim editor, the amp envelope, the filter curve and a fader. Pad names
-come from the loaded kit. Hitting a pad moves the editor to it while the transport is stopped; with
-a pattern running, focus only moves on a host that vouches for a live press (dAVEBOx does; an
-upstream contract for it is in progress).
+"drums"`, so the header shows a pad map and each pad's page draws the sample waveform with a trim
+editor, the amp envelope, the filter curve and a fader. Pad names come from the loaded kit.
+
+Four pages, in order:
+
+| | |
+|---|---|
+| **Kits** | Move Kits and User Kits — click either to open that library's browser |
+| **Pads** | Pad · Sample · Start · End · Transpose · Detune · Choke · Browse |
+| **Pads 2** | Attack · Decay · Hold · Envelope · Volume · Pan · Punch · Punch Time |
+| **Pads 3** | Cutoff · Reso · Type · Filter · Send A · Send B · Vel Vol · Master |
+
+**It always follows the pad you hit** — there is no Follow toggle. Hitting a pad moves the editor
+to it while the transport is stopped; with a pattern running, focus only moves on a host that
+vouches for a live press (dAVEBOx does; an upstream contract for it is in progress). The **Pad**
+knob on the first pad page changes the edited pad by hand, for when focus cannot follow.
 
 ## Status — what is not finished
 
