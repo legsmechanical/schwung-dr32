@@ -51,8 +51,11 @@ Master   MASTR
   resuming the search AT it finds the same one again and re-splices into its own output until the
   buffer fills, which fails soft as the plain document, so the only symptom is names that never
   appear at all.
-- **The OLED header reads `module.json`'s `name`, so `name` is `"DR32"`** (Josh, 2026-09-09: *"can
-  we replace the drum rack 32 on the header with dr32 to save space"*). `headerTitle`
+- **The OLED header reads `module.json`'s `name`, so `name` is `"DrumRack32"`** (Josh, 2026-09-09:
+  *"replace the drum rack 32 on the header with dr32 to save space"*, then *"make DrumRack32 the
+  title"*). ⚠ **The header and the module PICKER read the SAME field** — `scanModulesForType`
+  pushes `name: json.name || entry` — so there is no way to be long in the list and short in the
+  band; `"DrumRack32"` is the compromise that fits both. `headerTitle`
   (`shadow_ui_param_pages.mjs`) resolves `getModuleDisplayName` → `moduleNameCache[id]` → the
   `name` field; **`abbrev` is only the fallback until module.json has been read**, so setting
   `abbrev: "DR32"` alone changed nothing. The long form lives in `description`, `docs/manual.html`
@@ -208,6 +211,19 @@ exactly this reason; **if you change one, change the other in the same commit.**
 If they diverge, every kit changes the moment a user touches a bus, and it presents as *"the drums
 got quieter"* — nowhere near this code.
 
+🔴 **AND IT IS NOT ONLY DSP STATE — ANYTHING EITHER PATH DOES ON A CLOCK GOES IN BOTH.**
+`move_plugin_render_split` synced the transport and did **not** service the deferred kit load, which
+is only serviced from a render callback. Assign one pad to a bus and the host switches entry point
+mid-stream, so that became the callback that runs: the kit browser moved its cursor, changed the
+name on screen, and **loaded nothing, forever, with nothing logged**. Reported from the device
+(2026-09-09) as *"I can load 1 kit after launch, but can't change it after that"* — the one that
+still worked was the state restore, which writes `kit` directly and never defers.
+⚠ The comment above that call read *"the same per-block housekeeping render_block does, and it may
+not be skipped on this path"* while skipping half of it. [[explaining-is-not-checking]].
+⚠ `tests/test_browser.c` now drives the browser down BOTH paths; checks 1–5 passed throughout the
+bug because they drive `render_block`, so the split check is a separate assertion rather than one
+more block loop.
+
 **Other rules the split render must keep:**
 - **ACCUMULATE, never clear.** The host clears the destinations first, and **they alias** — two
   pads on one bus are handed the SAME pointer, and their sum is supposed to happen inside our
@@ -287,6 +303,11 @@ centred on velocity 70, not a linear blend.
 ⚠ **The order matters and it is not optional.** `tests/run.sh` WIPES `dist/tests` (its link
 lines glob `dr32_*.o`, so a stale object from a deleted source would still be linked), and it is
 `pages_check` — not the test run — that writes the preview fixture.
+
+⭑ **`DR32_KIT_ROOTS="<core>:<user>"` makes the kit browser reachable off-device** — the two real
+roots are absolute `/data` paths, and without the override the only coverage was the catalogue's
+boundary conditions. `tests/test_browser.c` uses it to drive the whole path the host drives (items
+list → `kit_cat` → `kit_count` → `kit_index` → settle → loaded), on **both** render entry points.
 
 ```sh
 export SCHWUNG_SRC=../schwung-current/.worktrees/v1.3.3   # the host DR32 actually targets

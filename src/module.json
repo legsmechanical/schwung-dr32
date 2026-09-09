@@ -1,6 +1,6 @@
 {
   "id": "dr32",
-  "name": "DR32",
+  "name": "DrumRack32",
   "abbrev": "DR32",
   "version": "0.2.0",
   "author": "legsmechanical",
@@ -66,7 +66,7 @@
       "pad_layout": "drums",
       "levels": {
         "root": {
-          "name": "DR32",
+          "name": "DrumRack32",
           "params": [
             {
               "level": "kits",

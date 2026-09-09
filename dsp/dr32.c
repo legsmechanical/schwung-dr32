@@ -799,11 +799,28 @@ void move_plugin_render_split(void *instance, int16_t *const *voice_out,
     if (!in) return;
     if (frames > 1024) frames = 1024;
 
-    /* The same per-block housekeeping render_block does, and it may not be
+    /*
+     * The same per-block housekeeping render_block does, and it may not be
      * skipped on this path: the transport sync drives choke/retrigger, and a
      * kit that only saw it on one of its two entry points would drift the
-     * moment a voice was assigned to a bus. */
+     * moment a voice was assigned to a bus.
+     *
+     * 🔴 THE DEFERRED KIT LOAD IS PART OF THAT HOUSEKEEPING, and leaving it out
+     * is what "I can load 1 kit after launch, but can't change it after that"
+     * was (device, 2026-09-09). The kit browser only moves a CURSOR; the load
+     * happens once the cursor settles, and the only thing that runs on a clock
+     * to notice is the render callback. Assign one pad to a bus and the host
+     * switches entry point mid-stream, so this became the callback that runs —
+     * and the browser then changed the name on screen and loaded nothing,
+     * forever, with nothing logged. The one kit that still worked was the state
+     * restore, which writes `kit` directly and never defers.
+     *
+     * ⚠ This is the two-render-path rule in CLAUDE.md, and the paragraph above
+     * asserted the rule while breaking it. Anything either path must do on a
+     * clock goes in BOTH, in the same commit.
+     */
     dr32_sync_transport(in);
+    dr32_service_pending_kit(in);
 
     dr32_kit_render_split(&in->kit, voice_out, n_voices, main_out, frames);
 }
