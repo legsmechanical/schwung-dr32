@@ -154,6 +154,31 @@ if (wideWipe) {
         `bug a sibling repo shipped. Scope the wipe to the object directory.`);
 }
 
+/* ---- 3b. the SHIP build and the TEST build must enumerate sources alike ----
+ *
+ * build.sh listed nine sources explicitly while tests/run.sh globbed `dsp/*.c`.
+ * Adding dsp/dr32_kits.c therefore passed the ENTIRE suite — the tests compiled
+ * and linked it — and shipped a dsp.so without it, because the link globs
+ * build/obj/*.o and found only what had been compiled. The build printed
+ * "==> done:", passed the compiler assert, and installed. The DEVICE caught it,
+ * at dlopen: "undefined symbol: dr32_kits_name".
+ *
+ * Two lists that must be kept in step is the bug; one rule applied in both
+ * places is the fix. A green suite says nothing about the shipped artifact when
+ * they disagree about what the artifact even contains. */
+
+const compiles = code.find((l) => /^for src in /.test(l.text));
+if (!compiles) {
+    errors.push(`no source-compile loop found in ${path}`);
+} else if (!/dsp\/\*\.c/.test(compiles.text)) {
+    errors.push(
+        `line ${compiles.n} enumerates sources EXPLICITLY: \`${compiles.text}\`\n` +
+        `        tests/run.sh globs \`dsp/*.c\`, so an explicit list here means the tests and the ` +
+        `SHIP build compile different sets. A new source then passes the whole suite and is ` +
+        `silently missing from dsp.so — the link globs build/obj/*.o, so it links only what was ` +
+        `compiled, and the failure surfaces on the DEVICE at dlopen. Glob here too.`);
+}
+
 /* ---- 4. a failed assert must remove what install.sh READS ----------------- */
 
 /* ⚠ SCOPED TO LINES AFTER THE ASSERT, and that is the whole point. Searched

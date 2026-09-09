@@ -148,8 +148,15 @@ mkdir -p build/obj
 # (the vendored reverbs were C++ structs); that whole stage moved out with the
 # internal send/return framework, so there is no C++ translation unit left and
 # nothing here needs the C++ runtime.
-for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
-           dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/dr32_state.c dsp/wav.c; do
+# ⚠⚠ GLOB, DO NOT LIST. This was an explicit list of nine files while
+# tests/run.sh globbed `dsp/*.c`, so the two builds compiled DIFFERENT SETS of
+# sources. Adding dsp/dr32_kits.c passed the whole suite and shipped a dsp.so
+# without it in — the link globs build/obj/*.o, so it found only what had been
+# compiled, printed "==> done:", passed the compiler assert, and installed. The
+# device caught it at dlopen: "undefined symbol: dr32_kits_name".
+# One list, derived the same way in both places, is the fix; two lists that must
+# be kept in step is the bug.
+for src in dsp/*.c; do
     $CC -O2 -fPIC $ARCH -DNDEBUG -std=c11 -Wall -Wextra -Idsp \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
