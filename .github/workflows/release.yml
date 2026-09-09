@@ -78,11 +78,27 @@ jobs:
           [ "$want" = "$got" ] || {
             echo "ERROR: tag is $GITHUB_REF_NAME but src/module.json says $got" >&2; exit 1; }
 
+      # ⚠ THE NOTES ARE THE TAG'S OWN ANNOTATION, NOT `generate_release_notes`.
+      #   That setting produces a "Full Changelog" compare link and nothing
+      #   else — a reader has to go read commits to find out what changed,
+      #   which is the opposite of what a release note is for. An annotated tag
+      #   already carries a written summary; use it, and FAIL if it is missing
+      #   rather than publishing an empty release.
+      - name: Release notes from the tag
+        run: |
+          set -eu
+          git tag -l --format='%(contents)' "$GITHUB_REF_NAME" > /tmp/notes.md
+          if [ ! -s /tmp/notes.md ]; then
+            echo "ERROR: $GITHUB_REF_NAME has no annotation — tag with 'git tag -a' and describe the change" >&2
+            exit 1
+          fi
+          cat /tmp/notes.md
+
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/dr32-module.tar.gz
-          generate_release_notes: true
+          body_path: /tmp/notes.md
 
       # ⚠⚠ IN A FRESH CLONE, NOT THIS WORKING TREE. `build/` is TRACKED and the
       #    build above runs in Docker as root, so its objects come back
