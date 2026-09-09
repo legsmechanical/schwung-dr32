@@ -75,6 +75,10 @@
             {
               "level": "pads",
               "label": "Pads"
+            },
+            {
+              "level": "output",
+              "label": "Master"
             }
           ],
           "knobs": []
@@ -405,16 +409,6 @@
               "unit": "dB",
               "short_name": "SNDB",
               "default": -70.0
-            },
-            {
-              "key": "master",
-              "name": "Master",
-              "short_name": "MASTR",
-              "type": "float",
-              "min": 0.0,
-              "max": 2.0,
-              "step": 0.02,
-              "default": 1.0
             }
           ],
           "knobs": [
@@ -440,12 +434,10 @@
             "filter_on",
             "send_a",
             "send_b",
-            "vel_vol",
-            "master"
+            "vel_vol"
           ],
           "child_key_overrides": {
-            "ui_current_pad": "ui_current_pad",
-            "master": "master"
+            "ui_current_pad": "ui_current_pad"
           }
         },
         "kit_src": {
@@ -519,6 +511,24 @@
               "viz": false,
               "short_name": "USER"
             }
+          ]
+        },
+        "output": {
+          "name": "Master",
+          "params": [
+            {
+              "key": "master",
+              "name": "Master",
+              "short_name": "MASTR",
+              "type": "float",
+              "min": 0.0,
+              "max": 2.0,
+              "step": 0.02,
+              "default": 1.0
+            }
+          ],
+          "knobs": [
+            "master"
           ]
         }
       }
