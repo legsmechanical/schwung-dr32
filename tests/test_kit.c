@@ -583,6 +583,26 @@ int main(void) {
         /* And it never leaves the folder. */
         CHECK(strstr(b.pads[0].path, "/tmp/dr32_br/") != NULL, "browse left the pad's folder");
 
+        /* ⚠⚠ THE READ MUST RESYNC THE DELTA BASELINE — reported from the device
+         * as the knob "jumping around", and tied to the folder size because the
+         * gap between the knob's value and the index is what gets applied.
+         *
+         * The host ADOPTS the read value into its own knob (outside its
+         * post-write settle window). So after a read its knob holds the index,
+         * and if the baseline still holds the big number it last wrote, the next
+         * detent measures a delta against the wrong origin and slams to an end.
+         * Reading and stepping must agree about where "here" is. */
+        {
+            char v[32];
+            dr32_read_param(&b, "pad1_browse", v, sizeof v);   /* host adopts this */
+            CHECK(atoi(v) == 1, "browse read back %s, want 1", v);
+            /* The host now turns ONE detent from what it just read. */
+            dr32_apply_param(&b, "pad1_browse", "2");
+            CHECK(dr32_kit_browse_index(&b, 0) == 2,
+                  "after a read, one detent jumped to %d instead of advancing by one",
+                  dr32_kit_browse_index(&b, 0));
+        }
+
         /* ⚠ SWITCHING PAD, i.e. switching FOLDER, must re-baseline. The host's
          * knob still holds the value it showed for the previous pad, and
          * treating that difference as a delta would jump the new pad's

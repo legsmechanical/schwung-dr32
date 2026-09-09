@@ -152,7 +152,7 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * frame. */
         if (!strcmp(sub, "browse"))
             return snprintf(buf, buf_len, "%d",
-                            dr32_kit_browse_index((dr32_kit *)kit, pad));
+                            dr32_kit_browse_index_sync((dr32_kit *)kit, pad));
         if (!strcmp(sub, "browse_count"))
             return snprintf(buf, buf_len, "%d",
                             dr32_kit_browse_count((dr32_kit *)kit, pad));

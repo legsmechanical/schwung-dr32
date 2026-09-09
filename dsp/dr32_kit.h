@@ -153,6 +153,16 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path);
 int dr32_kit_browse_count(dr32_kit *k, int pad);
 /** Position of the pad's current sample among its neighbours, -1 if unknown. */
 int dr32_kit_browse_index(dr32_kit *k, int pad);
+
+/** The index, AND the baseline the next delta is measured from.
+ *
+ * ⚠⚠ THE READ MUST RESYNC THE BASELINE, and forgetting that is what made the
+ * knob jump. The host adopts this value into its own knob (outside its
+ * post-write settle window), so after a read its knob holds the INDEX while an
+ * un-resynced baseline still holds whatever huge number it last wrote — and the
+ * next detent computes a delta against the wrong origin and slams to an end.
+ * Reading and stepping have to agree about where "here" is. */
+int dr32_kit_browse_index_sync(dr32_kit *k, int pad);
 /** Load the idx'th neighbour into the pad. Clamps. Returns the index used. */
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx);
 

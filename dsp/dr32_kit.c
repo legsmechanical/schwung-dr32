@@ -143,6 +143,17 @@ int dr32_kit_browse_step(dr32_kit *k, int pad, int wire) {
     return dr32_kit_browse_select(k, pad, cur + delta);
 }
 
+int dr32_kit_browse_index_sync(dr32_kit *k, int pad) {
+    int i = dr32_kit_browse_index(k, pad);
+    if (k && i >= 0) {
+        /* The host is about to hold `i` in its knob, so that is the origin the
+         * next delta must be measured from. */
+        k->browse_wire = i;
+        k->browse_wire_seen = 1;
+    }
+    return i;
+}
+
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {
     if (!k) return -1;
     int n = browse_ensure(k, pad);
