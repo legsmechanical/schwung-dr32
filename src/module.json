@@ -409,6 +409,20 @@
               "unit": "dB",
               "short_name": "SNDB",
               "default": -70.0
+            },
+            {
+              "key": "link",
+              "name": "Link",
+              "short_name": "LINK",
+              "type": "enum",
+              "options": [
+                "One",
+                "All"
+              ],
+              "default": "One",
+              "viz": {
+                "kind": "switch"
+              }
             }
           ],
           "knobs": [
@@ -431,14 +445,15 @@
             "vel_vol",
             "volume",
             "pan",
-            "",
+            "link",
             "send_a",
             "send_b",
             "punch",
             "punch_time"
           ],
           "child_key_overrides": {
-            "ui_current_pad": "ui_current_pad"
+            "ui_current_pad": "ui_current_pad",
+            "link": "link"
           }
         },
         "output": {

@@ -57,6 +57,10 @@ typedef struct {
     // Which pad the UI is editing, and whether playing a pad moves that focus.
     int           ui_current_pad;
     int           ui_auto_select_pad;
+    /* LINK: while set, a per-pad write is applied to EVERY pad. Editor state,
+     * not sound — deliberately NOT persisted, so a reload never comes back with
+     * it silently on and the next knob turn flattening the kit. */
+    int           link_all;
 
     // Live-press correlation. Neither side can move focus alone: the canvas
     // knows a press was PHYSICAL (it gets the raw grid note, which the

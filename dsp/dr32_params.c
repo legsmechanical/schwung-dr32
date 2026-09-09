@@ -228,17 +228,36 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
     if (!strcmp(key, "ui_auto_select_pad"))
         return snprintf(buf, buf_len, "%s", kit->ui_auto_select_pad ? "on" : "off");
+    if (!strcmp(key, "link"))
+        return snprintf(buf, buf_len, "%s", kit->link_all ? "All" : "One");
     if (!strcmp(key, "master")) return snprintf(buf, buf_len, "%g", (double)kit->master_gain);
     if (!strcmp(key, "voices")) return snprintf(buf, buf_len, "%d", dr32_kit_active_voices(kit));
     return 0;
 }
 
-int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
-    if (!kit || !key || !val) return 0;
-
-    const char *sub;
-    int pad = split_pad_key(kit, key, &sub);
-    if (pad >= 0) {
+/**
+ * Does this per-pad field fan out under LINK?
+ *
+ * ⚠ THE EXCLUSIONS ARE THE WHOLE DESIGN, not caution. Link means "this knob,
+ * on every pad" — so it covers the things a knob SHAPES and must not touch the
+ * things that make a pad a distinct pad:
+ *
+ *   sample*      32 pads holding one sample is not a kit, it is a mistake that
+ *                takes a kit reload to undo.
+ *   note         every pad answering the same note breaks the rack outright.
+ *   sending_note the same, on the way out.
+ *   browse       steps through the folder the PAD's own sample sits in, so the
+ *                same index means a different file per pad — fanning it out is
+ *                not "the same value", it is 32 unrelated ones.
+ *   play         an action, not a value.
+ *
+ * Everything else is a sound-shaping control and is exactly what Link is for.
+ */
+/** Apply one per-pad field to ONE pad. The single place that assignment
+ *  happens, so LINK's fan-out and an ordinary write cannot drift apart. */
+static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *val) {
+    if (pad < 0 || pad >= DR32_PADS) return 0;
+    {
         dr32_pad_slot *s = &kit->pads[pad];
         dr32_pad *p = &s->params;
         float f = (float)atof(val);
@@ -308,7 +327,43 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "play"))          dr32_kit_note_on(kit, s->note, atoi(val));
         return 1;
     }
+}
 
+static int link_fans_out(const char *sub) {
+    static const char *const never[] = {
+        "sample", "sample_move", "sample_user", "note", "sending_note",
+        "browse", "play", NULL
+    };
+    for (int i = 0; never[i]; i++) if (!strcmp(sub, never[i])) return 0;
+    return strncmp(sub, "ui_", 3) != 0;   /* editor state is never per-pad */
+}
+
+int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
+    if (!kit || !key || !val) return 0;
+
+    const char *sub;
+    int pad = split_pad_key(kit, key, &sub);
+    if (pad >= 0) {
+        int r = apply_pad_field(kit, pad, sub, val);
+        /*
+         * LINK: one turn sets that parameter on EVERY pad.
+         *
+         * The fan-out re-enters the SAME setter, once per pad — not a second
+         * copy of the assignment table. A copy is how a param ends up settable
+         * one way and not the other, which this file's own send_slot_index
+         * comment already records happening once.
+         */
+        if (r && kit->link_all && link_fans_out(sub)) {
+            for (int i = 0; i < DR32_PADS; i++)
+                if (i != pad) apply_pad_field(kit, i, sub, val);
+        }
+        return r;
+    }
+
+    if (!strcmp(key, "link")) {
+        kit->link_all = (!strcmp(val, "All") || atoi(val) == 1);
+        return 1;
+    }
     if (!strcmp(key, "ui_current_pad")) {
         int v = atoi(val);
         kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);

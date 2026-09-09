@@ -431,6 +431,74 @@ int main(void) {
     dr32_kit_free(&k);
     remove(wa); remove(wb);
 
+    /* ---- LINK: one turn sets that parameter on every pad ------------------
+     *
+     * ⭐ THE EXCLUSIONS ARE THE PART WORTH TESTING. Fanning out a value is easy
+     * and obvious; the way this feature goes wrong is by fanning out the things
+     * that make a pad a distinct pad. A test that only checked "attack reached
+     * pad 7" would pass with `note` flattening the whole rack onto one MIDI
+     * note, which takes a kit reload to undo. */
+    {
+        dr32_kit k; dr32_kit_init(&k);
+        for (int i = 0; i < DR32_PADS; i++) k.pads[i].params.attack = 0.5f;
+
+        /* OFF by default — a mode that armed itself would flatten a kit on the
+         * next knob turn. */
+        CHECK(k.link_all == 0, "link_all is not off at init");
+        dr32_apply_param(&k, "pad3_attack", "0.25");
+        CHECK(k.pads[3].params.attack == 0.25f, "the addressed pad did not take the value");
+        CHECK(k.pads[7].params.attack == 0.5f, "link OFF still wrote to another pad");
+
+        dr32_apply_param(&k, "link", "All");
+        CHECK(k.link_all == 1, "link did not arm");
+        dr32_apply_param(&k, "pad3_decay", "2.0");
+        int all = 1;
+        for (int i = 0; i < DR32_PADS; i++) if (k.pads[i].params.decay != 2.0f) all = 0;
+        CHECK(all, "link ON did not reach every pad");
+
+        /* The exclusions, each named because each has its own failure. */
+        int base_note = k.pads[9].note;
+        dr32_apply_param(&k, "pad3_note", "40");
+        CHECK(k.pads[9].note == base_note,
+              "LINK fanned out `note` — every pad would answer one MIDI note and the rack is dead");
+        CHECK(k.pads[3].note == 40, "the addressed pad's note did not change");
+
+        k.pads[5].params.sending_note = 61;
+        dr32_apply_param(&k, "pad3_sending_note", "70");
+        CHECK(k.pads[5].params.sending_note == 61, "LINK fanned out `sending_note`");
+
+        /* `sample` is the destructive one: 32 pads on one sample is not a kit.
+         * ⚠ A REAL file, deliberately. This check first used a nonexistent path
+         * and was VACUOUS — the load failed for every pad, so it passed whether
+         * sample fanned out or not. Mutation-testing is what exposed that. */
+        {
+            const char *wav = "/tmp/dr32_link_probe.wav";
+            FILE *wf = fopen(wav, "wb");
+            if (wf) {
+                unsigned char hdr[] = {
+                    'R','I','F','F', 44,0,0,0, 'W','A','V','E', 'f','m','t',' ',
+                    16,0,0,0, 1,0, 1,0, 0x44,0xAC,0,0, 0x88,0x58,1,0, 2,0, 16,0,
+                    'd','a','t','a', 8,0,0,0, 0,0,0,0,0,0,0,0 };
+                fwrite(hdr, 1, sizeof hdr, wf);
+                fclose(wf);
+            }
+            dr32_apply_param(&k, "pad3_sample", wav);
+            CHECK(k.pads[3].path[0] != '\0',
+                  "the probe WAV did not load at all — this check would be vacuous");
+            CHECK(k.pads[11].path[0] == '\0',
+                  "LINK fanned out `sample` — that puts one sample on all 32 pads");
+            remove(wav);
+        }
+
+        /* Disarming must actually disarm. */
+        dr32_apply_param(&k, "link", "One");
+        CHECK(k.link_all == 0, "link did not disarm");
+        dr32_apply_param(&k, "pad3_hold", "0.9");
+        CHECK(k.pads[7].params.hold != 0.9f, "link stayed armed after being turned off");
+
+        dr32_kit_free(&k);
+    }
+
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);
     return failures ? 1 : 0;
 }
