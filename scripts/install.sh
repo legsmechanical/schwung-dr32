@@ -23,8 +23,18 @@ ssh "ableton@${HOST}" "mkdir -p '${DEST}'"
 # temp-name + mv dodges ETXTBSY if the .so is currently loaded
 scp "$HERE/dist/${MODULE_ID}/dsp.so" "ableton@${HOST}:${DEST}/.dsp.so.new"
 ssh "ableton@${HOST}" "mv -f '${DEST}/.dsp.so.new' '${DEST}/dsp.so'"
-for f in module.json ui.js; do
-    scp "$HERE/dist/${MODULE_ID}/$f" "ableton@${HOST}:${DEST}/"
+# ⚠⚠ SHIP WHAT build.sh PACKAGED, do not name files here. This was
+# `for f in module.json ui.js`, a second list that had to be kept in step with
+# the one in build.sh — and it was not: help.json was added to the package and
+# silently never reached the device, because the installer did not know the word.
+# Nothing failed; the file was simply absent, and the host shows no Module Help
+# row for a module with no help.json, so the symptom was a missing FEATURE
+# rather than an error. dsp.so is excluded only because it needs the
+# temp-name + mv dance above to dodge ETXTBSY.
+for f in "$HERE/dist/${MODULE_ID}"/*; do
+    [ -f "$f" ] || continue
+    [ "$(basename "$f")" = "dsp.so" ] && continue
+    scp "$f" "ableton@${HOST}:${DEST}/"
 done
 # The canvas Pad Editor is gone (0.2.0); a stale canvas.js left on the device
 # is harmless to the host but misleading to anyone reading the module dir.

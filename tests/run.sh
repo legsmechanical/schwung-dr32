@@ -28,6 +28,7 @@ node tools/check_module_json.mjs src/module.json || fail=1
 # `docker run`, or every line below the guard silently runs twice on the same
 # mounted volume. Greps a shell script; no Docker, no toolchain, milliseconds.
 node tools/check_build_script.mjs scripts/build.sh || fail=1
+node tools/check_build_script.mjs scripts/install.sh || fail=1
 
 # Help lines are DRAWN, never wrapped and never truncated — anything past x=127
 # is dropped silently. Measured against the host's own glyph table, not counted

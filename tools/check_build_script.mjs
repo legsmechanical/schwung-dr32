@@ -54,158 +54,185 @@ const code = lines
     .map((text, i) => ({ n: i + 1, text: text.replace(/#.*$/, "").trim() }))
     .filter((l) => l.text.length > 0);
 
-/* ---- 1. the outer pass must not fall through past `docker run` ------------ */
+/* Which script are we auditing? The invariants below are about build.sh's
+ * two-pass shape and its link line; install.sh has one of its own. Running
+ * either set against the wrong file reports a pile of absent subjects, which is
+ * noise, not findings. */
+const isBuild = /build\.sh$/.test(path);
+const isInstall = /install\.sh$/.test(path);
 
-const guard = code.find((l) => /\[ ! -f \/\.dockerenv \]/.test(l.text) && /\bthen\b/.test(l.text));
-/* End of the outer-pass block: the first `fi` in column 0 after the guard.
- * Hoisted because more than one check needs "is this line INSIDE the outer
- * pass" — scoping by line number alone is not enough, since the container-side
- * code that follows the block has higher line numbers than everything in it. */
-const outerEnd = guard
-    ? lines.findIndex((t, i) => i > guard.n - 1 && /^fi\s*$/.test(t)) + 1
-    : -1;
-const inOuter = (l) => guard && outerEnd > 0 && l.n > guard.n && l.n < outerEnd;
-if (!guard) {
-    errors.push(
-        `no outer-pass guard found — expected an \`if ... [ ! -f /.dockerenv ]; then\` block. ` +
-        `If the two-pass (host, then re-exec in Docker) shape is gone, DELETE this check ` +
-        `rather than loosening it: a guard that no longer has a subject is worse than none.`);
-} else {
-    /* The block ends at the first `fi` in column 0 after the guard. */
-    const endIdx = outerEnd - 1;
-    if (endIdx < 0) {
-        errors.push(`outer-pass guard at line ${guard.n} has no closing \`fi\` in column 0`);
+/* Every invariant below is about build.sh — its two-pass shape, its object
+ * wipe, its link line. Running them against install.sh would report a pile of
+ * absent subjects, which is noise rather than findings. */
+if (isBuild) {
+    /* ---- 1. the outer pass must not fall through past `docker run` ------------ */
+
+    const guard = code.find((l) => /\[ ! -f \/\.dockerenv \]/.test(l.text) && /\bthen\b/.test(l.text));
+    /* End of the outer-pass block: the first `fi` in column 0 after the guard.
+     * Hoisted because more than one check needs "is this line INSIDE the outer
+     * pass" — scoping by line number alone is not enough, since the container-side
+     * code that follows the block has higher line numbers than everything in it. */
+    const outerEnd = guard
+        ? lines.findIndex((t, i) => i > guard.n - 1 && /^fi\s*$/.test(t)) + 1
+        : -1;
+    const inOuter = (l) => guard && outerEnd > 0 && l.n > guard.n && l.n < outerEnd;
+    if (!guard) {
+        errors.push(
+            `no outer-pass guard found — expected an \`if ... [ ! -f /.dockerenv ]; then\` block. ` +
+            `If the two-pass (host, then re-exec in Docker) shape is gone, DELETE this check ` +
+            `rather than loosening it: a guard that no longer has a subject is worse than none.`);
     } else {
-        const inner = code.filter((l) => l.n > guard.n && l.n < endIdx + 1);
-        const dockerRun = inner.find((l) => /\bdocker run\b/.test(l.text));
-        if (!dockerRun) {
-            errors.push(
-                `the outer pass at line ${guard.n} no longer runs \`docker run\` — if the build ` +
-                `stopped re-entering itself in a container, delete this check rather than ` +
-                `weakening it.`);
+        /* The block ends at the first `fi` in column 0 after the guard. */
+        const endIdx = outerEnd - 1;
+        if (endIdx < 0) {
+            errors.push(`outer-pass guard at line ${guard.n} has no closing \`fi\` in column 0`);
+        } else {
+            const inner = code.filter((l) => l.n > guard.n && l.n < endIdx + 1);
+            const dockerRun = inner.find((l) => /\bdocker run\b/.test(l.text));
+            if (!dockerRun) {
+                errors.push(
+                    `the outer pass at line ${guard.n} no longer runs \`docker run\` — if the build ` +
+                    `stopped re-entering itself in a container, delete this check rather than ` +
+                    `weakening it.`);
+            }
+            /* Statements after the docker run, ignoring its own continuation lines
+             * and the status plumbing, must end in an exit. */
+            const after = inner.filter((l) => l.n > (dockerRun ? dockerRun.n : 0));
+            const last = after[after.length - 1];
+            if (!last || !/^exit\b/.test(last.text)) {
+                errors.push(
+                    `THE OUTER PASS FALLS THROUGH past \`docker run\` (last statement in the block ` +
+                    `is line ${last ? last.n : "?"}: \`${last ? last.text : "<none>"}\`).\n` +
+                    `        Everything below the guard then runs TWICE — once on the host and once ` +
+                    `in the container, on the SAME mounted volume. Any \`rm -rf\` down there deletes ` +
+                    `what the earlier pass produced, and the build still exits 0.\n` +
+                    `        If you need host-side work after the container, put it in its own block ` +
+                    `BEFORE this one, or guard it on \`[ -f /.dockerenv ]\` — do not remove the exit.`);
+            }
         }
-        /* Statements after the docker run, ignoring its own continuation lines
-         * and the status plumbing, must end in an exit. */
-        const after = inner.filter((l) => l.n > (dockerRun ? dockerRun.n : 0));
-        const last = after[after.length - 1];
-        if (!last || !/^exit\b/.test(last.text)) {
-            errors.push(
-                `THE OUTER PASS FALLS THROUGH past \`docker run\` (last statement in the block ` +
-                `is line ${last ? last.n : "?"}: \`${last ? last.text : "<none>"}\`).\n` +
-                `        Everything below the guard then runs TWICE — once on the host and once ` +
-                `in the container, on the SAME mounted volume. Any \`rm -rf\` down there deletes ` +
-                `what the earlier pass produced, and the build still exits 0.\n` +
-                `        If you need host-side work after the container, put it in its own block ` +
-                `BEFORE this one, or guard it on \`[ -f /.dockerenv ]\` — do not remove the exit.`);
-        }
+    }
+
+    /* ---- 1b. the compiler must be asserted FROM THE ARTIFACT ------------------
+     *
+     * Selecting a toolchain by whichever image is present decides which COMPILER
+     * makes the binary, and the images on this machine disagree (12.2.0 vs 11.4.0).
+     * The documented full-VM symptom — `docker image inspect` failing intermittently
+     * — made the preferred image look absent, so a probe loop fell through to a
+     * different compiler SILENTLY. Three commits shipped a gcc 11.4 artifact that
+     * had been reported as the verified 12.2 build.
+     *
+     * gcc records its version in the .so's .comment section, so the artifact is
+     * self-identifying and always was. Reading it back is what makes a hash mean
+     * something; the image name alone does not, because the image can move under
+     * a floating base tag without being renamed. */
+
+    const asserts = code.find((l) => inOuter(l) &&
+        /strings\s+build\/dsp\.so/.test(l.text) && /GCC/.test(l.text));
+    if (!asserts) {
+        errors.push(
+            `the build never reads the compiler back out of build/dsp.so.\n` +
+            `        Whichever image is chosen, the ARTIFACT is what has to be checked: gcc writes ` +
+            `its version into .comment, and a wrong-compiler binary is not comparable with the one ` +
+            `on the device or in git. Without this, a silent fallthrough ships and nothing says so.`);
+    }
+
+    /* ---- 2. the object dir is wiped before it is globbed into the link -------- */
+
+    const wipe = code.find((l) => /^rm -rf\s+build\/obj\b/.test(l.text));
+    const link = code.find((l) => /-shared\b/.test(l.text) && /build\/obj\/\*\.o/.test(l.text));
+    if (!link) {
+        errors.push(
+            `no \`-shared ... build/obj/*.o\` link line found — if the link stopped globbing the ` +
+            `object directory, this check has no subject and should be deleted, not loosened.`);
+    } else if (!wipe) {
+        errors.push(
+            `\`build/obj\` is globbed into the link at line ${link.n} but never wiped.\n` +
+            `        build/ is TRACKED here, so an object whose SOURCE was deleted survives and is ` +
+            `still linked. That is not hypothetical: dr32_fxbus.o outlived the FX bus and put the ` +
+            `removed reverbs back into dsp.so, with a clean "==> done:" — a shared-library link does ` +
+            `not have to resolve undefined symbols, so nothing failed.`);
+    } else if (wipe.n > link.n) {
+        errors.push(`build/obj is wiped at line ${wipe.n}, AFTER the link at line ${link.n}`);
+    }
+
+    /* ---- 3. the wipe must not be widened to build/ --------------------------- */
+
+    const wideWipe = code.find((l) => /^rm -rf\s+build\/?\s*$/.test(l.text));
+    if (wideWipe) {
+        errors.push(
+            `line ${wideWipe.n} wipes \`build\` wholesale. \`build/ui.js\` is written by the OUTER ` +
+            `(host) pass before the container starts, so a wipe at this level destroys it — the exact ` +
+            `bug a sibling repo shipped. Scope the wipe to the object directory.`);
+    }
+
+    /* ---- 3b. the SHIP build and the TEST build must enumerate sources alike ----
+     *
+     * build.sh listed nine sources explicitly while tests/run.sh globbed `dsp/*.c`.
+     * Adding dsp/dr32_kits.c therefore passed the ENTIRE suite — the tests compiled
+     * and linked it — and shipped a dsp.so without it, because the link globs
+     * build/obj/*.o and found only what had been compiled. The build printed
+     * "==> done:", passed the compiler assert, and installed. The DEVICE caught it,
+     * at dlopen: "undefined symbol: dr32_kits_name".
+     *
+     * Two lists that must be kept in step is the bug; one rule applied in both
+     * places is the fix. A green suite says nothing about the shipped artifact when
+     * they disagree about what the artifact even contains. */
+
+    const compiles = code.find((l) => /^for src in /.test(l.text));
+    if (!compiles) {
+        errors.push(`no source-compile loop found in ${path}`);
+    } else if (!/dsp\/\*\.c/.test(compiles.text)) {
+        errors.push(
+            `line ${compiles.n} enumerates sources EXPLICITLY: \`${compiles.text}\`\n` +
+            `        tests/run.sh globs \`dsp/*.c\`, so an explicit list here means the tests and the ` +
+            `SHIP build compile different sets. A new source then passes the whole suite and is ` +
+            `silently missing from dsp.so — the link globs build/obj/*.o, so it links only what was ` +
+            `compiled, and the failure surfaces on the DEVICE at dlopen. Glob here too.`);
+    }
+
+    /* ---- 3c. the shared link must refuse undefined symbols -------------------- */
+
+    const nolink = code.find((l) => /-shared\b/.test(l.text) && /--no-undefined/.test(l.text));
+    if (link && !nolink) {
+        errors.push(
+            `the -shared link does not pass \`-Wl,--no-undefined\`.\n` +
+            `        A shared link is ALLOWED to be incomplete — an unresolved symbol is left for ` +
+            `whoever dlopen's it — so the link cannot tell you a source file is missing. That is how ` +
+            `a dsp.so without dr32_kits.o linked, exited 0 and installed, failing only on the device ` +
+            `at dlopen. DR32 resolves everything from libc/libm, so the flag costs nothing.`);
+    }
+
+    /* ---- 4. a failed assert must remove what install.sh READS ----------------- */
+
+    /* ⚠ SCOPED TO LINES AFTER THE ASSERT, and that is the whole point. Searched
+     * over the whole file this matched the PACKAGING wipe (`rm -rf "dist/<id>"`
+     * before the copy), which always exists — so the check passed for a reason that
+     * had nothing to do with what it claims, and went on passing with the assert's
+     * own cleanup mutated away. Mutation-testing is what exposed it. */
+    const kill = asserts && code.find((l) => inOuter(l) && l.n > asserts.n &&
+        /^rm -rf .*dist\/\$\{MODULE_ID\}(\s|"|$)/.test(l.text));
+    if (asserts && !kill) {
+        errors.push(
+            `the compiler assert does not remove \`dist/\${MODULE_ID}\`.\n` +
+            `        install.sh ships the DIRECTORY, not the tarball — an assert that deletes only ` +
+            `dist/<id>-module.tar.gz leaves the rejected binary exactly where the installer looks ` +
+            `for it. That was the first version of this guard, and it guarded nothing.`);
     }
 }
 
-/* ---- 1b. the compiler must be asserted FROM THE ARTIFACT ------------------
+/* ---- 5. install.sh must ship what build.sh packaged, not a second list ----
  *
- * Selecting a toolchain by whichever image is present decides which COMPILER
- * makes the binary, and the images on this machine disagree (12.2.0 vs 11.4.0).
- * The documented full-VM symptom — `docker image inspect` failing intermittently
- * — made the preferred image look absent, so a probe loop fell through to a
- * different compiler SILENTLY. Three commits shipped a gcc 11.4 artifact that
- * had been reported as the verified 12.2 build.
- *
- * gcc records its version in the .so's .comment section, so the artifact is
- * self-identifying and always was. Reading it back is what makes a hash mean
- * something; the image name alone does not, because the image can move under
- * a floating base tag without being renamed. */
-
-const asserts = code.find((l) => inOuter(l) &&
-    /strings\s+build\/dsp\.so/.test(l.text) && /GCC/.test(l.text));
-if (!asserts) {
-    errors.push(
-        `the build never reads the compiler back out of build/dsp.so.\n` +
-        `        Whichever image is chosen, the ARTIFACT is what has to be checked: gcc writes ` +
-        `its version into .comment, and a wrong-compiler binary is not comparable with the one ` +
-        `on the device or in git. Without this, a silent fallthrough ships and nothing says so.`);
-}
-
-/* ---- 2. the object dir is wiped before it is globbed into the link -------- */
-
-const wipe = code.find((l) => /^rm -rf\s+build\/obj\b/.test(l.text));
-const link = code.find((l) => /-shared\b/.test(l.text) && /build\/obj\/\*\.o/.test(l.text));
-if (!link) {
-    errors.push(
-        `no \`-shared ... build/obj/*.o\` link line found — if the link stopped globbing the ` +
-        `object directory, this check has no subject and should be deleted, not loosened.`);
-} else if (!wipe) {
-    errors.push(
-        `\`build/obj\` is globbed into the link at line ${link.n} but never wiped.\n` +
-        `        build/ is TRACKED here, so an object whose SOURCE was deleted survives and is ` +
-        `still linked. That is not hypothetical: dr32_fxbus.o outlived the FX bus and put the ` +
-        `removed reverbs back into dsp.so, with a clean "==> done:" — a shared-library link does ` +
-        `not have to resolve undefined symbols, so nothing failed.`);
-} else if (wipe.n > link.n) {
-    errors.push(`build/obj is wiped at line ${wipe.n}, AFTER the link at line ${link.n}`);
-}
-
-/* ---- 3. the wipe must not be widened to build/ --------------------------- */
-
-const wideWipe = code.find((l) => /^rm -rf\s+build\/?\s*$/.test(l.text));
-if (wideWipe) {
-    errors.push(
-        `line ${wideWipe.n} wipes \`build\` wholesale. \`build/ui.js\` is written by the OUTER ` +
-        `(host) pass before the container starts, so a wipe at this level destroys it — the exact ` +
-        `bug a sibling repo shipped. Scope the wipe to the object directory.`);
-}
-
-/* ---- 3b. the SHIP build and the TEST build must enumerate sources alike ----
- *
- * build.sh listed nine sources explicitly while tests/run.sh globbed `dsp/*.c`.
- * Adding dsp/dr32_kits.c therefore passed the ENTIRE suite — the tests compiled
- * and linked it — and shipped a dsp.so without it, because the link globs
- * build/obj/*.o and found only what had been compiled. The build printed
- * "==> done:", passed the compiler assert, and installed. The DEVICE caught it,
- * at dlopen: "undefined symbol: dr32_kits_name".
- *
- * Two lists that must be kept in step is the bug; one rule applied in both
- * places is the fix. A green suite says nothing about the shipped artifact when
- * they disagree about what the artifact even contains. */
-
-const compiles = code.find((l) => /^for src in /.test(l.text));
-if (!compiles) {
-    errors.push(`no source-compile loop found in ${path}`);
-} else if (!/dsp\/\*\.c/.test(compiles.text)) {
-    errors.push(
-        `line ${compiles.n} enumerates sources EXPLICITLY: \`${compiles.text}\`\n` +
-        `        tests/run.sh globs \`dsp/*.c\`, so an explicit list here means the tests and the ` +
-        `SHIP build compile different sets. A new source then passes the whole suite and is ` +
-        `silently missing from dsp.so — the link globs build/obj/*.o, so it links only what was ` +
-        `compiled, and the failure surfaces on the DEVICE at dlopen. Glob here too.`);
-}
-
-/* ---- 3c. the shared link must refuse undefined symbols -------------------- */
-
-const nolink = code.find((l) => /-shared\b/.test(l.text) && /--no-undefined/.test(l.text));
-if (link && !nolink) {
-    errors.push(
-        `the -shared link does not pass \`-Wl,--no-undefined\`.\n` +
-        `        A shared link is ALLOWED to be incomplete — an unresolved symbol is left for ` +
-        `whoever dlopen's it — so the link cannot tell you a source file is missing. That is how ` +
-        `a dsp.so without dr32_kits.o linked, exited 0 and installed, failing only on the device ` +
-        `at dlopen. DR32 resolves everything from libc/libm, so the flag costs nothing.`);
-}
-
-/* ---- 4. a failed assert must remove what install.sh READS ----------------- */
-
-/* ⚠ SCOPED TO LINES AFTER THE ASSERT, and that is the whole point. Searched
- * over the whole file this matched the PACKAGING wipe (`rm -rf "dist/<id>"`
- * before the copy), which always exists — so the check passed for a reason that
- * had nothing to do with what it claims, and went on passing with the assert's
- * own cleanup mutated away. Mutation-testing is what exposed it. */
-const kill = asserts && code.find((l) => inOuter(l) && l.n > asserts.n &&
-    /^rm -rf .*dist\/\$\{MODULE_ID\}(\s|"|$)/.test(l.text));
-if (asserts && !kill) {
-    errors.push(
-        `the compiler assert does not remove \`dist/\${MODULE_ID}\`.\n` +
-        `        install.sh ships the DIRECTORY, not the tarball — an assert that deletes only ` +
-        `dist/<id>-module.tar.gz leaves the rejected binary exactly where the installer looks ` +
-        `for it. That was the first version of this guard, and it guarded nothing.`);
+ * Checked in install.sh rather than build.sh, so it is passed that path
+ * explicitly by tests/run.sh. Skipped when we were handed the build script. */
+if (isInstall) {
+    const names = code.find((l) => /^for f in (module\.json|ui\.js)/.test(l.text));
+    if (names) {
+        errors.push(
+            `line ${names.n} names the files to install: \`${names.text}\`\n` +
+            `        build.sh decides what goes in dist/<id>/; a second list here has to be kept ` +
+            `in step with it and was not — help.json was packaged and never reached the device, ` +
+            `with nothing failing. Iterate dist/<id>/ instead.`);
+    }
 }
 
 if (errors.length) {
@@ -213,4 +240,6 @@ if (errors.length) {
     for (const e of errors) console.error(`  - ${e}`);
     process.exit(1);
 }
-console.log(`${path}: build invariants OK (outer pass exits; build/obj wiped before the glob link)`);
+console.log(isBuild
+    ? `${path}: build invariants OK (outer pass exits; build/obj wiped before the glob link)`
+    : `${path}: install invariants OK (ships what build.sh packaged)`);
