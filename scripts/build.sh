@@ -180,6 +180,11 @@ mkdir -p "dist/${MODULE_ID}"
 cp build/dsp.so     "dist/${MODULE_ID}/"
 cp build/ui.js      "dist/${MODULE_ID}/"
 cp src/module.json  "dist/${MODULE_ID}/"
+# On-device help. The host discovers help.json by scanning module directories,
+# so shipping it is the whole wiring — and a module without one gets no
+# "Module Help" row at all, which is why it is copied rather than optional in
+# spirit only.
+[ -f src/help.json ] && cp src/help.json "dist/${MODULE_ID}/"
 
 tar -czf "dist/${MODULE_ID}-module.tar.gz" -C dist "${MODULE_ID}"
 echo "==> done: dist/${MODULE_ID}-module.tar.gz"

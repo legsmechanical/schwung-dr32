@@ -29,6 +29,11 @@ node tools/check_module_json.mjs src/module.json || fail=1
 # mounted volume. Greps a shell script; no Docker, no toolchain, milliseconds.
 node tools/check_build_script.mjs scripts/build.sh || fail=1
 
+# Help lines are DRAWN, never wrapped and never truncated — anything past x=127
+# is dropped silently. Measured against the host's own glyph table, not counted
+# against 20 characters. Skips (loudly) without SCHWUNG_SRC.
+node tools/check_help.mjs src/help.json || fail=1
+
 # JSON layer
 node tests/roundtrip.mjs tests/fixtures || fail=1
 
