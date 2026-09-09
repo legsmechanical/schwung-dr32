@@ -266,8 +266,12 @@ docker run --rm ubuntu:22.04 df -h /     # 0 available = this is your bug
 docker builder prune -af                 # reclaims build cache, images untouched
 ```
 
-A full VM also makes `docker image inspect` fail intermittently, which looks like the toolchain
-image vanishing. `build.sh` fails loudly on a full VM.
+⚠⚠ **The "image vanishing" symptom is NOT disk pressure.** `docker image inspect` false-negatives
+on an image that is present, listed and runnable — observed **5/5** on `schwung-builder` with
+20 GB free, while `docker run schwung-builder aarch64-linux-gnu-gcc --version` worked. This file
+used to blame a full VM, and that misattribution is why a silent compiler switch was tolerated as
+a known flake. **`build.sh` no longer uses `inspect` at all**: running the image is both the
+presence test and the capability test. It still fails loudly on a genuinely full VM.
 
 ### 🔴 THE COMPILER IS PINNED, AND THE PIN IS CHECKED IN THE ARTIFACT (2026-09-09)
 
