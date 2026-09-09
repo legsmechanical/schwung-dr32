@@ -110,10 +110,20 @@ typedef struct {
     // the host does file I/O, and only one directory is ever held — the user
     // Samples tree is ~3.8 GB, so nothing scans it wholesale.
     char          browse_dir[DR32_MAX_PATH];   // "" = nothing cached
-    /* The last value the HOST wrote to `browse`, so a turn can be read as a
-     * DELTA. See dr32_kit_browse_step. */
-    int           browse_wire;
-    int           browse_wire_seen;            // 0 until the host has written once
+    /* What the host last wrote to each pad's `browse` knob.
+     *
+     * ⭑ DR32 ECHOES THIS BACK VERBATIM, and that is the whole design. The host
+     * keeps its own persistent knob value and carries it forward; hand it back
+     * anything else and the two drift, with the gap landing on the next detent
+     * as a jump. Echoing means they cannot diverge, so there is no baseline to
+     * keep, nothing to resync, and no folder-change special case.
+     *
+     * Per PAD, because each pad's knob is a separate key with its own state in
+     * the host — one shared counter made switching pad look like a huge turn.
+     *
+     * The number means nothing to the user: it is a detent counter, not an
+     * index. What the screen shows for a pad is its sample NAME. */
+    int           browse_wire[DR32_PADS];
     char        **browse;                      // browse_n entries, owned
     int           browse_n;
 } dr32_kit;
@@ -174,7 +184,7 @@ int dr32_kit_browse_index_sync(dr32_kit *k, int pad);
 /** Load the idx'th neighbour into the pad. Clamps. Returns the index used. */
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx);
 
-/** Move by the DELTA implied by the knob's new absolute value.
+/** Step by the detents the knob just moved, and remember its new value.
  *
  * ⚠⚠ WHY NOT JUST USE THE VALUE. `browse` is declared int 0..255 because a knob
  * needs a static range, but a folder has however many files it has — usually a

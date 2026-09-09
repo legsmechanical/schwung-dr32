@@ -80,7 +80,6 @@ static int browse_ensure(dr32_kit *k, int pad) {
     if (k->browse && !strcmp(k->browse_dir, dir)) return k->browse_n;   /* cache hit */
 
     browse_free(k);
-    k->browse_wire_seen = 0;      /* new folder: the next write is a baseline */
     DIR *d = opendir(dir);
     if (!d) return 0;
     char **v = (char **)calloc(DR32_BROWSE_MAX, sizeof(char *));
@@ -117,55 +116,13 @@ int dr32_kit_browse_index(dr32_kit *k, int pad) {
 }
 
 int dr32_kit_browse_step(dr32_kit *k, int pad, int wire) {
-    if (!k) return -1;
-    int n = browse_ensure(k, pad);
-    if (n <= 0) { k->browse_wire = wire; k->browse_wire_seen = 1; return -1; }
-
+    if (!k || pad < 0 || pad >= DR32_PADS) return -1;
+    int delta = wire - k->browse_wire[pad];
+    k->browse_wire[pad] = wire;                 /* echoed back verbatim; see the header */
+    if (!delta) return dr32_kit_browse_index(k, pad);
     int cur = dr32_kit_browse_index(k, pad);
-    if (cur < 0) cur = 0;
-
-    /* The FIRST write after the folder changed is a baseline, not a move — the
-     * host's knob still holds whatever it showed for the previous pad, and
-     * treating that difference as a delta would jump the selection. */
-    if (!k->browse_wire_seen) {
-        k->browse_wire = wire;
-        k->browse_wire_seen = 1;
-        return cur;
-    }
-
-    int delta = wire - k->browse_wire;
-    k->browse_wire = wire;
-    if (delta == 0) return cur;
-
-    /* No clamp here on purpose: dr32_kit_browse_select clamps, and it is the
-     * one place that should. A second copy passed every test with it removed —
-     * mutation-testing showed it was guarding nothing. */
-    return dr32_kit_browse_select(k, pad, cur + delta);
+    return dr32_kit_browse_select(k, pad, (cur < 0 ? 0 : cur) + delta);
 }
-
-int dr32_kit_browse_index_sync(dr32_kit *k, int pad) {
-    int i = dr32_kit_browse_index(k, pad);
-    /* ⚠ NEVER hand -1 to the host. `browse` is declared min 0, so a negative
-     * value is out of range. -1 means the pad's own sample was not found in the
-     * listing — a truncated folder, or a sample that has moved — and 0 is the
-     * honest answer there, from which stepping still works. */
-    return (i < 0) ? 0 : i;
-}
-
-/*
- * ⚠⚠ THE READ MUST NOT TOUCH THE DELTA BASELINE. I made it do exactly that and
- * it caused the very jumping it was meant to cure.
- *
- * The reasoning was that the host adopts the value it reads back into its knob,
- * so the baseline should follow. It does NOT: the host keeps a persistent
- * `knobStates[key]`, seeded ONCE from a read when the knob is first touched and
- * stepped by the detent from then on. Reads only feed the DISPLAY.
- *
- * So the host's value marches on independently while the index stays small, and
- * a baseline resynced to the index makes every delta `hostValue - index` — a
- * jump whose size is the gap between them. The baseline may only be moved by a
- * WRITE, which is the one event that tells us what the host actually holds.
- */
 
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {
     if (!k) return -1;

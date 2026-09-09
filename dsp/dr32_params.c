@@ -150,9 +150,11 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * code path instead of a read that can disagree with a write — and it
          * only touches the disk when the focused pad's FOLDER changes, not per
          * frame. */
+        /* Echo the knob back, do NOT report the index — see dr32_kit.h. The
+         * host carries its own value forward; handing it a different one is
+         * what made the knob jump. */
         if (!strcmp(sub, "browse"))
-            return snprintf(buf, buf_len, "%d",
-                            dr32_kit_browse_index_sync((dr32_kit *)kit, pad));
+            return snprintf(buf, buf_len, "%d", kit->browse_wire[pad]);
         if (!strcmp(sub, "browse_count"))
             return snprintf(buf, buf_len, "%d",
                             dr32_kit_browse_count((dr32_kit *)kit, pad));
