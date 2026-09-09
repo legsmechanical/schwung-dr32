@@ -120,13 +120,21 @@ typedef struct {
 
 // A single folder's worth. Move's factory sample folders are far below this;
 // the cap only stops a pathological directory from allocating without bound.
-/* ⚠ PAIRED WITH `browse`'s declared max in src/module.json, which must be
- * this minus one (0..255). The knob's per-detent step is derived from its own
- * RANGE — round(max(step, range*0.01) * 0.5) — so a range of 511 moved THREE
- * samples per detent and only a range under 300 gives one. Cap the cache and
- * the knob at the same number or the knob silently cannot reach the tail of a
- * big folder. */
-#define DR32_BROWSE_MAX 256
+/* ⚠⚠ NOT paired with `browse`'s declared range, and pairing them was a bug.
+ *
+ * They were briefly tied together (both 256) when browse used the knob's value
+ * ABSOLUTELY, because then the knob had to be able to address every entry. Once
+ * browse became a DELTA stepper the knob's range stopped mattering at all — it
+ * only sets the per-detent step — while this cap still has to cover real
+ * folders. It did not: the user library's "Preset Samples" holds 1339 files, so
+ * a 256 cap truncated the listing in arbitrary readdir order, the pad's own
+ * sample was usually NOT in what survived, browse_index returned -1, and every
+ * detent restarted from zero. Reported from the device as the knob "jumping
+ * around".
+ *
+ * So this covers the largest folder anyone plausibly has; the knob's range is a
+ * separate decision and stays small. */
+#define DR32_BROWSE_MAX 2048
 
 // How far apart the press signal and its note may land and still be considered
 // the same event. Blocks are 128 frames @ 44.1 kHz = ~2.9 ms, so 20 blocks is

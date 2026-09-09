@@ -145,7 +145,13 @@ int dr32_kit_browse_step(dr32_kit *k, int pad, int wire) {
 
 int dr32_kit_browse_index_sync(dr32_kit *k, int pad) {
     int i = dr32_kit_browse_index(k, pad);
-    if (k && i >= 0) {
+    /* ⚠ NEVER hand -1 to the host. `browse` is declared min 0, so a negative
+     * value is out of range and the knob does something unhelpful with it. -1
+     * means the pad's own sample was not found in the listing — a truncated
+     * folder, or a sample that has since moved — and 0 is the honest answer
+     * there: "somewhere at the start", from which stepping still works. */
+    if (i < 0) i = 0;
+    if (k) {
         /* The host is about to hold `i` in its knob, so that is the origin the
          * next delta must be measured from. */
         k->browse_wire = i;

@@ -580,6 +580,17 @@ int main(void) {
         CHECK(dr32_kit_browse_index(&b, 0) == 1,
               "after overshooting, one detent back did not move — that is the dead travel");
 
+        /* ⚠ A pad whose sample is NOT in the listing must still report a
+         * usable index. It returns -1 internally; handing that to a knob
+         * declared min 0 is what made a truncated folder unusable. */
+        {
+            char v[32];
+            dr32_kit_load_sample(&b, 2, "/tmp/dr32_br/s0.wav");
+            b.pads[2].path[0] = 'X';            /* now unfindable in its folder */
+            dr32_read_param(&b, "pad3_browse", v, sizeof v);
+            CHECK(atoi(v) >= 0, "browse reported %s for an unfindable sample — min is 0", v);
+        }
+
         /* And it never leaves the folder. */
         CHECK(strstr(b.pads[0].path, "/tmp/dr32_br/") != NULL, "browse left the pad's folder");
 
