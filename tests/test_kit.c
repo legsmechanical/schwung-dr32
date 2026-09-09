@@ -580,6 +580,52 @@ int main(void) {
         CHECK(dr32_kit_browse_index(&b, 0) == 1,
               "after overshooting, one detent back did not move — that is the dead travel");
 
+        /* ⚠ A pad whose sample is NOT in the listing must still report a usable
+         * index: -1 internally, but handing that to a knob declared min 0 is
+         * what made a truncated folder unusable.
+         *
+         * ⚠⚠ ITS OWN KIT. Corrupting a path rescans the shared browse cache
+         * into a directory that does not exist, which clears the delta baseline
+         * for every check after it — this block silently broke the one below
+         * until the state was printed. A test that mutates state destructively
+         * does not get to share it. */
+        {
+            dr32_kit u; dr32_kit_init(&u);
+            char v[32];
+            dr32_kit_load_sample(&u, 0, "/tmp/dr32_br/s0.wav");
+            u.pads[0].path[0] = 'X';            /* now unfindable in its folder */
+            dr32_read_param(&u, "pad1_browse", v, sizeof v);
+            CHECK(atoi(v) >= 0, "browse reported %s for an unfindable sample — min is 0", v);
+            dr32_kit_free(&u);
+        }
+
+        /* And it never leaves the folder. */
+        CHECK(strstr(b.pads[0].path, "/tmp/dr32_br/") != NULL, "browse left the pad's folder");
+
+        /* ⚠⚠ A READ MUST NOT MOVE THE DELTA BASELINE.
+         *
+         * The host does not adopt a readback into its knob: it keeps a
+         * persistent knobStates[key], seeded once and stepped per detent, and
+         * reads only feed the display. A baseline resynced to the index makes
+         * every later delta `hostValue - index` — which is the jumping this was
+         * once "fixed" into causing. Reads happen constantly, so this must hold
+         * however many of them land between two detents. */
+        {
+            char v[32];
+            for (int r = 0; r < 5; r++) dr32_read_param(&b, "pad1_browse", v, sizeof v);
+            CHECK(atoi(v) == 1, "browse read back %s, want 1", v);
+            /* ⚠ A detent DOWN, deliberately. Turning UP cannot tell the two
+             * behaviours apart in a small folder — a resynced baseline produces
+             * a huge positive delta that simply CLAMPS to the last entry, which
+             * is also where a correct +1 lands. Down separates them: correct
+             * goes to 0, a resynced baseline goes UP to the clamp instead.
+             * Mutation-testing is what exposed that the up-case proved nothing. */
+            dr32_apply_param(&b, "pad1_browse", "158");   /* host: 159 -> 158 */
+            CHECK(dr32_kit_browse_index(&b, 0) == 0,
+                  "reads between detents moved the baseline: one detent DOWN landed on %d, want 0",
+                  dr32_kit_browse_index(&b, 0));
+        }
+
         /* ⚠ A pad whose sample is NOT in the listing must still report a
          * usable index. It returns -1 internally; handing that to a knob
          * declared min 0 is what made a truncated folder unusable. */
@@ -593,26 +639,6 @@ int main(void) {
 
         /* And it never leaves the folder. */
         CHECK(strstr(b.pads[0].path, "/tmp/dr32_br/") != NULL, "browse left the pad's folder");
-
-        /* ⚠⚠ THE READ MUST RESYNC THE DELTA BASELINE — reported from the device
-         * as the knob "jumping around", and tied to the folder size because the
-         * gap between the knob's value and the index is what gets applied.
-         *
-         * The host ADOPTS the read value into its own knob (outside its
-         * post-write settle window). So after a read its knob holds the index,
-         * and if the baseline still holds the big number it last wrote, the next
-         * detent measures a delta against the wrong origin and slams to an end.
-         * Reading and stepping must agree about where "here" is. */
-        {
-            char v[32];
-            dr32_read_param(&b, "pad1_browse", v, sizeof v);   /* host adopts this */
-            CHECK(atoi(v) == 1, "browse read back %s, want 1", v);
-            /* The host now turns ONE detent from what it just read. */
-            dr32_apply_param(&b, "pad1_browse", "2");
-            CHECK(dr32_kit_browse_index(&b, 0) == 2,
-                  "after a read, one detent jumped to %d instead of advancing by one",
-                  dr32_kit_browse_index(&b, 0));
-        }
 
         /* ⚠ SWITCHING PAD, i.e. switching FOLDER, must re-baseline. The host's
          * knob still holds the value it showed for the previous pad, and

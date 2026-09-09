@@ -162,14 +162,14 @@ int dr32_kit_browse_count(dr32_kit *k, int pad);
 /** Position of the pad's current sample among its neighbours, -1 if unknown. */
 int dr32_kit_browse_index(dr32_kit *k, int pad);
 
-/** The index, AND the baseline the next delta is measured from.
+/** The index for DISPLAY, clamped to >= 0.
  *
- * ⚠⚠ THE READ MUST RESYNC THE BASELINE, and forgetting that is what made the
- * knob jump. The host adopts this value into its own knob (outside its
- * post-write settle window), so after a read its knob holds the INDEX while an
- * un-resynced baseline still holds whatever huge number it last wrote — and the
- * next detent computes a delta against the wrong origin and slams to an end.
- * Reading and stepping have to agree about where "here" is. */
+ * ⚠⚠ IT MUST NOT TOUCH THE DELTA BASELINE. Making it do so caused the jumping
+ * it was meant to cure: the host does not adopt a readback into its knob, it
+ * keeps a persistent knobStates[key] seeded once and stepped per detent, and
+ * reads only feed the display. A baseline resynced to the index therefore makes
+ * every delta `hostValue - index`. Only a WRITE may move the baseline — it is
+ * the one event that reports what the host actually holds. */
 int dr32_kit_browse_index_sync(dr32_kit *k, int pad);
 /** Load the idx'th neighbour into the pad. Clamps. Returns the index used. */
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx);

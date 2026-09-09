@@ -146,19 +146,26 @@ int dr32_kit_browse_step(dr32_kit *k, int pad, int wire) {
 int dr32_kit_browse_index_sync(dr32_kit *k, int pad) {
     int i = dr32_kit_browse_index(k, pad);
     /* ⚠ NEVER hand -1 to the host. `browse` is declared min 0, so a negative
-     * value is out of range and the knob does something unhelpful with it. -1
-     * means the pad's own sample was not found in the listing — a truncated
-     * folder, or a sample that has since moved — and 0 is the honest answer
-     * there: "somewhere at the start", from which stepping still works. */
-    if (i < 0) i = 0;
-    if (k) {
-        /* The host is about to hold `i` in its knob, so that is the origin the
-         * next delta must be measured from. */
-        k->browse_wire = i;
-        k->browse_wire_seen = 1;
-    }
-    return i;
+     * value is out of range. -1 means the pad's own sample was not found in the
+     * listing — a truncated folder, or a sample that has moved — and 0 is the
+     * honest answer there, from which stepping still works. */
+    return (i < 0) ? 0 : i;
 }
+
+/*
+ * ⚠⚠ THE READ MUST NOT TOUCH THE DELTA BASELINE. I made it do exactly that and
+ * it caused the very jumping it was meant to cure.
+ *
+ * The reasoning was that the host adopts the value it reads back into its knob,
+ * so the baseline should follow. It does NOT: the host keeps a persistent
+ * `knobStates[key]`, seeded ONCE from a read when the knob is first touched and
+ * stepped by the detent from then on. Reads only feed the DISPLAY.
+ *
+ * So the host's value marches on independently while the index stays small, and
+ * a baseline resynced to the index makes every delta `hostValue - index` — a
+ * jump whose size is the gap between them. The baseline may only be moved by a
+ * WRITE, which is the one event that tells us what the host actually holds.
+ */
 
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {
     if (!k) return -1;
