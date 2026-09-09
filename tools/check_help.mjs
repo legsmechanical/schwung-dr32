@@ -87,9 +87,24 @@ const rightEdge = (line) => {
 };
 
 const errors = [];
-let lines = 0, widest = 0, deepest = "";
+let lines = 0, titles = 0, widest = 0, deepest = "";
 const walk = (node, trail) => {
     const here = `${trail}/${node.title || "?"}`;
+    /* ⚠ A TITLE IS DRAWN TOO. It is the row you pick in the help list, printed
+     * by the same print() with the same silent clipping past x=127 — so a long
+     * section name loses its tail exactly the way a long line does, and this
+     * checker measured only `lines` and would have said OK. Found while adding
+     * "Buses & sends": the ampersand turned out to be in the atlas, but nothing
+     * here would have caught it if it had not been. */
+    if (node.title) {
+        const edge = rightEdge(node.title);
+        if (edge > SCREEN_WIDTH - 1)
+            errors.push(`${here}: TITLE runs to x=${edge}, screen ends at ${SCREEN_WIDTH - 1}`);
+        for (const ch of node.title)
+            if (!widths.has(ch))
+                errors.push(`${here}: TITLE character ${JSON.stringify(ch)} has no glyph and draws as a ${CHAR_SPACING}px gap`);
+        titles++;
+    }
     for (const line of node.lines || []) {
         lines++;
         const edge = rightEdge(line);
@@ -121,4 +136,4 @@ if (errors.length) {
     for (const e of errors) console.error("  - " + e);
     process.exit(1);
 }
-console.log(`${HELP}: OK — ${lines} lines, widest right edge x=${widest} of ${SCREEN_WIDTH - 1} (${JSON.stringify(deepest)})`);
+console.log(`${HELP}: OK — ${lines} lines + ${titles} titles, widest right edge x=${widest} of ${SCREEN_WIDTH - 1} (${JSON.stringify(deepest)})`);

@@ -5,8 +5,9 @@
 ### 📖 [Read the manual →](https://legsmechanical.github.io/schwung-dr32/manual.html)
 
 > **Install** from Schwung Manager once [the catalog entry](https://github.com/charlesvestal/schwung/pull/484)
-> merges; until then, from the [v0.3.0 release](https://github.com/legsmechanical/schwung-dr32/releases/tag/v0.3.0).
-> **Requires [Schwung](https://github.com/charlesvestal/schwung) 1.3.0 or later.**
+> merges; until then, from the [v0.3.0 release](https://github.com/legsmechanical/schwung-dr32/releases/tag/v0.3.1).
+> **Requires [Schwung](https://github.com/charlesvestal/schwung) 1.3.0 or later** — that is where
+> the module bus framework landed, and DR32's per-pad routing and sends depend on it.
 
 DR32 loads Move's own drum kits — the same `.ablpreset` files the hardware makes — and plays them
 through a reconstruction of the same Drum Sampler voice. A kit you built on the device opens here
@@ -35,10 +36,22 @@ level and Punch. Pad names follow the sample, so the header tells you which drum
 pad's sample came from; **BRWS** steps through its neighbours one at a time, so you can try the
 other snare without opening anything.
 
-**Two sends per pad, into Move's return buses.** Every pad has its own Send A and Send B amount in
-dB — which is exactly what a send amount means in a Move kit, so an imported kit arrives with its
-levels intact. Put any effect you like on a return and the whole kit can tap it: one reverb for the
-drums, not one inside each pad.
+**Route pads to their own buses, with their own effects.** DR32 publishes all 32 pads to Schwung's
+**module bus** framework, so the host can group any subset of them onto a bus that renders into its
+own buffer and carries **its own chain of insert effects** — hats through a reverb while the kick
+stays dry, or the whole top end through a compressor without touching the low drums. You build the
+groups in Schwung, not in DR32; the pads arrive named after the samples in the loaded kit, so you
+are picking *Kick 707* rather than *voice 3*. Pad identity is stable, so a routing you set up
+survives loading a different kit.
+
+**And two sends per pad, into the global returns.** Independently of any bus, every pad has its own
+Send A and Send B amount in dB — exactly what a send amount means in a Move kit, so an imported kit
+arrives with its levels intact. Put any effect on a return and the whole kit can tap it at its own
+level: one reverb for the drums, not one inside each pad.
+
+> Buses **group**, sends **tap**. A bus is where a set of pads goes; a send is how much of a pad
+> goes somewhere shared. DR32 carries no effects of its own — all of this is the host's, which is
+> why any Schwung effect module works here.
 
 **Link** sets one control across all 32 pads at once. Arm it, sweep a knob, and every pad takes that
 value — then it releases the moment you touch a different control, so the next knob is that pad's
@@ -76,7 +89,8 @@ the device too, under Module Help.
   modified.
 - **Per-pad playback effects are not played back.** They're read and written back untouched, so kits
   stay lossless and reopen correctly on Move; DR32 just plays the plain sampler.
-- **Return-chain effects saved inside a kit are preserved but not set up for you.**
+- **Return-chain effects saved inside a kit are preserved but not set up for you** — a kit's send
+  *amounts* are imported, but what sits on the return is yours to choose.
 
 ## Credits and licence
 
