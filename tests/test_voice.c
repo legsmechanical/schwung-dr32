@@ -1,3 +1,16 @@
+/* ⚠ THE TESTS BUILD -std=c11, AND glibc HIDES EVERYTHING NOT IN IT.
+ * mkdtemp, setenv, utimensat and struct timespec are POSIX; M_PI is XSI.
+ * macOS headers expose all of them regardless, so an omission here is
+ * invisible locally and a hard -Werror failure on Linux — which is where
+ * the module is actually built.
+ *
+ * ⚠ _XOPEN_SOURCE 700, not _POSIX_C_SOURCE 200809L. The POSIX macro alone
+ * implies the same POSIX level but SUPPRESSES the XSI additions, so it
+ * fixes mkdtemp and then takes M_PI away — asking for less, not more.
+ * One macro, uniform across the suite, so a new test file cannot pick the
+ * one that happens not to cover what it uses. */
+#define _XOPEN_SOURCE 700
+
 // Voice engine tests. These encode the *manual's* semantics, so if a later
 // refactor breaks Trigger-vs-Gate or the hold sentinel, it fails here rather
 // than on the device.

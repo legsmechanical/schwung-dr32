@@ -300,6 +300,24 @@ centred on velocity 70, not a linear blend.
 
 ## Testing
 
+🔴 **LOCAL GREEN IS NOT GREEN — THE SUITE COMPILES ON glibc, AND macOS HIDES THAT FROM YOU.**
+Every `tests/test_*.c` opens with `#define _XOPEN_SOURCE 700` because the suite builds `-std=c11`
+and glibc then declares nothing outside it: `mkdtemp`, `setenv`, `utimensat` and `struct timespec`
+vanish, and so does `M_PI`. macOS headers expose all of them regardless, so the whole suite passed
+locally and **failed the release build with `-Werror` errors across three files** — none of which
+had ever been compiled on glibc (2026-09-09).
+⚠ **`_XOPEN_SOURCE 700`, not `_POSIX_C_SOURCE 200809L`.** The POSIX macro implies the same POSIX
+level but *suppresses* the XSI additions, so it fixes `mkdtemp` and then takes `M_PI` away — the
+second failure caused by the fix for the first. One macro, uniform across the suite, so a new test
+file cannot pick the one that happens not to cover what it uses.
+⭑ **Verify a C change in the container, not just locally:**
+```sh
+docker run --rm -v "$PWD":/work -w /work debian:bookworm bash -c \
+  'apt-get -qq update >/dev/null && apt-get -qq install -y gcc nodejs >/dev/null; tests/run.sh'
+```
+(`check_help` SKIPS there — no host checkout on the runner — and a skip counts as a pass, so run it
+locally before tagging.) [[local-green-on-a-different-libc-is-not-green]]
+
 ⚠ **The order matters and it is not optional.** `tests/run.sh` WIPES `dist/tests` (its link
 lines glob `dr32_*.o`, so a stale object from a deleted source would still be linked), and it is
 `pages_check` — not the test run — that writes the preview fixture.

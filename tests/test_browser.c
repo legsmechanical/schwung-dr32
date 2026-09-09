@@ -1,3 +1,16 @@
+/* ⚠ THE TESTS BUILD -std=c11, AND glibc HIDES EVERYTHING NOT IN IT.
+ * mkdtemp, setenv, utimensat and struct timespec are POSIX; M_PI is XSI.
+ * macOS headers expose all of them regardless, so an omission here is
+ * invisible locally and a hard -Werror failure on Linux — which is where
+ * the module is actually built.
+ *
+ * ⚠ _XOPEN_SOURCE 700, not _POSIX_C_SOURCE 200809L. The POSIX macro alone
+ * implies the same POSIX level but SUPPRESSES the XSI additions, so it
+ * fixes mkdtemp and then takes M_PI away — asking for less, not more.
+ * One macro, uniform across the suite, so a new test file cannot pick the
+ * one that happens not to cover what it uses. */
+#define _XOPEN_SOURCE 700
+
 /*
  * THE KIT BROWSER, DRIVEN THE WAY THE HOST DRIVES IT.
  *
@@ -79,7 +92,10 @@ int main(void) {
     CHECK(dir != NULL, "mkdtemp failed");
     if (!dir) return 1;
 
-    char core[512], user[512], cat[512], roots[1200], p[900];
+    /* Sized so -Wformat-truncation can PROVE no path is cut short: each is
+     * comfortably larger than the longest thing written into it. The real
+     * values are ~20 characters — this is for the analyser, not the data. */
+    char core[256], user[256], cat[512], roots[600], p[900];
     snprintf(core, sizeof core, "%s/core", dir);
     snprintf(user, sizeof user, "%s/user", dir);
     snprintf(cat,  sizeof cat,  "%s/Hybrid", core);
@@ -87,7 +103,7 @@ int main(void) {
 
     /* Two real drum racks in one category, and a decoy that must not appear. */
     const char *SRC = "tests/fixtures/native-16pad.ablpreset";
-    char kit_a[900], kit_b[900];
+    char kit_a[600], kit_b[600];
     snprintf(kit_a, sizeof kit_a, "%s/Alpha Kit.json", cat);
     snprintf(kit_b, sizeof kit_b, "%s/Beta Kit.json", cat);
     CHECK(copy_file(SRC, kit_a), "could not copy %s — run from the repo root", SRC);
