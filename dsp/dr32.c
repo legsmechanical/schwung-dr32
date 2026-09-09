@@ -13,6 +13,7 @@
 #include "dr32_kit.h"
 #include "dr32_params.h"
 #include "dr32_preset.h"
+#include "dr32_kits.h"
 #include "dr32_state.h"
 
 #include <stdio.h>
@@ -54,6 +55,25 @@ typedef struct {
     // uses the exact same read path as the write. NULL = no baseline = full
     // dump, which is always a correct fallback.
     char    *state_baseline;
+
+    /* The kit catalogue behind the two-level Kits browser, and where the
+     * browser's cursor currently sits. Built incrementally — see dr32_kits.h
+     * for why a single-pass scan is not a legal shape here. */
+    dr32_kits *kits;
+    int        kit_cat;      /* category the browser is showing */
+    int        kit_idx;      /* entry within that category */
+    int        kit_located;  /* cursor has been aimed at the loaded kit once */
+    /* Deferred audition. A detent on the kit list only moves the CURSOR; the
+     * load happens once the cursor has been still for a moment. See
+     * dr32_service_pending_kit. */
+    int        kit_pending;      /* -1 = nothing owed */
+    unsigned   kit_pending_at;   /* render-block counter when it was last moved */
+
+    /* A per-pad sample swap changed the pad NAMES and the host has not re-read
+     * the hierarchy yet. Serving `is_loading` across the swap is how we ask it
+     * to — see the is_loading note in get_param. */
+    int        names_dirty;
+    unsigned   names_dirty_at;   /* render-block counter of the last swap */
 } dr32_instance;
 
 /** Capture the freshly-loaded kit as the state baseline. Called after every
@@ -104,50 +124,84 @@ static int append_pad_name(const dr32_pad_slot *s, char *out, int cap) {
     return n;
 }
 
-/** Rebuild the served hierarchy from module.json's text with the current kit's
- *  pad names spliced in as `child_names` on the pads level. The anchor is the
- *  level's `child_index_param` declaration (module.json is ours, so the key is
- *  guaranteed present); the array is inserted immediately before it. String
- *  surgery rather than a JSON writer: the document is otherwise verbatim, and
- *  a re-serialised copy would be a second thing that could drift from the
- *  file the tests and the docs read. */
+/** Write `"child_names": [...], ` at out+n. Returns the new length, or 0 if it
+ *  would not fit — the caller then serves the hierarchy without names, which is
+ *  the same pages with worse labels rather than no pages. */
+static size_t append_child_names(const dr32_kit *kit, char *out, size_t n, size_t cap) {
+    int w = snprintf(out + n, cap - n, "\"child_names\": [");
+    if (w <= 0 || n + (size_t)w >= cap) return 0;
+    n += (size_t)w;
+    for (int i = 0; i < DR32_PADS; i++) {
+        if (i) {
+            if (n + 2 >= cap) return 0;
+            out[n++] = ','; out[n++] = ' ';
+        }
+        int m = append_pad_name(&kit->pads[i], out + n, (int)(cap - n));
+        if (m <= 0) return 0;
+        n += (size_t)m;
+    }
+    w = snprintf(out + n, cap - n, "], ");
+    if (w <= 0 || n + (size_t)w >= cap) return 0;
+    return n + (size_t)w;
+}
+
+/**
+ * Rebuild the served hierarchy from module.json's text with the current kit's
+ * pad names spliced in as `child_names`.
+ *
+ * The anchor is a level's `child_index_param` declaration (module.json is ours,
+ * so the key is guaranteed present) and the array goes immediately before it.
+ * String surgery rather than a JSON writer: the document is otherwise verbatim,
+ * and a re-serialised copy would be a second thing that could drift from the
+ * file the tests and the docs read.
+ *
+ * ⚠ EVERY anchor, not the first. The pad knobs are three sibling child levels
+ * — Sample / Shape / Mix — and each names the pads it draws. Splicing only the
+ * first left Shape and Mix reading "Pad 7" while Sample said "Kick 707", which
+ * is not a page that looks broken; it is one that looks like a different pad.
+ */
 static void dr32_refresh_hierarchy(dr32_instance *in) {
     if (!in->ui_hierarchy_src) return;
     const char *src = in->ui_hierarchy_src;
-    const char *anchor = strstr(src, "\"child_index_param\"");
     size_t src_len = strlen(src);
-    /* 32 names × up to DR32_MAX_PATH is the pathological bound; real kits are
-     * ~20 bytes a name. The value channel is 64 KB, so cap the whole thing
-     * there and fall back to the plain document if names would not fit. */
+    /* 32 names x up to DR32_MAX_PATH is the pathological bound, times one copy
+     * per pad level; real kits are ~20 bytes a name. The value channel is
+     * 64 KB, so cap the whole thing there and fall back to the plain document
+     * if the names would not fit. */
     const size_t cap = 65536;
     char *out = malloc(cap);
     if (!out) return;
-    size_t n = 0;
-    int ok = 0;
-    if (anchor && src_len < cap) {
-        size_t head = (size_t)(anchor - src);
-        memcpy(out, src, head);
-        n = head;
-        int w = snprintf(out + n, cap - n, "\"child_names\": [");
-        if (w > 0 && n + (size_t)w < cap) {
-            n += (size_t)w;
-            ok = 1;
-            for (int i = 0; i < DR32_PADS && ok; i++) {
-                if (i && n + 2 < cap) { out[n++] = ','; out[n++] = ' '; }
-                int m = append_pad_name(&in->kit.pads[i], out + n, (int)(cap - n));
-                if (m <= 0) ok = 0; else n += (size_t)m;
-            }
-            if (ok) {
-                w = snprintf(out + n, cap - n, "], ");
-                if (w <= 0 || n + (size_t)w >= cap) ok = 0; else n += (size_t)w;
-            }
-            if (ok) {
-                size_t tail = src_len - head;
-                if (n + tail >= cap) ok = 0;
-                else { memcpy(out + n, anchor, tail); n += tail; out[n] = '\0'; }
-            }
-        }
+
+    static const char ANCHOR[] = "\"child_index_param\"";
+    const size_t alen = sizeof(ANCHOR) - 1;
+    size_t n = 0, at = 0;
+    int ok = 1;
+    for (;;) {
+        const char *anchor = strstr(src + at, ANCHOR);
+        if (!anchor) break;
+        size_t head = (size_t)(anchor - (src + at));
+        if (n + head >= cap) { ok = 0; break; }
+        memcpy(out + n, src + at, head);
+        n += head;
+        at += head;
+        size_t after = append_child_names(&in->kit, out, n, cap);
+        if (!after) { ok = 0; break; }
+        n = after;
+        /* ⚠ STEP PAST THE ANCHOR, not just up to it. Resuming the search AT
+         * the anchor finds the same one again, and the loop re-splices into
+         * its own output until the buffer fills — which fails soft, as the
+         * plain document, so the only symptom is names that never appear. */
+        if (n + alen >= cap) { ok = 0; break; }
+        memcpy(out + n, src + at, alen);
+        n += alen;
+        at += alen;
     }
+    if (ok) {
+        size_t tail = src_len - at;
+        if (n + tail >= cap) ok = 0;
+        else { memcpy(out + n, src + at, tail); n += tail; out[n] = '\0'; }
+    }
+
     if (!ok) {
         if (src_len >= cap) { free(out); return; }
         memcpy(out, src, src_len + 1);
@@ -239,7 +293,6 @@ static void dr32_sync_transport(dr32_instance *in) {
  * Core Library, and an empty rack is a perfectly valid state to open in. A slot
  * restoring saved state overwrites this a moment later, which is only the cost
  * of one kit load. */
-#define DR32_DEFAULT_KIT "/data/CoreLibrary/Track Presets/Drums/Electronic/707 Kit.json"
 
 // ------------------------------------------------------------------ v2 API
 
@@ -248,6 +301,11 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     dr32_instance *in = (dr32_instance *)calloc(1, sizeof(dr32_instance));
     if (!in) return NULL;
     dr32_kit_init(&in->kit);
+    /* Empty, and NOT scanned here: create_instance is on the SPI callback too,
+     * so walking ~442 files at this point would stall the load. The catalogue
+     * fills in from the browser's own reads — see get_param. */
+    in->kits = dr32_kits_create();
+    in->kit_pending = -1;
     in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
     dr32_refresh_hierarchy(in);
     if (in->ui_hierarchy) {
@@ -259,15 +317,22 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         logmsg("dr32: instance created (NO ui_hierarchy — UI will be empty)");
     }
 
-    dr32_preset_report rep;
-    if (dr32_preset_load(&in->kit, DR32_DEFAULT_KIT, &rep)) {
-        snprintf(in->kit_path, sizeof(in->kit_path), "%s", DR32_DEFAULT_KIT);
-        dr32_capture_baseline(in);
-        char msg[DR32_MAX_PATH + 120];
-        snprintf(msg, sizeof(msg), "dr32: default kit loaded — %d pads, %d samples",
-                 rep.pads, rep.loaded);
-        logmsg(msg);
-    }
+    /*
+     * NO DEFAULT KIT — DR32 opens EMPTY (Josh, 2026-09-09).
+     *
+     * It used to load the 707 from the Core Library at create. An instrument
+     * that arrives already full decides for you, and every new slot then starts
+     * by undoing that choice; an empty rack is the honest starting point and it
+     * is also the faster one, since create_instance is on the SPI callback and
+     * a kit load reads up to 32 WAVs there.
+     *
+     * The baseline is still captured. It is what makes the state blob carry
+     * only the user's DELTAS, and an empty kit is a perfectly good baseline —
+     * every pad the user fills is a delta from it. Skipping this would leave
+     * state_baseline NULL, which degrades to a full dump: correct, but larger
+     * for no reason.
+     */
+    dr32_capture_baseline(in);
     return in;
 }
 
@@ -275,6 +340,7 @@ static void destroy_instance(void *instance) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
     dr32_kit_free(&in->kit);
+    dr32_kits_destroy(in->kits);
     free(in->ui_hierarchy_src);
     free(in->ui_hierarchy);
     free(in->state_baseline);
@@ -325,6 +391,40 @@ static void set_param(void *instance, const char *key, const char *val) {
     // The Kit menu is a PICKER of two roots: "Move" browses the Core Library's
     // drum kits, "User" the user library. The filepath type takes exactly one
     // root, so they are two params that mean the same thing.
+    /*
+     * The Kits browser: a category list, then that category's kits.
+     *
+     * Both are the host's own page kinds and need no host change —
+     * `items_param`/`select_param` for the categories, the
+     * `list_param`/`count_param`/`name_param` triple for the kits, joined by
+     * `navigate_to`. The host never asks for a LIST of kits: it writes an index
+     * and reads back the name at that index, so the cost is constant however
+     * many kits exist.
+     *
+     * ⚠ Writing kit_index LOADS. That is the page kind's contract, not a
+     * choice: it auditions as you scroll and there is no cancel — the host
+     * offers no `live_preview` or `browser_hooks` here. See the board item.
+     */
+    if (!strcmp(key, "kit_cat")) {
+        int v = atoi(val);
+        int n = dr32_kits_cat_count(in->kits);
+        in->kit_cat = (v < 0) ? 0 : (n > 0 && v >= n ? n - 1 : v);
+        in->kit_idx = 0;
+        return;
+    }
+    if (!strcmp(key, "kit_index")) {
+        int v = atoi(val);
+        int n = dr32_kits_count(in->kits, in->kit_cat);
+        if (n <= 0) return;
+        if (v < 0) v = 0;
+        if (v >= n) v = n - 1;
+        in->kit_idx = v;
+        /* Cursor only — the load is deferred until the cursor settles. */
+        in->kit_pending = v;
+        in->kit_pending_at = in->kit.block;
+        return;
+    }
+
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user")) {
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
         // Load HERE, on the host thread. This used to raise a dirty flag for
@@ -400,13 +500,65 @@ static void set_param(void *instance, const char *key, const char *val) {
      * the contract on a settle, so this is never per-frame work. */
     size_t kl = strlen(key);
     if ((kl >= 7 && !strcmp(key + kl - 7, "_sample")) ||
-        (kl >= 7 && !strcmp(key + kl - 7, "_browse")))
+        (kl >= 7 && !strcmp(key + kl - 7, "_browse"))) {
         dr32_refresh_hierarchy(in);
+        /* Re-serving is only half of it: the host has to come back and READ.
+         * Arm the is_loading pulse, and re-arm on every step so a sweep of the
+         * browse knob costs one re-read rather than one per detent. */
+        in->names_dirty = 1;
+        in->names_dirty_at = in->kit.block;
+    }
 }
+
+/*
+ * How long `is_loading` stays "1" after a pad's sample changes.
+ *
+ * ⚠ THIS IS A LOWER BOUND ON THE HOST'S POLL, NOT A LOAD TIME. Nothing is
+ * loading: the swap already happened, synchronously, in set_param. The pulse
+ * exists so the host SEES a 1 -> 0 edge, and it only sees one if at least one
+ * poll lands inside the window. The shadow grid polls is_loading every
+ * LOADING_POLL_TICKS = 8 frames (~133 ms at 60 Hz), so 120 blocks
+ * (120 x 2.902 ms = 348 ms) fits two polls with room for a slow frame.
+ */
+#define DR32_NAMES_SETTLE_BLOCKS 120
 
 static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || !key || !buf || buf_len <= 0) return 0;
+
+    /*
+     * ⭑ THE PAD NAMES REFRESH BECAUSE OF THIS KEY, AND ONLY BECAUSE OF IT.
+     *
+     * dr32_refresh_hierarchy re-serves the names the moment a sample changes,
+     * but the host does not re-read `ui_hierarchy` on a knob turn or a
+     * filepath commit — armContractSettle is called for a SELECTION (an items
+     * row, a preset step), never for either of those. The one module-side
+     * lever is `is_loading`: the shadow grid polls it and calls
+     * reloadIfChanged on the loading -> ready edge
+     * (shadow_ui_param_pages.mjs, "Only re-plan on the loading->ready edge").
+     * So a sample swap fakes exactly one such edge and the header follows.
+     *
+     * ⚠ ANSWER IT ALWAYS, AND ONLY EVER "1" OR "0". An unserved key reads ""
+     * and the host stops asking FOR THE LIFE OF THE COMPONENT
+     * (_loadingInterval = Infinity) — one "" and this never works again. The
+     * controller's own probe (isLoadingSays) is stricter still: anything but
+     * "1"/"0" sets isLoadingSupported = false permanently.
+     *
+     * Cost of answering: one extra param read per 8 frames while a DR32 page
+     * is on screen, which is why this is two integer compares and no more.
+     */
+    if (!strcmp(key, "is_loading")) {
+        if (in->names_dirty) {
+            if (in->kit.block - in->names_dirty_at < DR32_NAMES_SETTLE_BLOCKS)
+                return snprintf(buf, buf_len, "1");
+            /* Window elapsed: report ready ONCE and disarm. If the page was
+             * closed through the whole window this is the first read, the host
+             * never saw a "1", and no reload fires — correct, because opening
+             * a page reads the hierarchy anyway. */
+            in->names_dirty = 0;
+        }
+        return snprintf(buf, buf_len, "0");
+    }
 
     if (!strcmp(key, "ui_hierarchy")) {
         if (!in->ui_hierarchy || in->ui_hierarchy_len >= buf_len) return 0;
@@ -423,7 +575,7 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
      * shift every pad behind them onto the wrong buffer. An empty pad simply
      * renders silence, exactly as it does today.
      *
-     * 🔴 THE ID IS THE PAD'S OWN PARAM PREFIX, AND IT IS 0-BASED: `pad0`..`pad31`.
+     * 🔴 THE ID IS THE PAD'S OWN PARAM PREFIX, AND IT IS 1-BASED: `pad1`..`pad32`.
      *
      * That is not cosmetic and it was wrong until 2026-09-08. `voice_send_params`
      * below publishes the TEMPLATE `{id}_send_a`, and the host substitutes each
@@ -454,7 +606,7 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
                 if (n + 1 >= buf_len) return 0;
                 buf[n++] = ',';
             }
-            w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i);
+            w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i + 1);
             if (w <= 0 || n + w >= buf_len) return 0;
             n += w;
             int m = in->kit.pads[i].path[0]
@@ -501,6 +653,53 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
      */
     if (!strcmp(key, "voice_send_params"))
         return snprintf(buf, buf_len, "[\"{id}_send_a\",\"{id}_send_b\"]");
+    /*
+     * The Kits browser's reads. Every one of these PUMPS the catalogue a little
+     * first: the host polls this page (count -> index -> name, one read per
+     * tick), so its own polling drives the scan to completion over a few dozen
+     * ticks while the user is looking at the page. A budget of 24 entries keeps
+     * any single call far inside the ~900us SPI budget; scanning all ~442 files
+     * in one call would drop frames, which is the whole reason the catalogue is
+     * incremental. Once complete, pump() returns immediately.
+     */
+    if (!strncmp(key, "kit_", 4) &&
+        (!strcmp(key, "kit_cat_items") || !strcmp(key, "kit_cat") ||
+         !strcmp(key, "kit_count") || !strcmp(key, "kit_index") ||
+         !strcmp(key, "kit_name"))) {
+        dr32_kits_pump(in->kits, 24);
+        /* Once the scan finishes, point the cursor at the kit that is actually
+         * loaded. Otherwise the browser opens at entry 0 and the first detent
+         * loads something the user did not ask for — on a page that auditions
+         * with no undo, that is the difference between a browser and a trap. */
+        if (dr32_kits_ready(in->kits) && !in->kit_located) {
+            int c = 0, i = 0;
+            if (dr32_kits_locate(in->kits, in->kit_path, &c, &i) == 0) {
+                in->kit_cat = c;
+                in->kit_idx = i;
+            }
+            in->kit_located = 1;
+        }
+
+        if (!strcmp(key, "kit_cat_items")) {
+            int n = dr32_kits_cat_count(in->kits), w = 0;
+            w += snprintf(buf + w, buf_len - w, "[");
+            for (int i = 0; i < n && w < buf_len; i++)
+                w += snprintf(buf + w, buf_len - w, "%s{\"index\":%d,\"label\":\"%s\"}",
+                              i ? "," : "", i, dr32_kits_cat_name(in->kits, i));
+            if (w < buf_len) w += snprintf(buf + w, buf_len - w, "]");
+            return w;
+        }
+        if (!strcmp(key, "kit_cat"))   return snprintf(buf, buf_len, "%d", in->kit_cat);
+        if (!strcmp(key, "kit_count")) return snprintf(buf, buf_len, "%d",
+                                                       dr32_kits_count(in->kits, in->kit_cat));
+        if (!strcmp(key, "kit_index")) return snprintf(buf, buf_len, "%d", in->kit_idx);
+        /* kit_name — an array lookup, never disk. REALTIME_SAFETY names
+         * "get_param that rescans a directory" as a known budget-blower, and
+         * this is the key the host reads most often. */
+        return snprintf(buf, buf_len, "%s",
+                        dr32_kits_name(in->kits, in->kit_cat, in->kit_idx));
+    }
+
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user"))
         return snprintf(buf, buf_len, "%s", in->kit_path);
     // The blob Schwung stores in the set's slot_N.json. Without this the host
@@ -520,12 +719,47 @@ static int get_error(void *instance, char *buf, int buf_len) {
     return snprintf(buf, buf_len, "%s", in->err);
 }
 
+/*
+ * DEFERRED AUDITION — why the kit list does not load on every detent.
+ *
+ * The preset page auditions unconditionally: a detent writes kit_index and the
+ * host offers no commit signal, so "load what is selected" is the only contract
+ * available. Loading on EVERY detent measured 5.3-10.1 ms per step on the SPI
+ * callback (device, 2026-09-09) against a 2.9 ms block — a couple of dropped
+ * frames per detent, continuously, for as long as you scroll.
+ *
+ * So a detent moves the CURSOR only, and the load happens once the cursor has
+ * been still for DR32_KIT_SETTLE_BLOCKS. Scrolling past twenty kits now costs
+ * one load instead of twenty, and the one it costs lands where the user has
+ * stopped — which is also the only kit they actually asked to hear.
+ *
+ * ⚠ This does not make the load cheap, and it is not meant to: it makes it
+ * happen ONCE. The cost is inherent — a kit parses a preset and reads up to 32
+ * WAVs — and the decode memo already covers the repeat case.
+ *
+ * ⚠ Serviced from render_block because that is the only thing that runs on a
+ * clock. set_param and render_block are the same thread, so this does not move
+ * the work off the callback; it removes the repetition.
+ */
+#define DR32_KIT_SETTLE_BLOCKS 60   /* ~174 ms at 2.902 ms/block */
+
+static void dr32_service_pending_kit(dr32_instance *in) {
+    if (in->kit_pending < 0) return;
+    if (in->kit.block - in->kit_pending_at < DR32_KIT_SETTLE_BLOCKS) return;
+
+    int idx = in->kit_pending;
+    in->kit_pending = -1;
+    const char *path = dr32_kits_path(in->kits, in->kit_cat, idx);
+    if (path && path[0]) set_param(in, "kit", path);
+}
+
 static void render_block(void *instance, int16_t *out, int frames) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
     if (frames > 1024) frames = 1024;
 
     dr32_sync_transport(in);
+    dr32_service_pending_kit(in);
 
     dr32_kit_render(&in->kit, in->scratch, frames);
 
@@ -565,11 +799,28 @@ void move_plugin_render_split(void *instance, int16_t *const *voice_out,
     if (!in) return;
     if (frames > 1024) frames = 1024;
 
-    /* The same per-block housekeeping render_block does, and it may not be
+    /*
+     * The same per-block housekeeping render_block does, and it may not be
      * skipped on this path: the transport sync drives choke/retrigger, and a
      * kit that only saw it on one of its two entry points would drift the
-     * moment a voice was assigned to a bus. */
+     * moment a voice was assigned to a bus.
+     *
+     * 🔴 THE DEFERRED KIT LOAD IS PART OF THAT HOUSEKEEPING, and leaving it out
+     * is what "I can load 1 kit after launch, but can't change it after that"
+     * was (device, 2026-09-09). The kit browser only moves a CURSOR; the load
+     * happens once the cursor settles, and the only thing that runs on a clock
+     * to notice is the render callback. Assign one pad to a bus and the host
+     * switches entry point mid-stream, so this became the callback that runs —
+     * and the browser then changed the name on screen and loaded nothing,
+     * forever, with nothing logged. The one kit that still worked was the state
+     * restore, which writes `kit` directly and never defers.
+     *
+     * ⚠ This is the two-render-path rule in CLAUDE.md, and the paragraph above
+     * asserted the rule while breaking it. Anything either path must do on a
+     * clock goes in BOTH, in the same commit.
+     */
     dr32_sync_transport(in);
+    dr32_service_pending_kit(in);
 
     dr32_kit_render_split(&in->kit, voice_out, n_voices, main_out, frames);
 }

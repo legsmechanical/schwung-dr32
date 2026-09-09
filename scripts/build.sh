@@ -148,13 +148,31 @@ mkdir -p build/obj
 # (the vendored reverbs were C++ structs); that whole stage moved out with the
 # internal send/return framework, so there is no C++ translation unit left and
 # nothing here needs the C++ runtime.
-for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
-           dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/dr32_state.c dsp/wav.c; do
+# ⚠⚠ GLOB, DO NOT LIST. This was an explicit list of nine files while
+# tests/run.sh globbed `dsp/*.c`, so the two builds compiled DIFFERENT SETS of
+# sources. Adding dsp/dr32_kits.c passed the whole suite and shipped a dsp.so
+# without it in — the link globs build/obj/*.o, so it found only what had been
+# compiled, printed "==> done:", passed the compiler assert, and installed. The
+# device caught it at dlopen: "undefined symbol: dr32_kits_name".
+# One list, derived the same way in both places, is the fix; two lists that must
+# be kept in step is the bug.
+for src in dsp/*.c; do
     $CC -O2 -fPIC $ARCH -DNDEBUG -std=c11 -Wall -Wextra -Idsp \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
 
-$CC -shared -o build/dsp.so build/obj/*.o -lm
+# ⚠⚠ --no-undefined IS LOAD-BEARING, not tidiness.
+#
+# A -shared link is ALLOWED to be incomplete: an unresolved symbol is left for
+# whoever dlopen's you, so the link cannot tell you a whole source file is
+# missing. That is exactly how a dsp.so without dr32_kits.o in it linked, exited
+# 0, printed "==> done:", passed the compiler assert and installed — the failure
+# surfaced on the DEVICE as `dlopen failed: undefined symbol: dr32_kits_name`.
+#
+# Proven on the same objects with dr32_kits.o removed: without the flag the link
+# exits 0; with it, 12 errors naming the symbols. DR32 resolves everything from
+# libc/libm, so this costs nothing here.
+$CC -shared -Wl,--no-undefined -o build/dsp.so build/obj/*.o -lm
 
 echo "==> packaging dist/"
 rm -rf "dist/${MODULE_ID}"
@@ -162,6 +180,11 @@ mkdir -p "dist/${MODULE_ID}"
 cp build/dsp.so     "dist/${MODULE_ID}/"
 cp build/ui.js      "dist/${MODULE_ID}/"
 cp src/module.json  "dist/${MODULE_ID}/"
+# On-device help. The host discovers help.json by scanning module directories,
+# so shipping it is the whole wiring — and a module without one gets no
+# "Module Help" row at all, which is why it is copied rather than optional in
+# spirit only.
+[ -f src/help.json ] && cp src/help.json "dist/${MODULE_ID}/"
 
 tar -czf "dist/${MODULE_ID}-module.tar.gz" -C dist "${MODULE_ID}"
 echo "==> done: dist/${MODULE_ID}-module.tar.gz"

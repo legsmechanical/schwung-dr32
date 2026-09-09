@@ -62,6 +62,12 @@ if (named.length !== 2) bad("expected exactly the two loaded samples to carry na
 // ---- contract validation, the host's rules
 const { findings } = validateContract({ id: "dr32", hierarchy, chainParams, capabilities: mod.capabilities });
 for (const f of findings) {
+    /* The deliberate EMPTY knob slot ("" in a level's knobs array) is an
+     * undeclared param by construction — it names nothing. Upstream's validator
+     * cannot know it is intentional, and a warning that fires on every run is
+     * how a real one gets missed. Suppressed narrowly: only when the message
+     * names no key at all. */
+    if (f.rule === "undeclared-knob-params" && /:\s*$/.test(f.message)) continue;
     const line = `[${f.level}] ${f.rule}: ${f.message}`;
     if (f.level === "error") bad(line); else console.log("  " + line);
 }

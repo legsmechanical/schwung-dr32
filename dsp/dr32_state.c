@@ -10,7 +10,12 @@
 //
 // SHAPE. State is the kit PATH plus the flat params, not a struct dump:
 //
-//   { "v":1, "kit":"<path>", "params": { "pad0_transpose":"-5", ... } }
+//   { "v":2, "kit":"<path>", "params": { "pad1_transpose":"-5", ... } }
+//
+// ⚠ v1 blobs are 0-BASED (`pad0_`..`pad31_`). The pad surface moved to 1-based
+// on 2026-09-09 so the selector could read 1..32, and a v1 blob replayed as-is
+// would put every pad's edits on the pad NEXT DOOR and drop the last one — a
+// restore silently becoming a different kit. dr32_state_read shifts them.
 //
 // Loading the kit first reproduces the samples and every factory default, and
 // the params then restore the user's edits on top. That keeps the blob small,
@@ -142,7 +147,7 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
     int n = 0, first = 1;
     char esc[DR32_MAX_PATH * 2 + 8];
     json_escape(esc, (int)sizeof(esc), kit_path ? kit_path : "");
-    n += snprintf(buf + n, buf_len - n, "{\"v\":1,\"kit\":\"%s\",\"params\":{", esc);
+    n += snprintf(buf + n, buf_len - n, "{\"v\":2,\"kit\":\"%s\",\"params\":{", esc);
 
     for (int i = 0; GLOBAL_FIELDS[i]; i++)
         n = emit_param(kit, GLOBAL_FIELDS[i], base_params, buf, buf_len, n, &first);
@@ -154,7 +159,7 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
         if (!kit->pads[pad].sample && !kit->pads[pad].path[0]) continue;
         for (int f = 0; PAD_FIELDS[f]; f++) {
             char key[64];
-            snprintf(key, sizeof(key), "pad%d_%s", pad, PAD_FIELDS[f]);
+            snprintf(key, sizeof(key), "pad%d_%s", pad + 1, PAD_FIELDS[f]);   /* wire is 1-based */
             n = emit_param(kit, key, base_params, buf, buf_len, n, &first);
             if (n >= buf_len - 8) { dr32_json_free(base_root); return 0; }   /* truncated — better none than half */
         }
@@ -181,13 +186,30 @@ int dr32_state_read(dr32_kit *kit, const char *json,
     const char *path = dr32_json_str(root, "kit", "");
     if (path && path[0] && load_kit) load_kit(ctx, path);
 
+    /* v1 blobs numbered pads from ZERO; v2 numbers them from one, because the
+     * pad surface moved when the selector was made to read 1..32. Replaying a
+     * v1 blob as-is would put every pad's edits on the pad NEXT DOOR and drop
+     * the last one — a restore silently becoming a different kit, which is the
+     * failure this whole file exists to avoid. */
+    const int shift_pads = (dr32_json_num(root, "v", 2.0) < 2.0) ? 1 : 0;
+
     const dr32_json *params = dr32_json_get(root, "params");
     if (params) {
         for (const dr32_json *m = params->first; m; m = m->next) {
             if (!m->key || m->type != DR32_JSON_STRING || !m->str) continue;
+            const char *key = m->key;
+            char migrated[64];
+            if (shift_pads && !strncmp(key, "pad", 3) && key[3] >= '0' && key[3] <= '9') {
+                int idx = 0; const char *q = key + 3;
+                while (*q >= '0' && *q <= '9') idx = idx * 10 + (*q++ - '0');
+                if (*q == '_' &&
+                    (size_t)snprintf(migrated, sizeof migrated, "pad%d%s", idx + 1, q)
+                        < sizeof migrated)
+                    key = migrated;
+            }
             /* Unknown keys are ignored, not an error: a blob written by a newer
              * build must still load on an older one rather than failing whole. */
-            dr32_apply_param(kit, m->key, m->str);
+            dr32_apply_param(kit, key, m->str);
         }
     }
 

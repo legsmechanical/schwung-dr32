@@ -115,6 +115,15 @@ int dr32_kit_browse_index(dr32_kit *k, int pad) {
     return -1;
 }
 
+int dr32_kit_browse_step(dr32_kit *k, int pad, int wire) {
+    if (!k || pad < 0 || pad >= DR32_PADS) return -1;
+    int delta = wire - k->browse_wire[pad];
+    k->browse_wire[pad] = wire;                 /* echoed back verbatim; see the header */
+    if (!delta) return dr32_kit_browse_index(k, pad);
+    int cur = dr32_kit_browse_index(k, pad);
+    return dr32_kit_browse_select(k, pad, (cur < 0 ? 0 : cur) + delta);
+}
+
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx) {
     if (!k) return -1;
     int n = browse_ensure(k, pad);

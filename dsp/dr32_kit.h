@@ -57,6 +57,19 @@ typedef struct {
     // Which pad the UI is editing, and whether playing a pad moves that focus.
     int           ui_current_pad;
     int           ui_auto_select_pad;
+    /* LINK: while set, a per-pad write is applied to EVERY pad. Editor state,
+     * not sound — deliberately NOT persisted, so a reload never comes back with
+     * it silently on and the next knob turn flattening the kit.
+     *
+     * ⭑ It is ONE-SHOT PER PARAMETER (Josh, 2026-09-09). Arming it does not
+     * link everything from then on: the FIRST fan-out-eligible field written
+     * after arming is latched into `link_sub`, and the moment a DIFFERENT field
+     * is written the mode releases and that write lands on the focused pad
+     * alone. So "link, sweep transpose, then reach for Send A" does the obvious
+     * thing without a second gesture to turn it off — and a mode that cannot be
+     * left on by accident is a mode that cannot flatten a kit by accident. */
+    int           link_all;
+    char          link_sub[32];   /* "" = armed, nothing latched yet */
 
     // Live-press correlation. Neither side can move focus alone: the canvas
     // knows a press was PHYSICAL (it gets the raw grid note, which the
@@ -97,13 +110,41 @@ typedef struct {
     // the host does file I/O, and only one directory is ever held — the user
     // Samples tree is ~3.8 GB, so nothing scans it wholesale.
     char          browse_dir[DR32_MAX_PATH];   // "" = nothing cached
+    /* What the host last wrote to each pad's `browse` knob.
+     *
+     * ⭑ DR32 ECHOES THIS BACK VERBATIM, and that is the whole design. The host
+     * keeps its own persistent knob value and carries it forward; hand it back
+     * anything else and the two drift, with the gap landing on the next detent
+     * as a jump. Echoing means they cannot diverge, so there is no baseline to
+     * keep, nothing to resync, and no folder-change special case.
+     *
+     * Per PAD, because each pad's knob is a separate key with its own state in
+     * the host — one shared counter made switching pad look like a huge turn.
+     *
+     * The number means nothing to the user: it is a detent counter, not an
+     * index. What the screen shows for a pad is its sample NAME. */
+    int           browse_wire[DR32_PADS];
     char        **browse;                      // browse_n entries, owned
     int           browse_n;
 } dr32_kit;
 
 // A single folder's worth. Move's factory sample folders are far below this;
 // the cap only stops a pathological directory from allocating without bound.
-#define DR32_BROWSE_MAX 512
+/* ⚠⚠ NOT paired with `browse`'s declared range, and pairing them was a bug.
+ *
+ * They were briefly tied together (both 256) when browse used the knob's value
+ * ABSOLUTELY, because then the knob had to be able to address every entry. Once
+ * browse became a DELTA stepper the knob's range stopped mattering at all — it
+ * only sets the per-detent step — while this cap still has to cover real
+ * folders. It did not: the user library's "Preset Samples" holds 1339 files, so
+ * a 256 cap truncated the listing in arbitrary readdir order, the pad's own
+ * sample was usually NOT in what survived, browse_index returned -1, and every
+ * detent restarted from zero. Reported from the device as the knob "jumping
+ * around".
+ *
+ * So this covers the largest folder anyone plausibly has; the knob's range is a
+ * separate decision and stays small. */
+#define DR32_BROWSE_MAX 2048
 
 // How far apart the press signal and its note may land and still be considered
 // the same event. Blocks are 128 frames @ 44.1 kHz = ~2.9 ms, so 20 blocks is
@@ -130,8 +171,37 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path);
 int dr32_kit_browse_count(dr32_kit *k, int pad);
 /** Position of the pad's current sample among its neighbours, -1 if unknown. */
 int dr32_kit_browse_index(dr32_kit *k, int pad);
+
+/** The index for DISPLAY, clamped to >= 0.
+ *
+ * ⚠⚠ IT MUST NOT TOUCH THE DELTA BASELINE. Making it do so caused the jumping
+ * it was meant to cure: the host does not adopt a readback into its knob, it
+ * keeps a persistent knobStates[key] seeded once and stepped per detent, and
+ * reads only feed the display. A baseline resynced to the index therefore makes
+ * every delta `hostValue - index`. Only a WRITE may move the baseline — it is
+ * the one event that reports what the host actually holds. */
+int dr32_kit_browse_index_sync(dr32_kit *k, int pad);
 /** Load the idx'th neighbour into the pad. Clamps. Returns the index used. */
 int dr32_kit_browse_select(dr32_kit *k, int pad, int idx);
+
+/** Step by the detents the knob just moved, and remember its new value.
+ *
+ * ⚠⚠ WHY NOT JUST USE THE VALUE. `browse` is declared int 0..255 because a knob
+ * needs a static range, but a folder has however many files it has — usually a
+ * handful. Used absolutely, a 3-file folder left 253 of the knob's positions
+ * doing nothing: you turn right, nothing happens, and you have to wind all the
+ * way back before it responds. Reported from the device as browse "not being
+ * bounded to the folder".
+ *
+ * The clamped index IS read back, but that does not rescue it while you turn:
+ * the host sets a settle window after every knob write and SKIPS reads inside
+ * it, so it does not adopt the clamp until you stop.
+ *
+ * So the value is read as a delta from whatever the host last wrote, and the
+ * step is clamped to the folder. The knob's own range then stops mattering, and
+ * reporting the true index keeps the two converging whenever the host does
+ * read. */
+int dr32_kit_browse_step(dr32_kit *k, int pad, int wire);
 
 void dr32_kit_note_on(dr32_kit *k, int note, int velocity);
 void dr32_kit_note_off(dr32_kit *k, int note);

@@ -71,10 +71,10 @@ int main(void) {
 
         /* Spread across the kinds of field that exist: a bipolar int, a float,
          * an enum-ish, a global, and a send. */
-        dr32_apply_param(&a, "pad0_transpose", "-5");
-        dr32_apply_param(&a, "pad0_decay",     "0.25");
-        dr32_apply_param(&a, "pad0_choke",     "3");
-        dr32_apply_param(&a, "pad3_pan",       "-20");
+        dr32_apply_param(&a, "pad1_transpose", "-5");
+        dr32_apply_param(&a, "pad1_decay",     "0.25");
+        dr32_apply_param(&a, "pad1_choke",     "3");
+        dr32_apply_param(&a, "pad4_pan",       "-20");
         dr32_apply_param(&a, "master",         "0.5");
 
         int n = dr32_state_write(&a, "/data/UserData/Kits/MyKit.ablpreset",
@@ -82,7 +82,7 @@ int main(void) {
         CHECK(n > 0, "state_write returned %d (expected > 0)", n);
         CHECK(strstr(blob, "\"kit\":\"/data/UserData/Kits/MyKit.ablpreset\"") != NULL,
               "blob does not carry the kit path");
-        CHECK(strstr(blob, "pad0_transpose") != NULL, "blob omits an edited pad field");
+        CHECK(strstr(blob, "pad1_transpose") != NULL, "blob omits an edited pad field");
 
         /* A fresh kit, restored from the blob. No load_kit callback: this test
          * is about the params, and a real preset load needs files on disk. */
@@ -91,8 +91,8 @@ int main(void) {
         CHECK(dr32_state_read(&b, blob, NULL, NULL) == 1, "state_read rejected its own output");
 
         char va[64], vb[64];
-        const char *keys[] = { "pad0_transpose", "pad0_decay", "pad0_choke",
-                               "pad3_pan", "master", NULL };
+        const char *keys[] = { "pad1_transpose", "pad1_decay", "pad1_choke",
+                               "pad4_pan", "master", NULL };
         for (int i = 0; keys[i]; i++) {
             rd(&a, keys[i], va, sizeof(va));
             rd(&b, keys[i], vb, sizeof(vb));
@@ -105,13 +105,13 @@ int main(void) {
     {
         dr32_kit a; dr32_kit_init(&a);
         occupy(&a, 1, "/s.wav");
-        dr32_apply_param(&a, "pad1_transpose", "-5");
+        dr32_apply_param(&a, "pad2_transpose", "-5");
         CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob), NULL) > 0, "write failed");
 
         dr32_kit b; dr32_kit_init(&b);
         occupy(&b, 1, "/s.wav");
         dr32_state_read(&b, blob, NULL, NULL);
-        char v[64]; rd(&b, "pad1_transpose", v, sizeof(v));
+        char v[64]; rd(&b, "pad2_transpose", v, sizeof(v));
         CHECK(atof(v) == -5.0, "transpose came back as '%s', expected -5", v);
     }
 
@@ -136,7 +136,7 @@ int main(void) {
         CHECK(dr32_state_read(&b, "", NULL, NULL) == 0, "empty blob was accepted");
         /* Unknown keys must be ignored, not fatal: a blob from a newer build
          * has to load on an older one rather than failing whole. */
-        CHECK(dr32_state_read(&b, "{\"v\":1,\"params\":{\"pad0_nosuchfield\":\"1\"}}",
+        CHECK(dr32_state_read(&b, "{\"v\":1,\"params\":{\"pad1_nosuchfield\":\"1\"}}",
                               NULL, NULL) == 1, "an unknown key made the whole restore fail");
         /* A truncating buffer must yield nothing rather than half a blob. */
         char tiny[80];
@@ -160,35 +160,35 @@ int main(void) {
               "baseline write failed");
 
         /* One edit; a delta blob must carry it and no unedited siblings. */
-        dr32_apply_param(&a, "pad0_transpose", "-5");
+        dr32_apply_param(&a, "pad1_transpose", "-5");
         int n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), base);
         CHECK(n > 0, "delta write failed");
-        CHECK(strstr(blob, "pad0_transpose") != NULL, "delta blob omits the edit");
-        CHECK(strstr(blob, "pad1_") == NULL,
+        CHECK(strstr(blob, "pad1_transpose") != NULL, "delta blob omits the edit");
+        CHECK(strstr(blob, "pad2_") == NULL,
               "delta blob carries unedited pad1 fields: %.200s", blob);
         CHECK(n < 512, "delta blob is %d bytes — not a delta", n);
 
         /* An edit reverted to its baseline value drops back out. */
-        char orig[64]; rd(&a, "pad0_transpose", orig, sizeof(orig));
+        char orig[64]; rd(&a, "pad1_transpose", orig, sizeof(orig));
         (void)orig;
         dr32_kit c; dr32_kit_init(&c);
         occupy(&c, 0, "/s0.wav");
-        char base_v[64]; rd(&c, "pad0_transpose", base_v, sizeof(base_v));
-        dr32_apply_param(&a, "pad0_transpose", base_v);
+        char base_v[64]; rd(&c, "pad1_transpose", base_v, sizeof(base_v));
+        dr32_apply_param(&a, "pad1_transpose", base_v);
         n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), base);
-        CHECK(n > 0 && strstr(blob, "pad0_transpose") == NULL,
+        CHECK(n > 0 && strstr(blob, "pad1_transpose") == NULL,
               "a reverted edit still appears in the delta blob");
 
         /* A baseline for a DIFFERENT kit path must be IGNORED — comparing
          * against another kit's values would silently drop real edits. */
-        dr32_apply_param(&a, "pad0_transpose", "-5");
+        dr32_apply_param(&a, "pad1_transpose", "-5");
         n = dr32_state_write(&a, "/OTHER.ablpreset", blob, (int)sizeof(blob), base);
-        CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
+        CHECK(n > 0 && strstr(blob, "pad2_") != NULL,
               "a mismatched-kit baseline was honoured (blob still a delta)");
 
         /* A garbage baseline degrades to the full dump, never an error. */
         n = dr32_state_write(&a, "/kit.ablpreset", blob, (int)sizeof(blob), "not json");
-        CHECK(n > 0 && strstr(blob, "pad1_") != NULL,
+        CHECK(n > 0 && strstr(blob, "pad2_") != NULL,
               "a malformed baseline did not fall back to the full dump");
     }
 
@@ -252,20 +252,99 @@ int main(void) {
             const char *wa = "/tmp/dr32_state_kick.wav", *wb = "/tmp/dr32_state_snare.wav";
             make_wav(wa);
             make_wav(wb);
-            api->set_param(inst, "pad0_sample", wa);
-            api->set_param(inst, "pad1_sample", wb);
+            api->set_param(inst, "pad1_sample", wa);
+            api->set_param(inst, "pad2_sample", wb);
             static char h[65536];
             int n = api->get_param(inst, "ui_hierarchy", h, (int)sizeof(h));
             CHECK(n > 2, "ui_hierarchy not served (%d bytes)", n);
             CHECK(strstr(h, "\"pad_layout\": \"drums\"") != NULL, "pad_layout missing");
             CHECK(strstr(h, "\"child_index_param\": \"ui_current_pad\"") != NULL,
                   "child_index_param missing — the splice anchor is gone");
-            const char *names = strstr(h, "\"child_names\": [");
-            CHECK(names != NULL, "child_names not spliced in");
-            CHECK(names && strstr(names, "\"dr32_state_kick\", \"dr32_state_snare\", \"\"") != NULL,
-                  "pad names wrong: %.80s", names ? names : "");
+            /* ⭑ ONCE PER PAD BANK. Sample / Shape / Mix are three sibling
+             * child levels, each naming the pads it draws, and a splice that
+             * stopped at the first anchor left two of the three banks reading
+             * "Pad 7" — a page that does not look broken, just like a
+             * different pad. So count the anchors in the SOURCE and require
+             * the same number of name arrays out. */
+            int anchors = 0, spliced = 0;
+            for (const char *q = h; (q = strstr(q, "\"child_index_param\"")); q++) anchors++;
+            for (const char *q = h; (q = strstr(q, "\"child_names\": [")); q++) {
+                spliced++;
+                CHECK(strstr(q, "\"dr32_state_kick\", \"dr32_state_snare\", \"\"") == q + 16,
+                      "pad names wrong at splice %d: %.80s", spliced, q);
+            }
+            CHECK(anchors >= 3, "only %d child_index_param anchors — the three pad banks are gone", anchors);
+            CHECK(spliced == anchors,
+                  "child_names spliced %d times for %d anchors — every pad bank needs its own names",
+                  spliced, anchors);
             FILE *f = fopen("dist/tests/served_hierarchy.json", "w");
             if (f) { fputs(h, f); fclose(f); }
+            api->destroy_instance(inst);
+            remove(wa);
+            remove(wb);
+        }
+    }
+
+    /* ---- 6b. is_loading: the pulse that makes the host RE-READ the names -- */
+    {
+        /*
+         * ⭑ SPLICING THE NAMES IS ONLY HALF THE JOB, AND THE OTHER HALF IS
+         * THIS KEY.
+         *
+         * Check 6 above proves the served hierarchy carries the new pad names
+         * the instant a sample changes — and on the device the header did not
+         * change, because the host had no reason to read it again.
+         * `armContractSettle` is called for a SELECTION (an items row, a preset
+         * step); a knob turn and a filepath commit arm nothing. The one lever a
+         * module has is `is_loading`: the shadow grid polls it and re-plans on
+         * the loading -> ready EDGE. So a sample swap has to produce an edge.
+         *
+         * ⚠ Asserting only "1 after a swap" would pass with the disarm broken,
+         * and asserting only the "0" would pass with the pulse never armed at
+         * all. The edge is the property, so both ends are walked, plus the
+         * re-arm (a browse SWEEP must cost one re-read, not one per detent)
+         * and the idle case (never "1" when nothing changed).
+         */
+        plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+        void *inst = api ? api->create_instance("src", NULL) : NULL;
+        CHECK(inst != NULL, "create_instance(\"src\") returned NULL");
+        if (inst) {
+            static int16_t sink[2 * 128];
+            char v[32];
+            #define ISLOAD() (api->get_param(inst, "is_loading", v, (int)sizeof v), v)
+            #define BLOCKS(n) do { for (int i = 0; i < (n); i++) api->render_block(inst, sink, 128); } while (0)
+
+            /* Idle: never "1", and never "" — an unserved key answers "" and
+             * the host then stops asking FOR THE LIFE OF THE COMPONENT. */
+            CHECK(!strcmp(ISLOAD(), "0"), "idle is_loading is '%s', want \"0\"", v);
+            BLOCKS(400);
+            CHECK(!strcmp(ISLOAD(), "0"), "is_loading went to '%s' with nothing changed", v);
+
+            const char *wa = "/tmp/dr32_isload_a.wav", *wb = "/tmp/dr32_isload_b.wav";
+            make_wav(wa);
+            make_wav(wb);
+
+            api->set_param(inst, "pad1_sample", wa);
+            CHECK(!strcmp(ISLOAD(), "1"), "after a sample swap is_loading is '%s', want \"1\"", v);
+
+            /* Part-way through, a SECOND swap re-arms: the window restarts, so
+             * a sweep of the browse knob still produces exactly one edge. */
+            BLOCKS(90);
+            CHECK(!strcmp(ISLOAD(), "1"), "pulse ended early — is_loading '%s' at 90 blocks", v);
+            api->set_param(inst, "pad1_sample", wb);
+            BLOCKS(90);
+            CHECK(!strcmp(ISLOAD(), "1"), "the second swap did not re-arm the window (is_loading '%s')", v);
+
+            /* Left alone, it falls back to ready — that transition IS the edge. */
+            BLOCKS(60);
+            CHECK(!strcmp(ISLOAD(), "0"), "is_loading never returned to '0' (got '%s')", v);
+            /* And it stays there: a pulse that re-armed itself would re-plan
+             * the page forever. */
+            BLOCKS(400);
+            CHECK(!strcmp(ISLOAD(), "0"), "is_loading re-armed itself (got '%s')", v);
+
+            #undef ISLOAD
+            #undef BLOCKS
             api->destroy_instance(inst);
             remove(wa);
             remove(wb);
@@ -322,8 +401,8 @@ int main(void) {
                 while (*q && *q != '"' && k + 1 < sizeof id) id[k++] = *q++;
                 id[k] = '\0';
 
-                if (n_ids == 0)  CHECK(strcmp(id, "pad0") == 0,  "first id is '%s'", id);
-                if (n_ids == 31) CHECK(strcmp(id, "pad31") == 0, "last id is '%s'", id);
+                if (n_ids == 0)  CHECK(strcmp(id, "pad1") == 0,  "first id is '%s'", id);
+                if (n_ids == 31) CHECK(strcmp(id, "pad32") == 0, "last id is '%s'", id);
 
                 static const char *const suffix[2] = { "_send_a", "_send_b" };
                 for (int sd = 0; sd < 2; sd++) {
@@ -355,12 +434,88 @@ int main(void) {
              * old 1-based ids produced for the last pad; if this reads back a
              * value, the check above proves nothing. */
             char dead[64];
-            CHECK(api->get_param(inst, "pad32_send_a", dead, (int)sizeof(dead)) == 0,
-                  "pad32_send_a resolved — the negative control is broken, so the "
+            CHECK(api->get_param(inst, "pad33_send_a", dead, (int)sizeof(dead)) == 0,
+                  "pad33_send_a resolved — the negative control is broken, so the "
                   "substitution checks above cannot be trusted");
 
             api->destroy_instance(inst);
         }
+    }
+
+    {
+        /*
+         * DEFERRED AUDITION: a detent must move the cursor WITHOUT loading.
+         *
+         * Loading on every detent measured 5.3-10.1 ms per step on the SPI
+         * callback against a 2.9 ms block — dropped frames for as long as you
+         * scroll. The load is owed until the cursor has been still, and the only
+         * thing that runs on a clock is render_block, so that is what pays it.
+         *
+         * ⚠ Driven through the PLUGIN API, not the helper. The whole point is
+         * WHERE the load happens; a direct-call test would pass with the defer
+         * wired to nothing. See test-the-path-not-the-function.
+         */
+        /* A REAL catalogue, or the assertions below are vacuous: with an empty
+         * one the kit_index write returns early, nothing is ever pending, and
+         * "a detent did not load" is true for the wrong reason. */
+        system("rm -rf /tmp/dr32_kr && mkdir -p /tmp/dr32_kr/core/Electronic /tmp/dr32_kr/user");
+        for (int i = 0; i < 4; i++) {
+            char pth[128];
+            snprintf(pth, sizeof pth, "/tmp/dr32_kr/core/Electronic/k%d.json", i);
+            FILE *kf = fopen(pth, "wb");
+            if (kf) {
+                fputs("{\n  \"kind\": \"instrumentRack\",\n", kf);
+                for (int j = 0; j < 30; j++) fputs("  \"pad\": 0,\n", kf);
+                fputs("  \"drumZoneSettings\": { \"receivingNote\": 36 }\n}\n", kf);
+                fclose(kf);
+            }
+        }
+        setenv("DR32_KIT_ROOTS", "/tmp/dr32_kr/core:/tmp/dr32_kr/user", 1);
+
+        plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+        void *inst = api ? api->create_instance(".", NULL) : NULL;
+        CHECK(inst != NULL, "create_instance returned NULL");
+        if (inst) {
+            char before[512] = {0}, after[512] = {0};
+            /* Drive the catalogue to completion first. */
+            for (int i = 0; i < 200; i++) {
+                char c[64]; api->get_param(inst, "kit_count", c, (int)sizeof c);
+            }
+            char cnt[16] = {0};
+            api->get_param(inst, "kit_count", cnt, (int)sizeof cnt);
+            CHECK(atoi(cnt) == 4, "fixture catalogue has %s kits, want 4 — the checks below "
+                                  "would be vacuous", cnt);
+            api->get_param(inst, "kit", before, (int)sizeof before);
+
+            /* Sweep the cursor. None of these may load. */
+            for (int i = 0; i < 4; i++) {
+                char v[16]; snprintf(v, sizeof v, "%d", i);
+                api->set_param(inst, "kit_index", v);
+            }
+            api->get_param(inst, "kit", after, (int)sizeof after);
+            CHECK(!strcmp(before, after),
+                  "a detent loaded a kit — scrolling would drop frames on every step");
+
+            /* The cursor still moved, or the page would look dead. */
+            char idx[16] = {0};
+            api->get_param(inst, "kit_index", idx, (int)sizeof idx);
+            CHECK(!strcmp(idx, "3"), "the cursor did not follow the detents (read '%s')", idx);
+
+            /* And rendering long enough must pay it. On a build host the
+             * catalogue is empty, so nothing can actually load — what is
+             * asserted is that the DEBT is cleared rather than owed forever. */
+            static int16_t out[2 * 128];
+            for (int b = 0; b < 200; b++) api->render_block(inst, out, 128);
+            char loaded[512] = {0};
+            api->get_param(inst, "kit", loaded, (int)sizeof loaded);
+            CHECK(strstr(loaded, "/tmp/dr32_kr/") != NULL,
+                  "rendering past the settle window did not pay the deferred load (kit '%s')",
+                  loaded);
+
+            api->destroy_instance(inst);
+        }
+        unsetenv("DR32_KIT_ROOTS");
+        system("rm -rf /tmp/dr32_kr");
     }
 
     printf("%s  (%d checks, %d failures)\n", failures ? "FAILED" : "ok", checks, failures);

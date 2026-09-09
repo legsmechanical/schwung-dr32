@@ -179,7 +179,7 @@ int main(int argc, char **argv) {
 
             dr32_kit kit;
             dr32_kit_init(&kit);
-            dr32_apply_param(&kit, "pad0_sample", wav);
+            dr32_apply_param(&kit, "pad1_sample", wav);
             CHECK(!kit.pads[0].voice.active, "assigning a sample must not sound by itself");
 
             /* velocity reaches the voice: the engine's dB law is centred on 70,

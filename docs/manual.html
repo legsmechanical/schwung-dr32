@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DR32 — Drum Rack 32</title>
+<style>
+  :root {
+    --bg:      #fbfaf8;
+    --panel:   #ffffff;
+    --ink:     #17191c;
+    --muted:   #6b7075;
+    --rule:    #e3e0da;
+    --accent:  #b4531f;
+    --screen-bg:  #17191c;
+    --screen-ink: #f4f2ee;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:     #131517;
+      --panel:  #191c1f;
+      --ink:    #e6e4e0;
+      --muted:  #969ba0;
+      --rule:   #2a2e32;
+      --accent: #e08a4e;
+      --screen-bg:  #0c0d0f;
+      --screen-ink: #e6e4e0;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 400 16.5px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 43rem; margin: 0 auto; padding: 0 1.4rem 5rem; }
+
+  /* ── masthead ─────────────────────────────────────────────── */
+  header { padding: 4.5rem 0 2.2rem; }
+  .eyebrow {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 .9rem;
+  }
+  h1 {
+    font-size: clamp(2.1rem, 6vw, 2.9rem); line-height: 1.05;
+    letter-spacing: -.022em; font-weight: 640; margin: 0 0 .55rem;
+  }
+  .standfirst {
+    font-size: 1.12rem; color: var(--muted); margin: 0; max-width: 34rem;
+    line-height: 1.5;
+  }
+
+  /* ── sections ─────────────────────────────────────────────── */
+  h2 {
+    font-size: 1.02rem; font-weight: 640; letter-spacing: .01em;
+    margin: 3.4rem 0 1rem; padding-bottom: .5rem;
+    border-bottom: 1px solid var(--rule);
+    display: flex; align-items: baseline; gap: .7rem;
+  }
+  h2::before {
+    content: ""; width: 1.5rem; height: 2px; background: var(--accent);
+    flex: none; transform: translateY(-.28rem);
+  }
+  h3 {
+    font-size: .74rem; font-family: var(--mono); letter-spacing: .13em;
+    text-transform: uppercase; color: var(--muted);
+    margin: 2rem 0 .5rem; font-weight: 600;
+  }
+  p { margin: 0 0 1.05rem; }
+  ul { margin: 0 0 1.05rem; padding-left: 1.1rem; }
+  li { margin-bottom: .45rem; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  /* ── the screen: a 1-bit OLED, so it looks like one ───────── */
+  .screen {
+    background: var(--screen-bg); color: var(--screen-ink);
+    border-radius: 6px; padding: 1.1rem 1.2rem; margin: 1.4rem 0 1.6rem;
+    font-family: var(--mono); font-size: .78rem; line-height: 1.85;
+    overflow-x: auto; letter-spacing: .04em;
+  }
+  .screen .pg { color: var(--accent); display: inline-block; min-width: 6.2em; }
+  .screen .dim { opacity: .5; }
+
+  /* ── tables ───────────────────────────────────────────────── */
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0 1.5rem; }
+  td { padding: .5rem .75rem .5rem 0; border-bottom: 1px solid var(--rule);
+       vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td:first-child {
+    font-family: var(--mono); font-size: .74rem; letter-spacing: .05em;
+    white-space: nowrap; width: 1%; padding-right: 1.4rem;
+    padding-top: .68rem; color: var(--ink);
+  }
+
+  /* ── callout ──────────────────────────────────────────────── */
+  .note {
+    background: var(--panel); border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 5px 5px 0; padding: .95rem 1.15rem;
+    margin: 1.6rem 0; font-size: .95rem;
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .note strong { color: var(--ink); }
+
+  code {
+    font-family: var(--mono); font-size: .86em;
+    background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 3px; padding: .05em .35em;
+  }
+
+  footer {
+    margin-top: 4rem; padding-top: 1.3rem; border-top: 1px solid var(--rule);
+    color: var(--muted); font-size: .85rem;
+  }
+  footer p { margin: 0 0 .4rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Schwung module</p>
+  <h1>DR32 &mdash; Drum Rack 32</h1>
+  <p class="standfirst">Ableton Move's Drum Rack, extended to 32 pads. Loads Move's own kits and
+  plays them through a reconstruction of the same Drum Sampler voice.</p>
+</header>
+
+<div class="note">
+  <p><strong>Requires Schwung 1.3.0 or later.</strong> That is the version where the module-bus
+  contract arrived, and the per-pad sends reach nothing without it. Version 0.3.0.</p>
+</div>
+
+<h2>What it is</h2>
+
+<p>DR32 loads Move's own <code>.ablpreset</code> drum kits and plays them through a reconstruction
+of the same Drum Sampler voice &mdash; so a kit built on the device opens here and sounds like
+itself, with twice the pads.</p>
+
+<p>It is a Schwung <em>sound generator</em>: add it to a chain slot like any other instrument. It
+has no interface of its own. Every page below is Schwung's own knob grid.</p>
+
+<h2>The pages</h2>
+
+<div class="screen">
+<span class="pg">Category</span>Acoustic &middot; Electronic &middot; Hybrid &middot; My Kits<br>
+<span class="pg dim">&nbsp;&nbsp;Kit</span><span class="dim">the kits in that category</span><br>
+<span class="pg">Sample</span>PAD&nbsp;&nbsp;&nbsp;&nbsp;SMPL&nbsp;&nbsp;&nbsp;STRT&nbsp;&nbsp;&nbsp;END&nbsp;&nbsp;&nbsp;&nbsp;TRSP&nbsp;&nbsp;DETN&nbsp;&nbsp;CHOKE&nbsp;&nbsp;BRWS<br>
+<span class="pg">Shape</span>ATK&nbsp;&nbsp;&nbsp;&nbsp;DCY&nbsp;&nbsp;&nbsp;&nbsp;HOLD&nbsp;&nbsp;ENV&nbsp;&nbsp;&nbsp;&nbsp;CUT&nbsp;&nbsp;&nbsp;RES&nbsp;&nbsp;&nbsp;TYPE&nbsp;&nbsp;&nbsp;FILT<br>
+<span class="pg">Mix</span>VVOL&nbsp;&nbsp;&nbsp;VOL&nbsp;&nbsp;&nbsp;&nbsp;PAN&nbsp;&nbsp;&nbsp;LINK&nbsp;&nbsp;&nbsp;SNDA&nbsp;&nbsp;SNDB&nbsp;&nbsp;PUNCH&nbsp;&nbsp;PTIME<br>
+<span class="pg">Master</span>MASTER
+</div>
+
+<p>Jog moves between pages. The three pad banks &mdash; <strong>Sample</strong>,
+<strong>Shape</strong> and <strong>Mix</strong> &mdash; all edit the same pad, so the pad you pick
+on one is the pad you are editing on all three. On <strong>Category</strong>, click to go in, then
+click a row to open that category's kits.</p>
+
+<h2>Loading kits</h2>
+
+<p>DR32 opens <strong>empty</strong>. Kits live under <strong>Category</strong>, grouped by the
+library's own folders, with everything you have made under <em>My Kits</em>.</p>
+
+<p>The list is built by DR32 rather than by the file browser, and only real drum racks appear in
+it. Move's preset folder holds presets for every instrument &mdash; on a typical device, several
+hundred files of which only a fraction are drum kits &mdash; so a plain file browser would offer
+you a great many things that cannot load.</p>
+
+<div class="note">
+  <p><strong>Scrolling the kit list loads what you land on.</strong> Move the cursor and the kit
+  under it loads a moment after you stop, so you can hear your way through a category. There is no
+  undo: the kit you were on is replaced. Save your work before browsing.</p>
+</div>
+
+<h2>Pads</h2>
+
+<p>32 pads, notes 36&ndash;67. Hitting a pad selects it for editing while the transport is
+stopped; with a pattern running, the editor follows only on a host that reports live presses. The
+<strong>PAD</strong> knob selects a pad by hand, numbered 1&ndash;32.</p>
+
+<p><strong>Sample</strong>, <strong>Shape</strong> and <strong>Mix</strong> are three views of the
+same pad &mdash; pick it on any one of them and it is picked on all three. Each pad's name in the
+header follows its sample, and updates as soon as you change it.</p>
+
+<h3>Sample</h3>
+
+<p><strong>SMPL</strong> opens a browser starting in the folder that pad's current sample came
+from. <strong>BRWS</strong> steps through the neighbouring samples in that same folder, one per
+detent, so you can try alternatives without opening anything.</p>
+
+<h3>Shaping</h3>
+
+<table>
+  <tr><td>START · END</td><td>Playback region, drawn over the waveform.</td></tr>
+  <tr><td>TRSP · DETN</td><td>Transpose in semitones, detune in cents.</td></tr>
+  <tr><td>CHOKE</td><td>Choke group. Pads sharing a group cut each other off.</td></tr>
+  <tr><td>ATTACK · DECAY · HOLD</td><td>The amp envelope.</td></tr>
+  <tr><td>ENV</td><td>A-H-D or A-S-R.</td></tr>
+  <tr><td>CUT · RES · TYPE</td><td>Filter, four types, with FILT as its on/off switch.</td></tr>
+  <tr><td>VELVOL</td><td>How much velocity affects level.</td></tr>
+  <tr><td>VOL · PAN</td><td>Per-pad level and position.</td></tr>
+  <tr><td>PUNCH · PTIME</td><td>Move's transient shaper. Above zero it turns itself on.</td></tr>
+  <tr><td>MASTER</td><td>Level for the whole kit &mdash; on its own page, because it is not a pad
+      control.</td></tr>
+</table>
+
+<h2>Link</h2>
+
+<p><strong>LINK</strong> sets one parameter across every pad at once. Click it on, turn a knob and
+every pad takes that value. It releases as soon as you touch a different control, so the next knob
+is the focused pad's alone.</p>
+
+<p>It never spreads the things that make a pad a distinct pad: its sample, its note, or the
+sample-browse position. It is off whenever DR32 loads.</p>
+
+<h2>Sends</h2>
+
+<p>Each pad has its own <strong>SNDA</strong> and <strong>SNDB</strong> amount, in decibels,
+feeding Schwung's two global return buses. Put whatever effect you like on a return and every pad
+can tap it at its own level &mdash; one reverb shared by the kit, rather than one inside each pad.
+A kit imported from Move brings its own send amounts with it.</p>
+
+<div class="note">
+  <p>This is why DR32 requires Schwung 1.3.0. On an older host the knobs still turn and save, but
+  nothing reads them, so they make no sound. DR32 has no internal effects of its own.</p>
+</div>
+
+<h2>Saving</h2>
+
+<p>Your edits are stored in the Schwung set, on top of the kit that was loaded &mdash; so a set
+records which kit you used and what you changed about it. Kits themselves are Move's files and are
+never modified.</p>
+
+<h2>Known limits</h2>
+
+<ul>
+  <li>Pads 17&ndash;32 sit outside Move's 4&times;4 pad map, so the small map in the header does
+      not light for them.</li>
+  <li>Per-pad playback effects other than Punch are parsed and preserved &mdash; kits stay
+      lossless and reopen correctly on Move &mdash; but they are not played back.</li>
+  <li>Return-chain effects saved inside a Move kit are preserved, but not set up for you.</li>
+  <li>Browsing kits has no undo, as above.</li>
+</ul>
+
+<footer>
+  <p>DR32 is free software under the MIT licence.</p>
+  <p>Source and issues:
+     <a href="https://github.com/legsmechanical/schwung-dr32">github.com/legsmechanical/schwung-dr32</a></p>
+  <p>Not affiliated with Ableton.</p>
+</footer>
+
+</div>
+</body>
+</html>

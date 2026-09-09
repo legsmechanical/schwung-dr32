@@ -11,7 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/** Parse "pad12_attack" -> pad index 12, key "attack". Returns -1 if not a pad key. */
+/** Parse "pad12_attack" -> pad index 11, key "attack". Returns -1 if not a pad key.
+ *
+ * ⚠⚠ THE WIRE IS 1-BASED, THE ENGINE IS 0-BASED, and the conversion lives HERE
+ * so it happens exactly once. `child_index_base: 1` on the pads level is what
+ * makes the host speak this numbering — it drives BOTH the value of
+ * `child_index_param` and the {index} in generated keys, so they cannot be
+ * chosen separately. Move numbers its pads from 1 and the selector now reads
+ * 1..32 to match (Josh, 2026-09-09); "pad0_" is not a valid key any more. */
 /* "pad<N>_<sub>" addresses a pad explicitly. "pad_<sub>" — no digits — is the
  * ALIAS: it addresses whichever pad currently has focus.
  *
@@ -33,6 +40,7 @@ static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) 
     while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; digits++; }
     if (!digits || *p != '_') return -1;
     *rest = p + 1;
+    idx -= 1;                                   /* wire 1..32 -> engine 0..31 */
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
 }
 
@@ -142,9 +150,11 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * code path instead of a read that can disagree with a write — and it
          * only touches the disk when the focused pad's FOLDER changes, not per
          * frame. */
+        /* Echo the knob back, do NOT report the index — see dr32_kit.h. The
+         * host carries its own value forward; handing it a different one is
+         * what made the knob jump. */
         if (!strcmp(sub, "browse"))
-            return snprintf(buf, buf_len, "%d",
-                            dr32_kit_browse_index((dr32_kit *)kit, pad));
+            return snprintf(buf, buf_len, "%d", kit->browse_wire[pad]);
         if (!strcmp(sub, "browse_count"))
             return snprintf(buf, buf_len, "%d",
                             dr32_kit_browse_count((dr32_kit *)kit, pad));
@@ -224,21 +234,40 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         return 0;
     }
 
-    if (!strcmp(key, "ui_current_pad"))
-        return snprintf(buf, buf_len, "%d", kit->ui_current_pad);
+    if (!strcmp(key, "ui_current_pad"))          /* 1-based on the wire */
+        return snprintf(buf, buf_len, "%d", kit->ui_current_pad + 1);
     if (!strcmp(key, "ui_auto_select_pad"))
         return snprintf(buf, buf_len, "%s", kit->ui_auto_select_pad ? "on" : "off");
+    if (!strcmp(key, "link"))
+        return snprintf(buf, buf_len, "%s", kit->link_all ? "All" : "One");
     if (!strcmp(key, "master")) return snprintf(buf, buf_len, "%g", (double)kit->master_gain);
     if (!strcmp(key, "voices")) return snprintf(buf, buf_len, "%d", dr32_kit_active_voices(kit));
     return 0;
 }
 
-int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
-    if (!kit || !key || !val) return 0;
-
-    const char *sub;
-    int pad = split_pad_key(kit, key, &sub);
-    if (pad >= 0) {
+/**
+ * Does this per-pad field fan out under LINK?
+ *
+ * ⚠ THE EXCLUSIONS ARE THE WHOLE DESIGN, not caution. Link means "this knob,
+ * on every pad" — so it covers the things a knob SHAPES and must not touch the
+ * things that make a pad a distinct pad:
+ *
+ *   sample*      32 pads holding one sample is not a kit, it is a mistake that
+ *                takes a kit reload to undo.
+ *   note         every pad answering the same note breaks the rack outright.
+ *   sending_note the same, on the way out.
+ *   browse       steps through the folder the PAD's own sample sits in, so the
+ *                same index means a different file per pad — fanning it out is
+ *                not "the same value", it is 32 unrelated ones.
+ *   play         an action, not a value.
+ *
+ * Everything else is a sound-shaping control and is exactly what Link is for.
+ */
+/** Apply one per-pad field to ONE pad. The single place that assignment
+ *  happens, so LINK's fan-out and an ordinary write cannot drift apart. */
+static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *val) {
+    if (pad < 0 || pad >= DR32_PADS) return 0;
+    {
         dr32_pad_slot *s = &kit->pads[pad];
         dr32_pad *p = &s->params;
         float f = (float)atof(val);
@@ -251,7 +280,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         // takes one root each, so they are two keys meaning the same thing.
         if      (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
                  || !strcmp(sub, "sample_user"))  dr32_kit_load_sample(kit, pad, val);
-        else if (!strcmp(sub, "browse"))          dr32_kit_browse_select(kit, pad, atoi(val));
+        else if (!strcmp(sub, "browse"))          dr32_kit_browse_step(kit, pad, atoi(val));
         else if (!strcmp(sub, "note"))          dr32_kit_set_note(kit, pad, atoi(val));
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
         else if (!strcmp(sub, "start"))         p->play_start = f;
@@ -308,9 +337,58 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         else if (!strcmp(sub, "play"))          dr32_kit_note_on(kit, s->note, atoi(val));
         return 1;
     }
+}
 
+static int link_fans_out(const char *sub) {
+    static const char *const never[] = {
+        "sample", "sample_move", "sample_user", "note", "sending_note",
+        "browse", "play", NULL
+    };
+    for (int i = 0; never[i]; i++) if (!strcmp(sub, never[i])) return 0;
+    return strncmp(sub, "ui_", 3) != 0;   /* editor state is never per-pad */
+}
+
+int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
+    if (!kit || !key || !val) return 0;
+
+    const char *sub;
+    int pad = split_pad_key(kit, key, &sub);
+    if (pad >= 0) {
+        int r = apply_pad_field(kit, pad, sub, val);
+        /*
+         * LINK: one turn sets that parameter on EVERY pad.
+         *
+         * The fan-out re-enters the SAME setter, once per pad — not a second
+         * copy of the assignment table. A copy is how a param ends up settable
+         * one way and not the other, which this file's own send_slot_index
+         * comment already records happening once.
+         */
+        if (r && kit->link_all && link_fans_out(sub)) {
+            if (kit->link_sub[0] == '\0') {
+                /* First eligible field since arming — this is what Link is for. */
+                snprintf(kit->link_sub, sizeof(kit->link_sub), "%s", sub);
+            } else if (strcmp(kit->link_sub, sub)) {
+                /* A DIFFERENT parameter: release, and let this write land on the
+                 * focused pad alone. The write that ends the mode is never
+                 * itself linked — reaching for another knob is the signal that
+                 * you are done, not a last instruction to obey. */
+                kit->link_all = 0;
+                kit->link_sub[0] = '\0';
+                return r;
+            }
+            for (int i = 0; i < DR32_PADS; i++)
+                if (i != pad) apply_pad_field(kit, i, sub, val);
+        }
+        return r;
+    }
+
+    if (!strcmp(key, "link")) {
+        kit->link_all = (!strcmp(val, "All") || atoi(val) == 1);
+        kit->link_sub[0] = '\0';      /* arming always starts unlatched */
+        return 1;
+    }
     if (!strcmp(key, "ui_current_pad")) {
-        int v = atoi(val);
+        int v = atoi(val) - 1;                   /* 1-based on the wire */
         kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);
         return 1;
     }

@@ -1,0 +1,89 @@
+# Tag -> tested build -> GitHub release -> release.json.
+#
+# ⭑ Schwung Manager reads release.json ON THE DEFAULT BRANCH, not the GitHub
+#   releases API, so the last step is not optional bookkeeping: without it the
+#   catalog cannot see a new version at all.
+#
+# ⚠ THE DEFAULT BRANCH HERE IS `master`, not `main`. The template in the host's
+#   MODULES.md says main; this repo's default is master and the catalog entry
+#   declares `"default_branch": "master"`. All three have to agree.
+#
+# ⚠ The asset is named from the MODULE ID (`dr32-module.tar.gz`), not the repo
+#   name (`schwung-dr32`). scripts/build.sh already produces exactly that file,
+#   and the catalog's `asset_name` must match it byte for byte.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # A tag that does not pass its own suite must not become a release.
+      # ⚠ check_help SKIPS here — it measures against the HOST's font table and
+      #   there is no host checkout on the runner — and a skip counts as a pass.
+      #   That check is a content check; run it locally before tagging.
+      - name: Test
+        run: tests/run.sh
+
+      # build.sh builds its own toolchain image from scripts/Dockerfile when no
+      # local builder is present, and then ASSERTS the compiler out of the
+      # artifact's .comment section (gcc 12.2.0, debian:bookworm). A runner that
+      # somehow produced a different compiler fails here rather than shipping.
+      - name: Build
+        run: ./scripts/build.sh
+
+      - name: Verify the artifact
+        run: |
+          set -eu
+          test -f dist/dr32-module.tar.gz
+          tar tzf dist/dr32-module.tar.gz
+          for f in dr32/module.json dr32/dsp.so dr32/help.json; do
+            tar tzf dist/dr32-module.tar.gz | grep -qx "$f" || {
+              echo "ERROR: $f missing from the tarball" >&2; exit 1; }
+          done
+          # The tag and the shipped module.json must agree, or the catalog
+          # offers an update that installs a different version than it claims.
+          want="${GITHUB_REF_NAME#v}"
+          got=$(node -e 'console.log(require("./src/module.json").version)')
+          [ "$want" = "$got" ] || {
+            echo "ERROR: tag is $GITHUB_REF_NAME but src/module.json says $got" >&2; exit 1; }
+
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/dr32-module.tar.gz
+          generate_release_notes: true
+
+      - name: Point release.json at it
+        run: |
+          set -eu
+          VERSION="${GITHUB_REF_NAME#v}"
+          git fetch origin master
+          git checkout -f master
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          cat > release.json <<EOF
+          {
+            "version": "${VERSION}",
+            "download_url": "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/dr32-module.tar.gz"
+          }
+          EOF
+          git add release.json
+          git commit -m "chore: release.json for ${GITHUB_REF_NAME}" || echo "release.json already current"
+          git push origin master
