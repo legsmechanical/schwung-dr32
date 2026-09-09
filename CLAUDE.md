@@ -13,12 +13,27 @@ loads fine, logs nothing, menu does nothing.
 ## 🧭 The four pages, and why each one is shaped that way (2026-09-08)
 
 ```
-Kits    MOVE  USER                                    <- first bank; two door cells
+Kits    <items>   Acoustic · Electronic · Hybrid · My Kits   <- first bank
+  Kit   <preset>  a flat list of just that category
 Pads    PAD   SMPL  STRT  END   TRSP  DETN  CHOKE BRWS
-Pads-2  ATK   DCY   HOLD  ENV   VOL   PAN   PUNCH PTIME
-Pads-3  CUT   RES   TYPE  FILT  SNDA  SNDB  VVOL  MASTR
+Pads-2  ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT
+Pads-3  VVOL  VOL   PAN   ␣     SNDA  SNDB  PUNCH PTIME
+Master  MASTR
 ```
 
+- **DR32 opens EMPTY** (Josh, 2026-09-09). No default kit — it used to load the 707.
+  `create_instance` is on the SPI callback and a kit load reads up to 32 WAVs there, so this is
+  also the faster start. ⚠ The state BASELINE is still captured: an empty kit is a fine baseline,
+  and skipping it would leave `state_baseline` NULL and degrade every save to a full dump.
+- **The Kits browser is DR32's own CATALOGUE, not the file browser** (`dsp/dr32_kits.h`). It
+  filters by CONTENT, because the host's browser filters by extension and the user's preset tree
+  holds every instrument's presets — 365 files, 75 drum racks, measured on the device. ⚠ The scan
+  is INCREMENTAL because `get_param` is on the SPI callback; do not make it a single pass, and do
+  not scan at `create_instance` either.
+- 🔴 **The preset page auditions with NO undo.** Writing `kit_index` loads, replacing all 32 pads,
+  and the host offers no `live_preview`/`browser_hooks` there — the module cannot even tell
+  "scrolled past" from "chose this", because the click only navigates away and Back writes
+  nothing. Accepted for now; on the board.
 - **Kits is FIRST because `root` has no knobs at all.** Root's own grid page is always emitted
   first and always named "Main"; a level with no knobs emits no page (`isMenuLevel` in
   `page_plan.mjs`), so stripping root leaves the first bank to be whatever it navigates to

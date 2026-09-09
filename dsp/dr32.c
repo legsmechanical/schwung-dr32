@@ -248,7 +248,6 @@ static void dr32_sync_transport(dr32_instance *in) {
  * Core Library, and an empty rack is a perfectly valid state to open in. A slot
  * restoring saved state overwrites this a moment later, which is only the cost
  * of one kit load. */
-#define DR32_DEFAULT_KIT "/data/CoreLibrary/Track Presets/Drums/Electronic/707 Kit.json"
 
 // ------------------------------------------------------------------ v2 API
 
@@ -272,15 +271,22 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
         logmsg("dr32: instance created (NO ui_hierarchy — UI will be empty)");
     }
 
-    dr32_preset_report rep;
-    if (dr32_preset_load(&in->kit, DR32_DEFAULT_KIT, &rep)) {
-        snprintf(in->kit_path, sizeof(in->kit_path), "%s", DR32_DEFAULT_KIT);
-        dr32_capture_baseline(in);
-        char msg[DR32_MAX_PATH + 120];
-        snprintf(msg, sizeof(msg), "dr32: default kit loaded — %d pads, %d samples",
-                 rep.pads, rep.loaded);
-        logmsg(msg);
-    }
+    /*
+     * NO DEFAULT KIT — DR32 opens EMPTY (Josh, 2026-09-09).
+     *
+     * It used to load the 707 from the Core Library at create. An instrument
+     * that arrives already full decides for you, and every new slot then starts
+     * by undoing that choice; an empty rack is the honest starting point and it
+     * is also the faster one, since create_instance is on the SPI callback and
+     * a kit load reads up to 32 WAVs there.
+     *
+     * The baseline is still captured. It is what makes the state blob carry
+     * only the user's DELTAS, and an empty kit is a perfectly good baseline —
+     * every pad the user fills is a delta from it. Skipping this would leave
+     * state_baseline NULL, which degrades to a full dump: correct, but larger
+     * for no reason.
+     */
+    dr32_capture_baseline(in);
     return in;
 }
 

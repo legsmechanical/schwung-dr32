@@ -14,10 +14,17 @@ here and sounds like itself, with twice the pads.
 
 ## What it does
 
-**32 pads, Move's own kits.** Kits load from `/data/CoreLibrary/Track Presets/Drums` and
-`/data/UserData/UserLibrary/Track Presets`, with live preview while browsing. Samples can be
-swapped per pad from either library through a single **Sample** browser, which opens in the
-folder that pad's current sample came from.
+**32 pads, Move's own kits.** DR32 opens **empty** — an instrument that arrives already full
+decides for you. The **Kits** page is a category list (Acoustic · Electronic · Hybrid · My Kits)
+that opens into just that category's kits.
+
+⚠️ The list is built by DR32, not by the file browser, and that is deliberate: the browser filters
+by file EXTENSION, and the user's Track Presets folder holds every instrument's presets — on a
+real device, 365 files of which only 75 are drum racks. DR32 filters by content, so every entry
+offered will actually load.
+
+Samples are swapped per pad through a single **Sample** browser, which opens in the folder that
+pad's current sample came from.
 
 **The Drum Sampler voice**, per pad: playback region (start / length), transpose and detune, choke
 groups, velocity modulation, pan and volume, sends, and Punch. Two envelope modes (**A-H-D** and
