@@ -103,7 +103,13 @@ typedef struct {
 
 // A single folder's worth. Move's factory sample folders are far below this;
 // the cap only stops a pathological directory from allocating without bound.
-#define DR32_BROWSE_MAX 512
+/* ⚠ PAIRED WITH `browse`'s declared max in src/module.json, which must be
+ * this minus one (0..255). The knob's per-detent step is derived from its own
+ * RANGE — round(max(step, range*0.01) * 0.5) — so a range of 511 moved THREE
+ * samples per detent and only a range under 300 gives one. Cap the cache and
+ * the knob at the same number or the knob silently cannot reach the tail of a
+ * big folder. */
+#define DR32_BROWSE_MAX 256
 
 // How far apart the press signal and its note may land and still be considered
 // the same event. Blocks are 128 frames @ 44.1 kHz = ~2.9 ms, so 20 blocks is

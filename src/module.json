@@ -215,11 +215,11 @@
             },
             {
               "key": "browse",
-              "name": "Browse Folder",
+              "name": "Browse",
               "short_name": "BRWS",
               "type": "int",
               "min": 0,
-              "max": 511,
+              "max": 255,
               "default": 0
             },
             {
