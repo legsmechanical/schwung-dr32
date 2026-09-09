@@ -10,7 +10,6 @@
 
 #include <stdint.h>
 #include "dr32_voice.h"
-#include "dr32_fxbus.h"
 #include "wav.h"
 
 #define DR32_PADS 32
@@ -45,26 +44,16 @@ typedef struct {
     signed char   note_to_pad[128];   // -1 = unmapped
     float         master_gain;        // linear
     unsigned      block;              // render-block counter (choke simultaneity)
-    dr32_fxbus   *fx;                 // 2 sends (may be NULL)
-    // Per-pad render buffer, used only when a pad actually feeds a send.
+    /* Per-pad render buffer. Used only by the split render, for a pad that is
+     * routed out to a host bus: that pad has to be converted to int16 and
+     * ACCUMULATED into a buffer it may share with another pad, so it cannot
+     * render straight into the destination. Per-instance, never a static —
+     * dr32 is multi-instance and two slots would share one buffer on the audio
+     * thread. */
     float         scratch[2 * DR32_KIT_MAX_BLOCK];
-    // The KIT MIX under a per-voice render: the pads that were NOT routed out
-    // to a host bus, summed so the send returns can be added to them.
-    // Per-instance, never a static — dr32 is multi-instance and two slots would
-    // share one buffer on the audio thread.
+    /* The KIT MIX under a per-voice render: every pad NOT routed out to a host
+     * bus, summed. Same buffer role `out` has in dr32_kit_render. */
     float         split_dry[2 * DR32_KIT_MAX_BLOCK];
-    // Send params are cached so the UI can set one at a time (the bus API takes
-    // them together).
-    // See dr32_fxbus.h for the per-type slot table.
-    // ⚠ Not everything here is normalised: the Delay's synced times are a count
-    // of SIXTEENTHS (1..16) and its free times are MILLISECONDS. Both pairs are
-    // stored at once and survive a flip of the sync flag, as they do on the
-    // native device.
-    float         send_p[2][DR32_SEND_PARAMS];
-    float         bpm;                // last tempo seen, for the synced Delay
-    // Mirrors of slot state the UI reads back (the bus itself is write-only).
-    dr32_efx_type send_type[2];
-    float         send_return_ui[2];
     // Which pad the UI is editing, and whether playing a pad moves that focus.
     int           ui_current_pad;
     int           ui_auto_select_pad;
@@ -149,9 +138,6 @@ void dr32_kit_note_off(dr32_kit *k, int note);
 
 /** Silence everything immediately (kit change, panic). */
 void dr32_kit_all_off(dr32_kit *k);
-
-/** Host tempo, for the synced Delay send. Safe to call every block. */
-void dr32_kit_set_bpm(dr32_kit *k, float bpm);
 
 /** Render `frames` of interleaved stereo. Overwrites `out` (does not add). */
 void dr32_kit_render(dr32_kit *k, float *out, int frames);

@@ -57,23 +57,20 @@ static const char *const PAD_FIELDS[] = {
     "mod_target", "mod_amount",
     "fx_type", "fx_p1", "fx_p2",
     "start", "length", "punch", "punch_time",
-    "send1", "send2",
+    "send_a", "send_b",
     NULL
 };
 
-/* Kit-level fields. Sends use the canonical pN aliases rather than the
- * per-type names (`size`/`time_l`/`feedback`/...): those all resolve to the
- * same slots, but the type-specific spelling only makes sense while that type
- * is armed, so a blob written as "feedback" would be unreadable after the user
- * switched the send to a reverb. pN is the type-agnostic form. */
+/* Kit-level fields.
+ *
+ * `master` is the only one left. The send-bus fields that used to live here
+ * (`send<N>_type` / `_return` / `_sync` / `_p1..p8`) went with the internal
+ * send/return framework: a send's DESTINATION is now a host return bus, so its
+ * effect, its return level and every knob on it belong to the host's chain and
+ * are persisted there. What stays ours is each PAD's send AMOUNT, which is in
+ * PAD_FIELDS above as `send_a` / `send_b`. */
 static const char *const GLOBAL_FIELDS[] = {
     "master",
-    "send1_type", "send1_return", "send1_sync",
-    "send1_p1", "send1_p2", "send1_p3", "send1_p4",
-    "send1_p5", "send1_p6", "send1_p7", "send1_p8",
-    "send2_type", "send2_return", "send2_sync",
-    "send2_p1", "send2_p2", "send2_p3", "send2_p4",
-    "send2_p5", "send2_p6", "send2_p7", "send2_p8",
     NULL
 };
 

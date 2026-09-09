@@ -12,8 +12,9 @@ loads fine, logs nothing, menu does nothing.
 
 ## 🎛 The UI is the host's param-pages grid — DR32 ships no UI of its own (since 0.2.0, 2026-09-05)
 
-DR32 targets **upstream Schwung ≥ 1.2.0**. Every page — the 32 pads, both sends, the drum bus,
-the kit browser — is planned by the host from the hierarchy the DSP serves, using upstream's
+DR32 targets **upstream Schwung ≥ 1.2.0** (and needs **≥ 1.3.0** for its per-pad sends to reach
+the host's return buses at all). Every page — the 32 pads, the kit browser — is planned by the
+host from the hierarchy the DSP serves, using upstream's
 built-in pictures (envelope, filter curve, fader, switch, sample waveform + wave editor) and the
 1.2.0 drum-surface contract. The canvaskit Pad Editor (`canvas.js`) and the fork-only host keys
 it needed (`host_canvas_ui`, `canvas_takes_click`) are **gone**; do not bring them back.
@@ -37,10 +38,6 @@ Key facts for this module specifically:
 - **A viz group must sit contiguously on ONE row of four.** Knob order in the `pads` level is
   therefore load-bearing: attack/decay, cutoff/resonance/filter_type. Verify with
   `node tools/pages_check.mjs` (below) — it runs upstream's validator and prints every page.
-- The send pages hang off DSP-derived read-only params (`send1_mode`, `send1_env`,
-  `send1_sync`) because `visible_if` takes one condition on one param. They are served by the
-  DSP and declared nowhere; that is deliberate. Every armed type must fit ONE page of eight —
-  `pages_check` enforces it.
 
 ### How pad focus follows a hit — two regimes, and why
 
@@ -95,18 +92,48 @@ got quieter"* — nowhere near this code.
   render. A `memset` there erases another pad's audio.
 - **All 32 pads are listed, empties included.** The index IS the `voice_out[]` index, so dropping
   empties shifts every pad behind them onto the wrong buffer.
-- **Ids are `pad1..pad32` (stable); labels follow the loaded sample.** That is what lets a saved
-  bus assignment survive a kit change.
+- 🔴 **Ids are `pad0..pad31` — 0-BASED, because that is what `dr32_params.c` parses.** They were
+  `pad1..pad32` until 2026-09-08 and it was a live bug the moment `voice_send_params` arrived:
+  the host substitutes an id into `{id}_send_a` VERBATIM, so every send level landed on the pad
+  next door and `pad32_send_a` addressed nothing. **Nothing errors on a key that does not
+  resolve** — it is simply a send that never moves. `tests/test_state.c` walks id → template →
+  `set_param`/`get_param` for all 32, and carries a negative control (`pad32_send_a` must resolve
+  to nothing) so the check cannot pass vacuously. Ids stay stable across content changes; the
+  LABELS follow the loaded sample, which is what lets a saved bus assignment survive a kit change.
 - **A short `n_voices`, or a NULL entry, falls back to `main_out`** — a host that asks about fewer
   voices than we have must still hear the whole kit.
 - **Never a `static` scratch buffer.** DR32 is MULTI-INSTANCE; two slots would share it on the
   audio thread. Per-kit fields (`scratch`, `split_dry`).
 
-⭑ **The always-on Drum Bus was REMOVED in the same branch** (`7da1f5f`) and this is related, not
-incidental: it was glue over the kit's SUMMED mix, so a pad routed to a host bus left before it and
-the stage applied to some pads and not others depending on routing. A slot chain can hold a
-compressor. **Do not reintroduce a whole-instrument stage** without deciding what it means for a
-routed-out voice.
+### The third half: DR32 owns each voice's send LEVEL, and nothing else about the send
+
+`get_param("voice_send_params")` → `["{id}_send_a","{id}_send_b"]`. **Array position is the send
+index** — `[0]` is Send A, `[1]` is Send B — and more than two is refused outright by the host
+rather than truncated. The host reads these levels; it does not own them, does not draw a fader
+for them and does not save them. They are ours, on our own pad pages and in our own `state` blob,
+and they arrive from a Move kit's per-pad send amounts, which is what they have always meant on
+the hardware.
+
+⚠ The `pads` level MUST keep declaring `send_a`/`send_b` with `min`, `max` and `unit: "dB"`. That
+is where the host reads the scale from, and **if it cannot find it, it refuses the send rather
+than guessing** — nothing heard, nothing mis-scaled, no error.
+
+⚠ These keys are read **on the audio callback**, a few per frame. Keep `get_param` for them a
+constant.
+
+⭑ **DR32's own send/return framework is GONE** (2026-09-08), and so are the two stages that
+preceded it out the door: the kit inserts (2026-07-27) and the always-on Drum Bus (`7da1f5f`).
+All three went for one reason — *a second, worse copy of a facility the host provides, worse
+because it was reachable only from inside DR32.* The Drum Bus case is the sharpest: it was glue
+over the kit's SUMMED mix, so a pad routed to a host bus left before it and the stage applied to
+some pads and not others depending on routing. **Do not reintroduce a whole-instrument stage**
+without deciding what it means for a routed-out voice, and **do not reintroduce internal
+returns.** The effects themselves were not deleted — they were lifted whole into their own repo
+to become a standalone reverb module; tag **`fxbus-final`** is the pointer.
+
+⭑ Consequence, and it is deliberate: **on a host below 1.3.0 the two per-pad send knobs do
+nothing.** They turn, save and restore; nothing reads them and there is no internal return left
+to feed. Josh's ruling, 2026-09-08.
 
 Cross-host contract, and the host side of all this: `../dbxhost/docs/MODULE_BUSES.md`.
 
@@ -148,18 +175,19 @@ one-module fixture for upstream's preview tools. Look at the PNGs before a deplo
 that broke the row rule draws as plain dials with no error anywhere.
 
 **The acceptance test for the engine is a null test, not an ear test** — see
-`docs/NULL_TESTING.md`. `tools/fx_suite.sh capture` renders native references on the device
-(stack stopped for the batch, via the canonical `scripts/restart_move.sh MOVE_ACTION=stop`);
-`tools/fx_suite.sh` reports null depth per effect.
+`docs/NULL_TESTING.md`. (`tools/fx_suite.sh`, which reported null depth per SEND effect, went
+with the send effects themselves; the drum-engine half of the rig stays.)
 
 **Playback effects are DROPPED** (Josh, 2026-07-26) — every pad plays the plain sampler.
 `Effect_Type` and all nine effects' params are still parsed and preserved on save, so kits stay
 lossless and still open on native Move; only playback ignores them.
 
 If one is ever brought back, the bar in `dr32_fx_modelled()` stands: enable it only once it
-**measurably beats the dry fallback** in `tools/fx_suite.sh`, and record the number. Implementing
-from prose without a numeric target made 8-bit, Punch and FM *worse* than not implementing them.
-Pitch Env (-39.3 dB) and Loop (-35.8 dB) were working when switched off.
+**measurably beats the dry fallback**, measured, with the number recorded. Implementing from prose
+without a numeric target made 8-bit, Punch and FM *worse* than not implementing them. Pitch Env
+(-39.3 dB) and Loop (-35.8 dB) were working when switched off. (The harness that produced those
+numbers was `tools/fx_suite.sh`; it left with the send effects, so reviving an effect means
+reviving a way to score it first.)
 
 ## Device
 

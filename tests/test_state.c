@@ -272,6 +272,97 @@ int main(void) {
         }
     }
 
+    {
+        /*
+         * THE MODULE-BUS SEND CONTRACT, WALKED END TO END.
+         *
+         * `voice_send_params` publishes a key TEMPLATE ("{id}_send_a") and the
+         * host substitutes each `split_voices` id into it VERBATIM to read a
+         * real parameter off this module. Nothing checks that the result
+         * resolves: a key that addresses nothing is not an error anywhere in
+         * the host, it is simply a send that never moves.
+         *
+         * That failed silently until 2026-09-08. split_voices published
+         * `pad1`..`pad32` while dr32_params.c parses `pad<N>_` from ZERO, so
+         * every level landed on the pad NEXT DOOR and pad32_send_a addressed
+         * nothing at all.
+         *
+         * So this does not compare the two strings to constants — a test that
+         * asserted "the ids are pad0..pad31" would have passed just as happily
+         * with the templates changed instead. It SUBSTITUTES and then drives
+         * the resulting key through set_param/get_param, which is the only
+         * thing the host will actually do with them.
+         */
+        plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+        void *inst = api ? api->create_instance(".", NULL) : NULL;
+        CHECK(inst != NULL, "create_instance returned NULL");
+        if (inst) {
+            char tmpl[256] = {0}, ids[8192] = {0};
+            int nt = api->get_param(inst, "voice_send_params", tmpl, (int)sizeof(tmpl));
+            int ni = api->get_param(inst, "split_voices", ids, (int)sizeof(ids));
+            CHECK(nt > 0, "voice_send_params not served");
+            CHECK(ni > 0, "split_voices not served");
+
+            /* Array POSITION is the send index: [0] is Send A, [1] is Send B.
+             * More than two is refused outright by the host. */
+            CHECK(strcmp(tmpl, "[\"{id}_send_a\",\"{id}_send_b\"]") == 0,
+                  "voice_send_params is '%s'", tmpl);
+
+            /* Every entry must contain {id}; one without it would be a single
+             * key shared by all 32 pads, i.e. one level for the whole kit. */
+            int braces = 0;
+            for (const char *q = tmpl; (q = strstr(q, "{id}")) != NULL; q += 4) braces++;
+            CHECK(braces == 2, "%d of 2 templates carry {id}", braces);
+
+            /* Walk the ids in order and drive each substituted key. */
+            int n_ids = 0;
+            for (const char *q = ids; (q = strstr(q, "\"id\":\"")) != NULL; ) {
+                q += 6;
+                char id[64]; size_t k = 0;
+                while (*q && *q != '"' && k + 1 < sizeof id) id[k++] = *q++;
+                id[k] = '\0';
+
+                if (n_ids == 0)  CHECK(strcmp(id, "pad0") == 0,  "first id is '%s'", id);
+                if (n_ids == 31) CHECK(strcmp(id, "pad31") == 0, "last id is '%s'", id);
+
+                static const char *const suffix[2] = { "_send_a", "_send_b" };
+                for (int sd = 0; sd < 2; sd++) {
+                    char key[128], got[64];
+                    snprintf(key, sizeof key, "%s%s", id, suffix[sd]);
+                    /* A distinct value per pad and per send, so a key that
+                     * resolves to the WRONG pad reads back somebody else's
+                     * number rather than coincidentally matching. */
+                    char want[32];
+                    snprintf(want, sizeof want, "%d", -1 - n_ids - 40 * sd);
+                    api->set_param(inst, key, want);
+                    /* Cleared first: get_param leaves the buffer untouched when
+                     * it answers nothing, so without this a FAILING check
+                     * reports the PREVIOUS pad's value as what it read — a
+                     * message that misdirects whoever is reading it. */
+                    got[0] = '\0';
+                    int g = api->get_param(inst, key, got, (int)sizeof(got));
+                    CHECK(g > 0, "'%s' addresses nothing — the host would read no send here", key);
+                    CHECK(g > 0 && strcmp(got, want) == 0,
+                          "'%s' read back '%s', want '%s' (an id off by one reads the wrong pad)",
+                          key, got, want);
+                }
+                n_ids++;
+            }
+            CHECK(n_ids == 32, "split_voices published %d ids, want 32 (the index IS the "
+                               "voice_out[] index, so empties must be listed too)", n_ids);
+
+            /* THE PROBE MUST BE ABLE TO FAIL. `pad32_*` is exactly the key the
+             * old 1-based ids produced for the last pad; if this reads back a
+             * value, the check above proves nothing. */
+            char dead[64];
+            CHECK(api->get_param(inst, "pad32_send_a", dead, (int)sizeof(dead)) == 0,
+                  "pad32_send_a resolved — the negative control is broken, so the "
+                  "substitution checks above cannot be trusted");
+
+            api->destroy_instance(inst);
+        }
+    }
+
     printf("%s  (%d checks, %d failures)\n", failures ? "FAILED" : "ok", checks, failures);
     return failures ? 1 : 0;
 }

@@ -82,19 +82,17 @@ ARCH="-march=armv8-a -mtune=cortex-a72"
 echo "==> compiling with $CC / $CXX"
 mkdir -p build/obj
 
-# The engine is C11; the FX bus is C++ because the vendored reverbs are C++
-# structs (dsp/vendor/SOURCES.md). Compile each with its own front end and link
-# with g++ so the C++ runtime bits resolve.
+# DR32 is C11 throughout. It used to link with g++ because the FX bus was C++
+# (the vendored reverbs were C++ structs); that whole stage moved out with the
+# internal send/return framework, so there is no C++ translation unit left and
+# nothing here needs the C++ runtime.
 for src in dsp/dr32.c dsp/dr32_params.c dsp/dr32_kit.c dsp/dr32_voice.c \
            dsp/dr32_effects.c dsp/dr32_preset.c dsp/dr32_json.c dsp/dr32_state.c dsp/wav.c; do
     $CC -O2 -fPIC $ARCH -DNDEBUG -std=c11 -Wall -Wextra -Idsp \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
 
-$CXX -O2 -fPIC $ARCH -DNDEBUG -std=c++17 -Wall -Wextra -Idsp \
-    -c dsp/dr32_fxbus.cpp -o build/obj/dr32_fxbus.o
-
-$CXX -shared -o build/dsp.so build/obj/*.o -lm
+$CC -shared -o build/dsp.so build/obj/*.o -lm
 
 echo "==> packaging dist/"
 rm -rf "dist/${MODULE_ID}"
