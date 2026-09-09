@@ -80,6 +80,14 @@ CXX="${CROSS_PREFIX}g++"
 ARCH="-march=armv8-a -mtune=cortex-a72"
 
 echo "==> compiling with $CC / $CXX"
+# ⚠ WIPE FIRST — the link line below is `build/obj/*.o`, so an object left over
+# from a source that has since been DELETED is still globbed and still linked.
+# That is not hypothetical: removing the FX bus left a stale dr32_fxbus.o here,
+# and it went into dsp.so on the next build. A shared-library link does not have
+# to resolve undefined symbols, so it did not even fail — it just quietly
+# carried the removed reverbs and their unresolved C++ runtime references into
+# the shipped artifact. A stale artifact is a decoy; the same rule as tests/run.sh.
+rm -rf build/obj
 mkdir -p build/obj
 
 # DR32 is C11 throughout. It used to link with g++ because the FX bus was C++
