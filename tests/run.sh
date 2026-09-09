@@ -24,6 +24,11 @@ done
 # whole hierarchy, so this is not cosmetic)
 node tools/check_module_json.mjs src/module.json || fail=1
 
+# build.sh's two-pass shape: the outer pass must not fall through past its
+# `docker run`, or every line below the guard silently runs twice on the same
+# mounted volume. Greps a shell script; no Docker, no toolchain, milliseconds.
+node tools/check_build_script.mjs scripts/build.sh || fail=1
+
 # JSON layer
 node tests/roundtrip.mjs tests/fixtures || fail=1
 
