@@ -275,6 +275,18 @@
               "default": "A-H-D"
             },
             {
+              "key": "pitch_env",
+              "name": "Pitch Env",
+              "short_name": "PENV",
+              "type": "int",
+              "min": 0,
+              "max": 1,
+              "viz": {
+                "kind": "switch"
+              },
+              "default": 0
+            },
+            {
               "key": "volume",
               "name": "Volume",
               "type": "float",
@@ -424,17 +436,18 @@
             "decay",
             "hold",
             "env_mode",
+            "vel_vol",
             "volume",
             "pan",
-            "punch",
-            "punch_time",
+            "pitch_env",
             "cutoff",
             "resonance",
             "filter_type",
             "filter_on",
             "send_a",
             "send_b",
-            "vel_vol"
+            "punch",
+            "punch_time"
           ],
           "child_key_overrides": {
             "ui_current_pad": "ui_current_pad"
