@@ -272,6 +272,72 @@ int main(void) {
         }
     }
 
+    /* ---- 6b. is_loading: the pulse that makes the host RE-READ the names -- */
+    {
+        /*
+         * ⭑ SPLICING THE NAMES IS ONLY HALF THE JOB, AND THE OTHER HALF IS
+         * THIS KEY.
+         *
+         * Check 6 above proves the served hierarchy carries the new pad names
+         * the instant a sample changes — and on the device the header did not
+         * change, because the host had no reason to read it again.
+         * `armContractSettle` is called for a SELECTION (an items row, a preset
+         * step); a knob turn and a filepath commit arm nothing. The one lever a
+         * module has is `is_loading`: the shadow grid polls it and re-plans on
+         * the loading -> ready EDGE. So a sample swap has to produce an edge.
+         *
+         * ⚠ Asserting only "1 after a swap" would pass with the disarm broken,
+         * and asserting only the "0" would pass with the pulse never armed at
+         * all. The edge is the property, so both ends are walked, plus the
+         * re-arm (a browse SWEEP must cost one re-read, not one per detent)
+         * and the idle case (never "1" when nothing changed).
+         */
+        plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+        void *inst = api ? api->create_instance("src", NULL) : NULL;
+        CHECK(inst != NULL, "create_instance(\"src\") returned NULL");
+        if (inst) {
+            static int16_t sink[2 * 128];
+            char v[32];
+            #define ISLOAD() (api->get_param(inst, "is_loading", v, (int)sizeof v), v)
+            #define BLOCKS(n) do { for (int i = 0; i < (n); i++) api->render_block(inst, sink, 128); } while (0)
+
+            /* Idle: never "1", and never "" — an unserved key answers "" and
+             * the host then stops asking FOR THE LIFE OF THE COMPONENT. */
+            CHECK(!strcmp(ISLOAD(), "0"), "idle is_loading is '%s', want \"0\"", v);
+            BLOCKS(400);
+            CHECK(!strcmp(ISLOAD(), "0"), "is_loading went to '%s' with nothing changed", v);
+
+            const char *wa = "/tmp/dr32_isload_a.wav", *wb = "/tmp/dr32_isload_b.wav";
+            make_wav(wa);
+            make_wav(wb);
+
+            api->set_param(inst, "pad1_sample", wa);
+            CHECK(!strcmp(ISLOAD(), "1"), "after a sample swap is_loading is '%s', want \"1\"", v);
+
+            /* Part-way through, a SECOND swap re-arms: the window restarts, so
+             * a sweep of the browse knob still produces exactly one edge. */
+            BLOCKS(90);
+            CHECK(!strcmp(ISLOAD(), "1"), "pulse ended early — is_loading '%s' at 90 blocks", v);
+            api->set_param(inst, "pad1_sample", wb);
+            BLOCKS(90);
+            CHECK(!strcmp(ISLOAD(), "1"), "the second swap did not re-arm the window (is_loading '%s')", v);
+
+            /* Left alone, it falls back to ready — that transition IS the edge. */
+            BLOCKS(60);
+            CHECK(!strcmp(ISLOAD(), "0"), "is_loading never returned to '0' (got '%s')", v);
+            /* And it stays there: a pulse that re-armed itself would re-plan
+             * the page forever. */
+            BLOCKS(400);
+            CHECK(!strcmp(ISLOAD(), "0"), "is_loading re-armed itself (got '%s')", v);
+
+            #undef ISLOAD
+            #undef BLOCKS
+            api->destroy_instance(inst);
+            remove(wa);
+            remove(wb);
+        }
+    }
+
     {
         /*
          * THE MODULE-BUS SEND CONTRACT, WALKED END TO END.

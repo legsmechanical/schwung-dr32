@@ -64,6 +64,24 @@ Master  MASTR
   `/data`. `start`/`end` point at it via `filepath_param: "sample"` — **davebox reads that
   declaration to find the wave editor's file**, so changing the key changes what davebox
   resolves.
+- ⭑ **PAD NAMES FOLLOW THE SAMPLE ONLY BECAUSE DR32 SERVES `is_loading`.** Re-splicing
+  `child_names` is half the job: the host does **not** re-read `ui_hierarchy` after a knob turn or
+  a filepath commit — `armContractSettle` fires for a *selection* (an items row, a preset step) and
+  nothing else. The one module-side lever is `is_loading`, which the shadow grid polls every 8
+  frames and which re-plans the page on the **loading → ready EDGE**
+  (`shadow_ui_param_pages.mjs`). So a sample swap arms a **348 ms pulse** (`DR32_NAMES_SETTLE_BLOCKS
+  = 120`, re-armed on every step so a browse *sweep* costs one re-read, not one per detent) and the
+  falling edge is what makes the header change.
+  ⚠⚠ **`is_loading` must ALWAYS answer, and only ever `"1"` or `"0"`.** An unserved key reads `""`,
+  and the host then sets `_loadingInterval = Infinity` and never asks again **for the life of the
+  component**; the controller's own probe (`isLoadingSays`) latches `isLoadingSupported = false` on
+  anything but those two strings. One wrong answer and this never works again, silently.
+  ⚠ The window is a **lower bound on the host's poll**, not a load time — nothing is loading, the
+  swap already happened synchronously in `set_param`. It has to span at least one poll
+  (`LOADING_POLL_TICKS = 8` ≈ 133 ms at 60 Hz) or no edge is ever observed.
+  ⭑ Safe to serve: the component entry gate reads `is_loading` **only when `ui_hierarchy` answers
+  `""`**, which DR32 never does, so a "1" cannot hold the editor shut. `tests/test_state.c` walks
+  both ends of the edge plus the re-arm and the idle case; four mutations fire.
 - **`vel_vol` carries `viz: false`.** The fader detector claims params NAMED like a level and
   "Vel Vol" reads as one, but it is a modulation AMOUNT — a fader would be the same lie about it
   that a fader would be about Pan.

@@ -68,6 +68,12 @@ typedef struct {
      * dr32_service_pending_kit. */
     int        kit_pending;      /* -1 = nothing owed */
     unsigned   kit_pending_at;   /* render-block counter when it was last moved */
+
+    /* A per-pad sample swap changed the pad NAMES and the host has not re-read
+     * the hierarchy yet. Serving `is_loading` across the swap is how we ask it
+     * to — see the is_loading note in get_param. */
+    int        names_dirty;
+    unsigned   names_dirty_at;   /* render-block counter of the last swap */
 } dr32_instance;
 
 /** Capture the freshly-loaded kit as the state baseline. Called after every
@@ -460,13 +466,65 @@ static void set_param(void *instance, const char *key, const char *val) {
      * the contract on a settle, so this is never per-frame work. */
     size_t kl = strlen(key);
     if ((kl >= 7 && !strcmp(key + kl - 7, "_sample")) ||
-        (kl >= 7 && !strcmp(key + kl - 7, "_browse")))
+        (kl >= 7 && !strcmp(key + kl - 7, "_browse"))) {
         dr32_refresh_hierarchy(in);
+        /* Re-serving is only half of it: the host has to come back and READ.
+         * Arm the is_loading pulse, and re-arm on every step so a sweep of the
+         * browse knob costs one re-read rather than one per detent. */
+        in->names_dirty = 1;
+        in->names_dirty_at = in->kit.block;
+    }
 }
+
+/*
+ * How long `is_loading` stays "1" after a pad's sample changes.
+ *
+ * ⚠ THIS IS A LOWER BOUND ON THE HOST'S POLL, NOT A LOAD TIME. Nothing is
+ * loading: the swap already happened, synchronously, in set_param. The pulse
+ * exists so the host SEES a 1 -> 0 edge, and it only sees one if at least one
+ * poll lands inside the window. The shadow grid polls is_loading every
+ * LOADING_POLL_TICKS = 8 frames (~133 ms at 60 Hz), so 120 blocks
+ * (120 x 2.902 ms = 348 ms) fits two polls with room for a slow frame.
+ */
+#define DR32_NAMES_SETTLE_BLOCKS 120
 
 static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in || !key || !buf || buf_len <= 0) return 0;
+
+    /*
+     * ⭑ THE PAD NAMES REFRESH BECAUSE OF THIS KEY, AND ONLY BECAUSE OF IT.
+     *
+     * dr32_refresh_hierarchy re-serves the names the moment a sample changes,
+     * but the host does not re-read `ui_hierarchy` on a knob turn or a
+     * filepath commit — armContractSettle is called for a SELECTION (an items
+     * row, a preset step), never for either of those. The one module-side
+     * lever is `is_loading`: the shadow grid polls it and calls
+     * reloadIfChanged on the loading -> ready edge
+     * (shadow_ui_param_pages.mjs, "Only re-plan on the loading->ready edge").
+     * So a sample swap fakes exactly one such edge and the header follows.
+     *
+     * ⚠ ANSWER IT ALWAYS, AND ONLY EVER "1" OR "0". An unserved key reads ""
+     * and the host stops asking FOR THE LIFE OF THE COMPONENT
+     * (_loadingInterval = Infinity) — one "" and this never works again. The
+     * controller's own probe (isLoadingSays) is stricter still: anything but
+     * "1"/"0" sets isLoadingSupported = false permanently.
+     *
+     * Cost of answering: one extra param read per 8 frames while a DR32 page
+     * is on screen, which is why this is two integer compares and no more.
+     */
+    if (!strcmp(key, "is_loading")) {
+        if (in->names_dirty) {
+            if (in->kit.block - in->names_dirty_at < DR32_NAMES_SETTLE_BLOCKS)
+                return snprintf(buf, buf_len, "1");
+            /* Window elapsed: report ready ONCE and disarm. If the page was
+             * closed through the whole window this is the first read, the host
+             * never saw a "1", and no reload fires — correct, because opening
+             * a page reads the hierarchy anyway. */
+            in->names_dirty = 0;
+        }
+        return snprintf(buf, buf_len, "0");
+    }
 
     if (!strcmp(key, "ui_hierarchy")) {
         if (!in->ui_hierarchy || in->ui_hierarchy_len >= buf_len) return 0;
