@@ -55,17 +55,38 @@ if [ -z "${CROSS_PREFIX:-}" ] && [ ! -f /.dockerenv ]; then
     # (The old comment here said DR32 needs g++ because the FX bus is C++. That
     # stopped being true on 2026-09-08 when the FX bus left; there is no C++ in
     # this module any more, which is why the probe is for gcc.)
-    BUILDER="${DR32_BUILDER:-schwung-builder}"
-    if ! docker image inspect "$BUILDER" >/dev/null 2>&1 ||
-       ! docker run --rm "$BUILDER" sh -c 'command -v aarch64-linux-gnu-gcc' >/dev/null 2>&1; then
-        echo "==> preferred image '$BUILDER' unusable; looking for another" >&2
-        BUILDER=""
-        for img in davebox-builder schwung-builder move-anything-builder; do
-            docker image inspect "$img" >/dev/null 2>&1 || continue
-            if docker run --rm "$img" sh -c 'command -v aarch64-linux-gnu-gcc' >/dev/null 2>&1; then
-                BUILDER="$img"; break
-            fi
-        done
+    # ⚠⚠ DO NOT GATE ON `docker image inspect`. It fails while the image is
+    # present and runnable — observed 5/5 on schwung-builder at a moment when
+    # `docker run schwung-builder` worked and reported gcc 12.2.0. That false
+    # negative is the ROOT CAUSE of the whole silent-compiler episode: the old
+    # loop used inspect as its presence test, it failed, and the build fell
+    # through to an image with a different gcc without anything saying so.
+    #
+    # The run-probe IS the presence test and the capability test at once. If the
+    # container starts and has the cross compiler, the image is usable; nothing
+    # else needs asking.
+    usable() { docker run --rm "$1" sh -c 'command -v aarch64-linux-gnu-gcc' >/dev/null 2>&1; }
+
+    BUILDER=""
+    for img in "${DR32_BUILDER:-schwung-builder}" schwung-builder davebox-builder move-anything-builder; do
+        [ -n "$img" ] || continue
+        if usable "$img"; then BUILDER="$img"; break; fi
+    done
+
+    # Nothing usable: distinguish a full VM (the documented cause) from a
+    # genuinely missing toolchain, then build our own rather than give up.
+    if [ -z "$BUILDER" ]; then
+        free_kb=$(docker run --rm ubuntu:22.04 df -k / 2>/dev/null | awk 'NR==2{print $4}')
+        if [ -n "$free_kb" ] && [ "$free_kb" -lt 262144 ]; then
+            echo "ERROR: Docker VM disk is nearly full (${free_kb} KB free)." >&2
+            echo "       Reclaim space first:  docker builder prune -af" >&2
+            exit 1
+        fi
+        echo "==> no usable toolchain image; building one" >&2
+        docker build -q -t move-anything-builder -f scripts/Dockerfile scripts >/dev/null || {
+            echo "ERROR: could not build a toolchain image" >&2; exit 1; }
+        BUILDER=move-anything-builder
+        usable "$BUILDER" || { echo "ERROR: built image lacks the cross compiler" >&2; exit 1; }
     fi
 
     echo "==> using $BUILDER" 
