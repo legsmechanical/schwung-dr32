@@ -165,35 +165,58 @@ check('landing on a folder leaves the pad alone', params.pad3_sample, '/data/Cor
  *
  * ⚠⚠ THE NOTE IS A DOORBELL. 68..99 is the physical GRID POSITION, in a
  * different order from the kit's pads, so the browser must NOT derive a pad
- * from it -- it asks the module, which moved its own focus from the note it
- * received. So the fixture answers `ui_current_pad` and the note number is
- * deliberately UNRELATED to it: a browser that went back to arithmetic would
- * land on pad 1 here and fail. */
-/* ⚠⚠ AND IT MUST VOUCH. `host_vouches` is a one-way latch: once ANY host has
- * vouched, the DSP stops moving focus on a bare note-on, so a browser that only
- * READS focus works perfectly until the first trip out to the knob grid and
- * silently stops afterwards. That is the defect this half pins -- the fixture
- * only moves the focus when the vouch arrives, exactly as the DSP does. */
+ * from it -- it asks the module, which owns the note->pad map. The note numbers
+ * below are deliberately UNRELATED to the pads: a browser that went back to
+ * arithmetic fails here.
+ *
+ * ⚠⚠ AND IT MUST VOUCH -- BUT ONLY WHERE VOUCHING IS WANTED. Two host
+ * behaviours, and the browser has to work on both:
+ *
+ *   stock    nothing moves focus on a bare note once `host_vouches` latches, so
+ *            the browser must say "a finger did that" (`ui_live_press`) and the
+ *            DSP matches it to the note it just played.
+ *   dAVEBOx  it emits the pad notes itself, so it NAMES the note and focus has
+ *            already moved by the time we see the press. A vouch there finds the
+ *            note consumed, ARMS FORWARD, and is claimed by the next note to
+ *            arrive -- a sequenced one, moving focus to a pad nobody touched.
+ *
+ * So: read first, vouch only if focus did not move. Both halves are pinned. */
 let vouched = 0;
 const dspFocus = { pad: '1' };
 ctx.setParam = (k, v) => {
     params[k] = String(v);
+    /* The DSP's own rule: a vouch is matched against the note just played. */
     if (k === 'ui_live_press') { vouched++; params.ui_current_pad = dspFocus.pad; }
     return true;
 };
 
+/* --- a stock-shaped host: focus does NOT move until we vouch --- */
 params.pad7_sample = '/data/UserData/UserLibrary/Mine/own.wav';
-dspFocus.pad = '7';                   /* the note the DSP just played */
-params.ui_current_pad = '1';          /* focus has NOT moved on its own */
-pad(0);                               /* note 68 -- NOT pad 68, and not pad 1 */
-check('the press was vouched for', vouched, 1);
+params.ui_current_pad = String(ctx.state.pad);   /* focus is where we think it is */
+dspFocus.pad = '7';                              /* the note the DSP just played */
+pad(0);                                          /* note 68 -- not pad 68, not pad 1 */
+check('a stock-shaped host gets a vouch', vouched, 1);
 check('a loaded pad takes the browser with it', here(), '/data/UserData/UserLibrary/Mine');
 check('…and onto its own sample', at(), 'own.wav');
 check('…and the browser is filling the pad the MODULE named', ctx.state.pad, 7);
-dspFocus.pad = '9';                   /* an empty pad */
+
+/* --- an empty pad: follow the focus, leave the listing alone --- */
+params.ui_current_pad = String(ctx.state.pad);
+dspFocus.pad = '9';
 pad(3);
 check('an empty pad does NOT move the listing', here(), '/data/UserData/UserLibrary/Mine');
 check('…but is the pad being filled', ctx.state.pad, 9);
+
+/* --- a dAVEBOx-shaped host: focus has ALREADY moved, so do not vouch ---
+ * 🔴 THE ONE THAT MATTERS. A redundant vouch here arms a claim that the next
+ * note takes, so a sequencer playing under the browser would drag focus to a
+ * pad nobody touched. */
+const before = vouched;
+params.ui_current_pad = '7';           /* the host named the note; focus moved */
+pad(5);
+check('a host that already moved focus gets NO vouch', vouched - before, 0);
+check('…and the browser follows it anyway', ctx.state.pad, 7);
+check('…back onto that pad\'s folder', here(), '/data/UserData/UserLibrary/Mine');
 
 /* ── 8. Back walks up the tree, and only leaves at the top ────────────── */
 /* The exit contract on a host that knows `enterable`: true means "I went up",
@@ -223,7 +246,11 @@ check('...and stays put, for the host to close', here(), '');
     while (here()) navLeft();
     cursorTo('Move Library'); click(); cursorTo('Drums/'); click();
     cursorTo('Kicks/'); click(); cursorTo('kick2.wav');
-    check('the scroll loaded it', params.pad9_sample, '/data/CoreLibrary/Samples/Drums/Kicks/kick2.wav');
+    /* Whichever pad the browser is filling -- section 7 leaves it wherever the
+     * host's focus last pointed, and hardcoding one here made this fail for a
+     * reason that had nothing to do with clicking. */
+    const padKey = 'pad' + ctx.state.pad + '_sample';
+    check('the scroll loaded it', params[padKey], '/data/CoreLibrary/Samples/Drums/Kicks/kick2.wav');
     click();
     check('clicking a sample closes the browser', closed, 1);
     cursorTo('..'); click();
@@ -232,7 +259,7 @@ check('...and stays put, for the host to close', here(), '');
     delete ctx.close;
     cursorTo('Kicks/'); click(); cursorTo('kick1.wav'); click();
     check('a host without ctx.close still confirms without throwing',
-          params.pad9_sample, '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
+          params[padKey], '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
 }
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');

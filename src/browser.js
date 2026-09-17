@@ -330,8 +330,29 @@ globalThis.canvas_overlay = {
              * moved by the time we ask. Both are legal here -- onMidi is not a
              * draw-path hook, so the accessors are present.
              */
-            ctx.setParam('ui_live_press', '1');
-            const pad = focusedPad(ctx);
+            /*
+             * ⭐ ASK BEFORE VOUCHING, because on some hosts focus has ALREADY
+             * moved and a second claim is actively harmful.
+             *
+             * dAVEBOx emits the pad notes itself, so it knows exactly which
+             * note it sent and NAMES it (`ui_live_note`) -- deterministic,
+             * where a vouch is a race it measured itself losing 2 presses in
+             * 16. By the time we see the press, focus is already correct. A
+             * vouch on top of that finds the note consumed, ARMS FORWARD, and
+             * is then claimed by the next note to arrive -- a sequenced one,
+             * moving focus to a pad nobody touched.
+             *
+             * So: read first. If focus moved, follow it and say nothing.
+             */
+            let pad = focusedPad(ctx);
+            if (pad === st.pad) {
+                /* Focus did NOT move, so this host is leaving it to us. Vouch,
+                 * and read back -- setParam and getParam are both synchronous
+                 * round trips, so the vouch has landed and the DSP has matched
+                 * it against the note it just played before we ask again. */
+                ctx.setParam('ui_live_press', '1');
+                pad = focusedPad(ctx);
+            }
             if (pad === st.pad) return;
             st.pad = pad;
             const cur = ctx.getParam('pad' + pad + '_sample') || '';
