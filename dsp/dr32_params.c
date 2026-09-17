@@ -7,6 +7,7 @@
 
 #include "dr32_params.h"
 
+#include <math.h>      /* log10f/powf — the peak_db <-> peak_gain view */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -213,6 +214,26 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "cutoff"))      return snprintf(buf, buf_len, "%g", (double)p->cutoff);
         if (!strcmp(sub, "resonance"))   return snprintf(buf, buf_len, "%g", (double)p->resonance);
         if (!strcmp(sub, "peak_gain"))   return snprintf(buf, buf_len, "%g", (double)p->peak_gain);
+        /*
+         * `peak_db` is the UI's view of `peak_gain`, in the dB the Move shows.
+         *
+         * ⚠ TWO KEYS, ONE VALUE, AND ONLY ONE OF THEM IS THE TRUTH. `peak_gain`
+         * is what the engine reads, what `state` persists and what the
+         * .ablpreset carries as `Voice_Filter_PeakGain`; peak_db must never be
+         * persisted beside it or a restore would set the same thing twice, the
+         * second write silently winning.
+         *
+         * The conversion is not a fit: the Peak kernel's output rewrites as
+         * `hp + lp + peak_coef*bp` (the SVF identity x = hp + k*bp + lp), a
+         * bell whose centre gain IS the normalized value, unity at DC and
+         * Nyquist. So dB = 20*log10(peak_gain) exactly, which is also why 1.0
+         * is flat rather than 0. The Move's range is -12..+12 dB (Josh, from
+         * the device), i.e. 0.25119 .. 3.98107.
+         */
+        if (!strcmp(sub, "peak_db")) {
+            float g = p->peak_gain > 1e-6f ? p->peak_gain : 1e-6f;
+            return snprintf(buf, buf_len, "%g", (double)(20.0f * log10f(g)));
+        }
         if (!strcmp(sub, "mod_target"))  return snprintf(buf, buf_len, "%s", mod_target_name(p->mod_target));
         if (!strcmp(sub, "mod_amount"))  return snprintf(buf, buf_len, "%g", (double)p->mod_amount);
         if (!strcmp(sub, "pitch_env"))   return snprintf(buf, buf_len, "%d", p->pitch_to_env);
@@ -308,6 +329,7 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         else if (!strcmp(sub, "cutoff"))        p->cutoff = f;
         else if (!strcmp(sub, "resonance"))     p->resonance = f;
         else if (!strcmp(sub, "peak_gain"))     p->peak_gain = f;
+        else if (!strcmp(sub, "peak_db"))       p->peak_gain = powf(10.0f, f / 20.0f);
         else if (!strcmp(sub, "mod_target"))    p->mod_target = (dr32_mod_target)parse_mod_target(val);
         else if (!strcmp(sub, "mod_amount"))    p->mod_amount = f;
         else if (!strcmp(sub, "pitch_env"))     p->pitch_to_env = atoi(val) ? 1 : 0;

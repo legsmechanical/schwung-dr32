@@ -136,8 +136,38 @@ const PAD_LEVELS = ['pads', 'pad_shape', 'pad_mix'];
         for (const k of knobs)
             if (!declared.includes(k) && !(lvl.child_key_overrides || {})[k])
                 errors.push(`levels.${name} puts "${k}" on a knob but declares it nowhere`);
-        if (knobs.length > 8)
-            errors.push(`levels.${name} has ${knobs.length} knobs; a bank that overflows 8 becomes two pages and stops being one bank`);
+        /*
+         * Count what can be on screen AT ONCE, not what is declared.
+         *
+         * Two knobs gating on the same param with complementary conditions are
+         * one SLOT: the Shape bank's RES and GAIN swap places with the filter
+         * type, the way the Move's own Peak filter turns Resonance into Gain.
+         * The planner filters hidden keys before it chunks, so nine declared
+         * knobs with one such pair is eight cells and one page.
+         *
+         * ⚠ pages_check will still say "level-over-eight" for the same level,
+         * and that is not a disagreement: it evaluates visible_if statically
+         * with nothing to read, and the host FAILS OPEN on an unanswerable
+         * condition. On the device filter_type is served and answers.
+         */
+        const gate = (k) => ((lvl.params || []).find((p) => p && p.key === k) || {}).visible_if || null;
+        const paired = new Set();
+        for (const a of knobs) {
+            const ga = gate(a);
+            if (!ga || paired.has(a)) continue;
+            for (const b of knobs) {
+                if (b === a || paired.has(b)) continue;
+                const gb = gate(b);
+                if (!gb || gb.param !== ga.param) continue;
+                const complementary =
+                    (ga.equals !== undefined && gb.not_equals !== undefined && ga.equals === gb.not_equals) ||
+                    (gb.equals !== undefined && ga.not_equals !== undefined && gb.equals === ga.not_equals);
+                if (complementary) { paired.add(a); paired.add(b); break; }
+            }
+        }
+        const atOnce = knobs.length - paired.size / 2;
+        if (atOnce > 8)
+            errors.push(`levels.${name} has ${atOnce} knobs on screen at once; a bank that overflows 8 becomes two pages and stops being one bank`);
     }
 }
 
