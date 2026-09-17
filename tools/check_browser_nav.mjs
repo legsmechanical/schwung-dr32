@@ -291,17 +291,25 @@ check('...and stays put, for the host to close', here(), '');
     /* The escape hatch is advertised only while Shift is DOWN -- a permanent
      * hint for "when navigation goes wrong" is clutter on a screen that works.
      * The gesture itself is the HOST's; we only watch the key. */
+    let shift = false;
+    dctx.shiftHeld = () => shift;
     drawn.length = 0;
     ov.draw(dctx);
     check('Shift up: no jog hint', drawn.join(' ').includes('PAGES'), false);
-    cc(49, 127);
+    shift = true;
     drawn.length = 0;
     ov.draw(dctx);
     check('Shift down: the escape hatch is advertised', drawn.join(' ').includes('PAGES'), true);
-    cc(49, 0);
+    shift = false;
     drawn.length = 0;
     ov.draw(dctx);
     check('Shift up again: it goes away', drawn.join(' ').includes('PAGES'), false);
+
+    /* A host too old to offer it must not throw -- the hint simply never shows. */
+    delete dctx.shiftHeld;
+    drawn.length = 0;
+    ov.draw(dctx);
+    check('a host without ctx.shiftHeld still draws', drawn.join(' ').includes('BACK'), true);
 }
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');

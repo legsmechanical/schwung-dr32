@@ -43,7 +43,6 @@ const AUDIO = ['.wav', '.aif', '.aiff'];
  * against the wrong tree — the loader only rewrites /data/UserData/schwung/. */
 const CC_JOG   = 14;
 const CC_CLICK = 3;
-const CC_SHIFT = 49;   /* held: the host's Shift+jog escape hatch is live */
 
 /* Hardware pads arrive as notes 68..99 -- the PHYSICAL grid position, which is
  * not the kit's note map (36..67) and not the pad number either. We use it only
@@ -270,7 +269,12 @@ function drawHints(ctx, st) {
     const back = st.dir ? 'UP' : 'EXIT';
     const bw = hintWidth('BACK', back);
     drawHint(ctx, ctx.width - bw, 'BACK', back);
-    if (st.shift) drawHint(ctx, 2, 'JOG', 'PAGES');
+    /* ⚠ ASK THE HOST, do not watch CC 49. The host reads Shift from the shim's
+     * shared memory; the CC does not reliably reach a canvas. Watching the byte
+     * worked under dAVEBOx, which forwards it, and did nothing at all on stock
+     * -- reported from the device as the footer never changing. */
+    const shift = typeof ctx.shiftHeld === 'function' && ctx.shiftHeld();
+    if (shift) drawHint(ctx, 2, 'JOG', 'PAGES');
 }
 
 globalThis.canvas_overlay = {
@@ -426,11 +430,6 @@ globalThis.canvas_overlay = {
             audition(ctx, st);
             return;
         }
-
-        /* The host owns Shift+jog (it closes us and pages on). We only WATCH
-         * Shift so the hint row can say the way out is live while it is held --
-         * the gesture is never ours to handle. */
-        if (d[1] === CC_SHIFT) { st.shift = d[2] > 0; return; }
 
         if (d[1] === CC_CLICK && d[2] > 0) enterRow(ctx, st);
     },
