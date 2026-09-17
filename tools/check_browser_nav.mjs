@@ -53,7 +53,11 @@ let params = {};
 const ctx = {
     width: 128, height: 64,
     state: {},
-    clear() {}, print() {}, fillRect() {},
+    clear() {}, print() {}, fillRect() {}, setPixel() {}, drawLine() {},
+    /* The host's canvas ctx measures text; the browser lays its hint pills out
+     * from it. Six per glyph is the device font's widest advance, which is what
+     * the module falls back to when a host does not offer one. */
+    measureText: (t) => String(t).length * 6,
     getParam: (k) => (k in params ? params[k] : ''),
     setParam: (k, v) => { params[k] = String(v); return true; },
 };
@@ -275,7 +279,8 @@ check('...and stays put, for the host to close', here(), '');
 {
     const drawn = [];
     const dctx = Object.assign({}, ctx, {
-        clear() {}, fillRect() {}, drawLine() {},
+        clear() {}, fillRect() {}, drawLine() {}, setPixel() {},
+        measureText: (t) => String(t).length * 6,
         print: (x, y, t) => { if (y >= 50) drawn.push(String(t)); },
     });
     while (here()) navLeft();
@@ -310,6 +315,28 @@ check('...and stays put, for the host to close', here(), '');
     drawn.length = 0;
     ov.draw(dctx);
     check('a host without ctx.shiftHeld still draws', drawn.join(' ').includes('BACK'), true);
+
+    /* ⭐ THE PILL IS THE SHAPE, and it must be laid out from a MEASUREMENT.
+     * Stock grew measureText alongside this work; before that only dAVEBOx had
+     * one, so a module that measured was right on one host and guessing on the
+     * other. A host without it must still draw -- a pixel loose, never absent. */
+    const boxes = [];
+    const pctx = Object.assign({}, dctx, {
+        fillRect: (x, y, w, h, v) => { if (y >= 50) boxes.push({ x, y, w, h, v }); },
+    });
+    while (here()) navLeft();
+    boxes.length = 0; drawn.length = 0;
+    ov.draw(pctx);
+    check('the key sits in a filled pill', boxes.length, 1);
+    const pill = boxes[0] || {};
+    check('...one row tall, at the hint row', pill.h, 9);
+    /* BACK is pinned to the right edge, as on every other screen. */
+    check('...and the pill is right of centre', pill.x > 64, true);
+
+    delete pctx.measureText;
+    boxes.length = 0;
+    ov.draw(pctx);
+    check('a host without measureText still draws the pill', boxes.length, 1);
 }
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');

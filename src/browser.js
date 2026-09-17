@@ -69,8 +69,6 @@ const VISIBLE = 4;
  * pixel of drift cannot matter.
  */
 const HINT_Y = 55;
-const GLYPH_W = 6;
-const HINT_PAD = 2;
 
 function isAudio(name) {
     const dot = name.lastIndexOf('.');
@@ -239,42 +237,76 @@ function goUp(st) {
 }
 
 /*
- * One hint: the key in a filled pill, the action beside it.
+ * A hint, drawn the way the host's own hint rows are drawn.
  *
- * The pill is what makes a row of hints parseable -- without it "BACK UP JOG
- * PAGES" reads as one run of words. Returns the width drawn, so the caller can
- * pack them right to left.
+ * ⭐ THE SHAPE IS THE DEVICE'S, THE WORDS ARE OURS. `show_footer: false` means
+ * the host paints nothing here, so this row is entirely the module's -- but a
+ * row that looked homemade would read as a different device. So the metrics are
+ * lifted from the real thing (ui_movy's drawKitHintRow and the host's own
+ * drawFooter): the KEY sits inverted in a filled pill, 2px of padding each
+ * side, all four corners knocked out, and the ACTION follows 4px later in plain
+ * ink.
+ *
+ * ⚠ The pill is what makes a row parseable. Without it "BACK UP JOG PAGES" is
+ * an unbroken run of words -- which is the reason the host's own rows have one.
+ *
+ * ⓘ The FONT differs from the host's rows (this is the device font; those are
+ * movy's 4x5, which a canvas cannot reach). That is the right trade: the rest
+ * of this browser is drawn in the device font, so the row matches the SCREEN it
+ * belongs to rather than a row on some other screen.
  */
-function hintWidth(key, action) {
-    return key.length * GLYPH_W + HINT_PAD * 2 + 1 + action.length * GLYPH_W;
+const HINT_PAD = 2;     /* inside the pill, each side   -- MV_HINT_PAD */
+const HINT_GAP = 4;     /* pill to action text          -- MV_HINT_GAP */
+const HINT_H   = 9;     /* device font (7) + 1 above and below */
+
+/*
+ * ⚠ measureText, with a fallback. The host's canvas ctx grew it alongside this
+ * work; before that only dAVEBOx offered one, so a module that measured was
+ * correct on one host and guessing on the other. 6 is the device font's widest
+ * advance, so the fallback errs wide -- a pill a pixel loose reads fine, one a
+ * pixel tight clips the glyph.
+ */
+function textW(ctx, t) {
+    const s = String(t);
+    return typeof ctx.measureText === 'function' ? ctx.measureText(s) : s.length * 6;
+}
+
+function hintWidth(ctx, key, action) {
+    return textW(ctx, key) + HINT_PAD * 2 + HINT_GAP + textW(ctx, action);
 }
 
 function drawHint(ctx, x, key, action) {
-    const kw = key.length * GLYPH_W + HINT_PAD * 2;
-    ctx.fillRect(x, HINT_Y - 1, kw, 9, 1);
-    ctx.print(x + HINT_PAD, HINT_Y, key, 0);
-    ctx.print(x + kw + 1, HINT_Y, action, 1);
-    return hintWidth(key, action);
+    const kw = textW(ctx, key) + HINT_PAD * 2;
+    ctx.fillRect(x, HINT_Y, kw, HINT_H, 1);
+    /* The notch every filled shape on this device wears: one pixel off each
+     * corner, so the pill reads as a shape rather than a block. */
+    ctx.setPixel(x, HINT_Y, 0);
+    ctx.setPixel(x + kw - 1, HINT_Y, 0);
+    ctx.setPixel(x, HINT_Y + HINT_H - 1, 0);
+    ctx.setPixel(x + kw - 1, HINT_Y + HINT_H - 1, 0);
+    ctx.print(x + HINT_PAD, HINT_Y + 1, key, 0);
+    ctx.print(x + kw + HINT_GAP, HINT_Y + 1, action, 1);
+    return hintWidth(ctx, key, action);
 }
 
 /*
  * What Back will do, and -- while Shift is held -- that there is a way out.
  *
- * BACK is pinned to the right edge, which is where it sits on every other
- * screen on this device. The escape hatch is shown only while Shift is DOWN: a
- * permanent hint for "when navigation goes wrong" would be clutter on a screen
- * that works.
+ * BACK is pinned to the RIGHT EDGE, which is where it sits on every other
+ * screen on this device, and the escape hatch goes left of it. Shown only while
+ * Shift is DOWN: a permanent hint for "when navigation goes wrong" would be
+ * clutter on a screen that works.
  */
 function drawHints(ctx, st) {
     const back = st.dir ? 'UP' : 'EXIT';
-    const bw = hintWidth('BACK', back);
-    drawHint(ctx, ctx.width - bw, 'BACK', back);
+    drawHint(ctx, ctx.width - hintWidth(ctx, 'BACK', back) - 1, 'BACK', back);
     /* ⚠ ASK THE HOST, do not watch CC 49. The host reads Shift from the shim's
      * shared memory; the CC does not reliably reach a canvas. Watching the byte
      * worked under dAVEBOx, which forwards it, and did nothing at all on stock
      * -- reported from the device as the footer never changing. */
-    const shift = typeof ctx.shiftHeld === 'function' && ctx.shiftHeld();
-    if (shift) drawHint(ctx, 2, 'JOG', 'PAGES');
+    if (typeof ctx.shiftHeld === 'function' && ctx.shiftHeld()) {
+        drawHint(ctx, 1, 'JOG', 'PAGES');
+    }
 }
 
 globalThis.canvas_overlay = {
