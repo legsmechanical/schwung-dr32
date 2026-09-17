@@ -262,28 +262,47 @@ check('...and stays put, for the host to close', here(), '');
           params[padKey], '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
 }
 
-/* ── 10. the footer asks whether Back would climb ─────────────────────── */
-/* The host draws ↰ when canGoUp is true and EXIT when it is not, so this is
- * what makes the Back hint tell the truth. It must agree with handleBack
- * EXACTLY -- an arrow promising a level that Back then leaves from is worse
- * than no arrow at all. */
-while (here()) navLeft();
-check('at the picker, Back would leave', ov.canGoUp(ctx), false);
-cursorTo('Move Library'); click();
-check('inside a library, Back would climb', ov.canGoUp(ctx), true);
-cursorTo('Drums/'); click();
-check('deeper still', ov.canGoUp(ctx), true);
-/* The agreement, walked the whole way out: canGoUp is true exactly while
- * handleBack returns true. */
-let agreed = true;
-for (let i = 0; i < 6; i++) {
-    const said = ov.canGoUp(ctx);
-    const did = ov.handleBack(ctx);
-    if (said !== did) agreed = false;
-    if (!did) break;
+/* ── 10. the browser draws its OWN hint row ───────────────────────────── */
+/*
+ * ⭐ THE MODULE OWNS THE SCREEN. A first cut had the HOST draw these hints,
+ * fed by a `canGoUp` hook -- and "up a level" / "exit" are a file browser's
+ * vocabulary, meaningless to a scope or a meter. Josh: "baking ui elements into
+ * the canvas feature was a mistake and misses the whole point of the canvas."
+ * So `show_footer: false` turns the host's footer off and we draw our own.
+ *
+ * Pinned on what is DRAWN, because that is the only place the words exist now.
+ */
+{
+    const drawn = [];
+    const dctx = Object.assign({}, ctx, {
+        clear() {}, fillRect() {}, drawLine() {},
+        print: (x, y, t) => { if (y >= 50) drawn.push(String(t)); },
+    });
+    while (here()) navLeft();
+    ov.draw(dctx);
+    check('at the picker, the hint says EXIT', drawn.join(' ').includes('EXIT'), true);
+
+    drawn.length = 0;
+    cursorTo('Move Library'); click();
+    ov.draw(dctx);
+    check('inside a library, it says UP', drawn.join(' ').includes('UP'), true);
+    check('...and not EXIT', drawn.join(' ').includes('EXIT'), false);
+
+    /* The escape hatch is advertised only while Shift is DOWN -- a permanent
+     * hint for "when navigation goes wrong" is clutter on a screen that works.
+     * The gesture itself is the HOST's; we only watch the key. */
+    drawn.length = 0;
+    ov.draw(dctx);
+    check('Shift up: no jog hint', drawn.join(' ').includes('PAGES'), false);
+    cc(49, 127);
+    drawn.length = 0;
+    ov.draw(dctx);
+    check('Shift down: the escape hatch is advertised', drawn.join(' ').includes('PAGES'), true);
+    cc(49, 0);
+    drawn.length = 0;
+    ov.draw(dctx);
+    check('Shift up again: it goes away', drawn.join(' ').includes('PAGES'), false);
 }
-check('canGoUp and handleBack never disagree', agreed, true);
-check('…and we ended at the picker', here(), '');
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
 process.exit(fail ? 1 : 0);

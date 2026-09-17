@@ -43,6 +43,7 @@ const AUDIO = ['.wav', '.aif', '.aiff'];
  * against the wrong tree — the loader only rewrites /data/UserData/schwung/. */
 const CC_JOG   = 14;
 const CC_CLICK = 3;
+const CC_SHIFT = 49;   /* held: the host's Shift+jog escape hatch is live */
 
 /* Hardware pads arrive as notes 68..99 -- the PHYSICAL grid position, which is
  * not the kit's note map (36..67) and not the pad number either. We use it only
@@ -50,10 +51,27 @@ const CC_CLICK = 3;
 const PAD_NOTE_LO = 68;
 const PAD_NOTE_HI = 99;
 
-/* 128x64, 1-bit. Four rows fit under the title with the count beneath. */
+/* 128x64, 1-bit. Four rows fit under the title with the hint row beneath. */
 const ROW_H = 10;
 const TITLE_H = 12;
 const VISIBLE = 4;
+
+/*
+ * The hint row we draw ourselves.
+ *
+ * ⭐ OURS, NOT THE HOST'S. `show_footer: false` turns the host's footer off,
+ * because a canvas is a screen the MODULE owns and the host has no business
+ * painting a vocabulary on it -- "up a level" means something here and nothing
+ * on a scope or a meter. So the words are ours and they are about this browser.
+ *
+ * ⚠ NO measureText. The host's canvas ctx does not offer one (davebox's does,
+ * which is exactly the sort of difference not to lean on), so text is laid out
+ * from the device font's fixed 6px advance. Keep the hints short enough that a
+ * pixel of drift cannot matter.
+ */
+const HINT_Y = 55;
+const GLYPH_W = 6;
+const HINT_PAD = 2;
 
 function isAudio(name) {
     const dot = name.lastIndexOf('.');
@@ -221,6 +239,40 @@ function goUp(st) {
     return true;
 }
 
+/*
+ * One hint: the key in a filled pill, the action beside it.
+ *
+ * The pill is what makes a row of hints parseable -- without it "BACK UP JOG
+ * PAGES" reads as one run of words. Returns the width drawn, so the caller can
+ * pack them right to left.
+ */
+function hintWidth(key, action) {
+    return key.length * GLYPH_W + HINT_PAD * 2 + 1 + action.length * GLYPH_W;
+}
+
+function drawHint(ctx, x, key, action) {
+    const kw = key.length * GLYPH_W + HINT_PAD * 2;
+    ctx.fillRect(x, HINT_Y - 1, kw, 9, 1);
+    ctx.print(x + HINT_PAD, HINT_Y, key, 0);
+    ctx.print(x + kw + 1, HINT_Y, action, 1);
+    return hintWidth(key, action);
+}
+
+/*
+ * What Back will do, and -- while Shift is held -- that there is a way out.
+ *
+ * BACK is pinned to the right edge, which is where it sits on every other
+ * screen on this device. The escape hatch is shown only while Shift is DOWN: a
+ * permanent hint for "when navigation goes wrong" would be clutter on a screen
+ * that works.
+ */
+function drawHints(ctx, st) {
+    const back = st.dir ? 'UP' : 'EXIT';
+    const bw = hintWidth('BACK', back);
+    drawHint(ctx, ctx.width - bw, 'BACK', back);
+    if (st.shift) drawHint(ctx, 2, 'JOG', 'PAGES');
+}
+
 globalThis.canvas_overlay = {
     /*
      * ⭐ ASK FOR THE PADS. Opening a canvas leaves the knob grid, and the grid
@@ -256,19 +308,6 @@ globalThis.canvas_overlay = {
         } else {
             seat(st, '', null);
         }
-    },
-
-    /*
-     * Can Back climb from here? The footer asks, once a frame, so it can show
-     * the ↰ instead of EXIT.
-     *
-     * ⚠ NO PARAM READS. This is on the draw path, where one read costs more
-     * than the whole page render -- and the answer lives in our own state
-     * anyway, which is the only place it could be honest.
-     */
-    canGoUp(ctx) {
-        const st = ctx.state;
-        return !!(st && st.dir);          /* the picker is the top */
     },
 
     /*
@@ -388,6 +427,11 @@ globalThis.canvas_overlay = {
             return;
         }
 
+        /* The host owns Shift+jog (it closes us and pages on). We only WATCH
+         * Shift so the hint row can say the way out is live while it is held --
+         * the gesture is never ours to handle. */
+        if (d[1] === CC_SHIFT) { st.shift = d[2] > 0; return; }
+
         if (d[1] === CC_CLICK && d[2] > 0) enterRow(ctx, st);
     },
 
@@ -410,5 +454,6 @@ globalThis.canvas_overlay = {
             ctx.print(3, y, st.rows[idx].label.slice(0, 20), on ? 0 : 1);
         }
 
+        drawHints(ctx, st);
     },
 };

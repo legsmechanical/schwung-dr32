@@ -149,7 +149,8 @@
               "short_name": "SMPL",
               "type": "canvas",
               "canvas_script": "browser.js",
-              "enterable": true
+              "enterable": true,
+              "show_footer": false
             },
             {
               "key": "start",
