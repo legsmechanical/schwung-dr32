@@ -262,5 +262,28 @@ check('...and stays put, for the host to close', here(), '');
           params[padKey], '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
 }
 
+/* ── 10. the footer asks whether Back would climb ─────────────────────── */
+/* The host draws ↰ when canGoUp is true and EXIT when it is not, so this is
+ * what makes the Back hint tell the truth. It must agree with handleBack
+ * EXACTLY -- an arrow promising a level that Back then leaves from is worse
+ * than no arrow at all. */
+while (here()) navLeft();
+check('at the picker, Back would leave', ov.canGoUp(ctx), false);
+cursorTo('Move Library'); click();
+check('inside a library, Back would climb', ov.canGoUp(ctx), true);
+cursorTo('Drums/'); click();
+check('deeper still', ov.canGoUp(ctx), true);
+/* The agreement, walked the whole way out: canGoUp is true exactly while
+ * handleBack returns true. */
+let agreed = true;
+for (let i = 0; i < 6; i++) {
+    const said = ov.canGoUp(ctx);
+    const did = ov.handleBack(ctx);
+    if (said !== did) agreed = false;
+    if (!did) break;
+}
+check('canGoUp and handleBack never disagree', agreed, true);
+check('…and we ended at the picker', here(), '');
+
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
 process.exit(fail ? 1 : 0);

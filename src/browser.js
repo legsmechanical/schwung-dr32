@@ -259,6 +259,19 @@ globalThis.canvas_overlay = {
     },
 
     /*
+     * Can Back climb from here? The footer asks, once a frame, so it can show
+     * the ↰ instead of EXIT.
+     *
+     * ⚠ NO PARAM READS. This is on the draw path, where one read costs more
+     * than the whole page render -- and the answer lives in our own state
+     * anyway, which is the only place it could be honest.
+     */
+    canGoUp(ctx) {
+        const st = ctx.state;
+        return !!(st && st.dir);          /* the picker is the top */
+    },
+
+    /*
      * Back climbs the tree, and leaves only when there is nothing left to climb.
      *
      * ⭐ THE HOST'S CONTRACT: true means "I went up a level, keep me here";
