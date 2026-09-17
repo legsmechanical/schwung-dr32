@@ -50,9 +50,28 @@ const CC_CLICK = 3;
 const PAD_NOTE_LO = 68;
 const PAD_NOTE_HI = 99;
 
-/* 128x64, 1-bit. Four rows fit under the title with the hint row beneath. */
+/*
+ * 128x64, 1-bit, laid out to the device's own chrome geometry
+ * (shared/list_geometry.mjs, which every list page on this machine uses):
+ *
+ *   rows 0..6    the header band -- HEADER_H is 7: a 5-row glyph at y=1 with
+ *                one clear row above and below it
+ *   row  7..9    the gap. ⚠ NO RULE. There was one here, and the device does
+ *                not draw one: "TITLE_RULE_Y is no longer a rule at all -- the
+ *                band carries its own clear row". A rule under the header is
+ *                the tell of a screen that was drawn by eye.
+ *   rows 10..    the list, at MENU_LIST_Y
+ *   last 7 rows  our hint row
+ */
+const HDR_H = 7;        /* HEADER_H */
+const HDR_Y = 1;        /* TITLE_Y -- the glyph row inside the band */
+const HDR_PAD = 2;      /* the device's own side margin */
+const HDR_GAP = 4;      /* HEADER_GAP, between header elements */
 const ROW_H = 10;
-const TITLE_H = 12;
+/* ⚠ 11, not 10. The row HIGHLIGHT is drawn one row above its text, so a first
+ * row at 10 put its highlight on row 9 -- inside the clear row the header band
+ * needs below it. The highlight is what has to land on MENU_LIST_Y. */
+const TITLE_H = 11;
 const VISIBLE = 4;
 
 /*
@@ -388,6 +407,52 @@ function drawHint(ctx, x, y, h, key, action) {
     printSmall(ctx, x + kw + HINT_GAP, y + 1, action, 1);
 }
 
+/* Trim a string to fit `maxW`, in our own font. */
+function fitSmall(ctx, t, maxW) {
+    let str = String(t);
+    while (str.length && textW(ctx, str) > maxW) str = str.slice(0, -1);
+    return str;
+}
+
+/*
+ * The header, in the device's own three-part shape.
+ *
+ * ⭐ IT MATCHES THE MACHINE, and the numbers are the machine's: a 7-row band,
+ * a 5-row glyph at y=1 with a clear row above and below, 2px side margins, all
+ * in caps in the 4x5 this device draws every header in. Josh asked for it to
+ * look like Modules and My Presets, and those are drawn by the host from
+ * list_geometry.mjs -- so the constants above are lifted from there rather than
+ * chosen.
+ *
+ *   PAD 7        which pad this browser is filling -- the thing you most need
+ *                to be sure of before a click overwrites a sample
+ *   BROWSER      what this screen is, centred
+ *   Kicks        the folder you are in, right-aligned
+ *
+ * ⚠ MEASURED, NOT APPORTIONED. The centre is placed first because its width is
+ * fixed, then the sides get what is left on their side of it. A folder name is
+ * arbitrarily long, so it is the one that gets trimmed -- never the pad number,
+ * which is the one fact on this screen that must not be ambiguous.
+ */
+function drawHeader(ctx, st) {
+    const left = 'PAD ' + st.pad;
+    const mid = 'BROWSER';
+    const midW = textW(ctx, mid);
+    const midX = Math.floor((ctx.width - midW) / 2);
+
+    printSmall(ctx, HDR_PAD, HDR_Y, left, 1);
+
+    /* The centre only if the sides leave room for it; on a narrow squeeze the
+     * pad and the folder matter more than the word BROWSER. */
+    const leftEnd = HDR_PAD + textW(ctx, left);
+    if (midX >= leftEnd + HDR_GAP) printSmall(ctx, midX, HDR_Y, mid, 1);
+
+    const where = st.dir ? baseName(st.dir) : 'LIBRARIES';
+    const rightRoom = ctx.width - HDR_PAD - (midX + midW + HDR_GAP);
+    const r = fitSmall(ctx, where.toUpperCase(), Math.max(0, rightRoom));
+    if (r) printSmall(ctx, ctx.width - HDR_PAD - textW(ctx, r), HDR_Y, r, 1);
+}
+
 /*
  * What Back will do, and -- while Shift is held -- that there is a way out.
  *
@@ -575,10 +640,7 @@ globalThis.canvas_overlay = {
         ctx.clear();
         if (!st.rows) return;
 
-        /* Which pad is being filled, and where we are. */
-        const where = st.dir ? baseName(st.dir) : 'Libraries';
-        ctx.print(2, 2, ('Pad ' + st.pad + '  ' + where).slice(0, 21), 1);
-        ctx.drawLine(0, TITLE_H - 2, ctx.width, TITLE_H - 2, 1);
+        drawHeader(ctx, st);
 
         for (let i = 0; i < VISIBLE; i++) {
             const idx = st.top + i;

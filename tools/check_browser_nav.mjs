@@ -333,5 +333,54 @@ check('...and stays put, for the host to close', here(), '');
     check('...and it goes when Shift does', pills().length, 1);
 }
 
+/* ── 11. the header wears the device's own three-part chrome ──────────── */
+/*
+ * ⭐ IT MATCHES THE MACHINE. Josh: make it "match the way things like
+ * module/my presets look in terms of font and size" -- PAD n left, BROWSER
+ * centre, the folder right. Those pages are drawn by the host from
+ * shared/list_geometry.mjs, so the numbers here are lifted from there: a 7-row
+ * band, a 5-row glyph at y=1, 2px margins, list rows from y=10.
+ *
+ * Asserted on PIXELS, since the header is blitted from our own glyph table.
+ */
+{
+    const ink = [];
+    const hctx = Object.assign({}, ctx, {
+        clear() {}, setPixel() {}, drawLine() {},
+        /* The band only: rows 0..9. The first list row HIGHLIGHT lands on 10,
+         * which is MENU_LIST_Y, and must not appear here. */
+        fillRect: (x, y, w, h, v) => { if (y < 10) ink.push({ x, y, w, h, v }); },
+        print: (x, y, t) => { if (y < 10) { fail++; console.log('  FAIL header used ctx.print: ' + t); } },
+    });
+    const drawHdr = () => { ink.length = 0; ov.draw(hctx); return ink; };
+
+    while (here()) navLeft();
+    drawHdr();
+    check('the header is blitted from our own glyph table', ink.length > 20, true);
+
+    /* ⚠ NO RULE. There was one, and the device does not draw one -- the band
+     * carries its own clear row. A full-width 1px line under the header is the
+     * tell of a screen drawn by eye rather than to the geometry. */
+    check('no rule under the header', ink.some((b) => b.w > 100 && b.h === 1), false);
+
+    /* A 5-row glyph at y=1 means ink from row 1 to row 5, and rows 0 and 6 clear
+     * so an inverted band would not run its ink into the boundary. */
+    const rows = ink.map((b) => b.y);
+    check('the glyph row starts at y=1', Math.min(...rows), 1);
+    check('...and ends by y=5, leaving the band its clear row', Math.max(...rows), 5);
+
+    /* Three elements, so ink spans the full width rather than hugging the left
+     * as a single title would. */
+    const xs = ink.map((b) => b.x);
+    check('ink starts at the left margin', Math.min(...xs), 2);
+    check('...and the right of the screen', Math.max(...xs) > 90, true);
+
+    /* The folder is the element that gets trimmed, never the pad number: a
+     * deep folder must not push PAD n off the screen. */
+    cursorTo('Move Library'); click();
+    const shallow = drawHdr().length;
+    check('a folder name adds ink on the right', shallow > 0, true);
+}
+
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
 process.exit(fail ? 1 : 0);
