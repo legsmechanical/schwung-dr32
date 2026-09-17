@@ -68,7 +68,6 @@ const VISIBLE = 4;
  * from the device font's fixed 6px advance. Keep the hints short enough that a
  * pixel of drift cannot matter.
  */
-const HINT_Y = 55;
 
 function isAudio(name) {
     const dot = name.lastIndexOf('.');
@@ -257,36 +256,57 @@ function goUp(st) {
  */
 const HINT_PAD = 2;     /* inside the pill, each side   -- MV_HINT_PAD */
 const HINT_GAP = 4;     /* pill to action text          -- MV_HINT_GAP */
-const HINT_H   = 9;     /* device font (7) + 1 above and below */
+const HINT_FONT = 'small';   /* the device's own 4x5 -- see textW */
 
 /*
- * ⚠ measureText, with a fallback. The host's canvas ctx grew it alongside this
- * work; before that only dAVEBOx offered one, so a module that measured was
- * correct on one host and guessing on the other. 6 is the device font's widest
- * advance, so the fallback errs wide -- a pill a pixel loose reads fine, one a
- * pixel tight clips the glyph.
+ * ⚠ THE SMALL FONT, and a fallback to the device one.
+ *
+ * `print(..., 'small')` is the 4x5 the host draws every hint row, header and
+ * knob label in. Drawing this row in the DEVICE font instead was legible and
+ * visibly foreign -- the right shape in the wrong type, which reads as a
+ * different machine. A host too old to offer the font falls back rather than
+ * failing: wrong type beats no footer.
  */
-function textW(ctx, t) {
-    const s = String(t);
-    return typeof ctx.measureText === 'function' ? ctx.measureText(s) : s.length * 6;
+function smallFont(ctx) {
+    return typeof ctx.fontHeight === 'function' && ctx.fontHeight(HINT_FONT) > 0
+        ? HINT_FONT : undefined;
 }
 
-function hintWidth(ctx, key, action) {
-    return textW(ctx, key) + HINT_PAD * 2 + HINT_GAP + textW(ctx, action);
+function textW(ctx, t, font) {
+    const str = String(t);
+    if (typeof ctx.measureText === 'function') return ctx.measureText(str, font);
+    return str.length * 6;   /* the device font's widest advance: err WIDE */
 }
 
-function drawHint(ctx, x, key, action) {
-    const kw = textW(ctx, key) + HINT_PAD * 2;
-    ctx.fillRect(x, HINT_Y, kw, HINT_H, 1);
+function hintWidth(ctx, key, action, font) {
+    return textW(ctx, key, font) + HINT_PAD * 2 + HINT_GAP + textW(ctx, action, font);
+}
+
+/*
+ * A hint, drawn the way the host's own hint rows are drawn.
+ *
+ * ⭐ THE SHAPE AND THE TYPE ARE THE DEVICE'S; THE WORDS ARE OURS.
+ * `show_footer: false` means the host paints nothing here, so this row is
+ * entirely the module's -- but a row that looked homemade would read as a
+ * different device. So the metrics come from the real thing (ui_movy's
+ * drawKitHintRow and the host's own drawFooter): the KEY inverted in a filled
+ * pill, 2px padding each side, all four corners knocked out, the ACTION 4px
+ * later in plain ink.
+ *
+ * ⚠ The pill is not decoration. Without it "BACK UP JOG PAGES" is an unbroken
+ * run of words, which is exactly why the host's own rows have one.
+ */
+function drawHint(ctx, x, y, h, key, action, font) {
+    const kw = textW(ctx, key, font) + HINT_PAD * 2;
+    ctx.fillRect(x, y, kw, h, 1);
     /* The notch every filled shape on this device wears: one pixel off each
      * corner, so the pill reads as a shape rather than a block. */
-    ctx.setPixel(x, HINT_Y, 0);
-    ctx.setPixel(x + kw - 1, HINT_Y, 0);
-    ctx.setPixel(x, HINT_Y + HINT_H - 1, 0);
-    ctx.setPixel(x + kw - 1, HINT_Y + HINT_H - 1, 0);
-    ctx.print(x + HINT_PAD, HINT_Y + 1, key, 0);
-    ctx.print(x + kw + HINT_GAP, HINT_Y + 1, action, 1);
-    return hintWidth(ctx, key, action);
+    ctx.setPixel(x, y, 0);
+    ctx.setPixel(x + kw - 1, y, 0);
+    ctx.setPixel(x, y + h - 1, 0);
+    ctx.setPixel(x + kw - 1, y + h - 1, 0);
+    ctx.print(x + HINT_PAD, y + 1, key, 0, font);
+    ctx.print(x + kw + HINT_GAP, y + 1, action, 1, font);
 }
 
 /*
@@ -298,14 +318,20 @@ function drawHint(ctx, x, key, action) {
  * clutter on a screen that works.
  */
 function drawHints(ctx, st) {
+    const font = smallFont(ctx);
+    /* The pill is the line height plus one pixel above and below -- the host's
+     * own footer is FONT4_HEIGHT + 2, and this is that rule, asked rather than
+     * copied so it follows the font actually in use. */
+    const h = (typeof ctx.fontHeight === 'function' ? ctx.fontHeight(font) : 7) + 2;
+    const y = ctx.height - h;
     const back = st.dir ? 'UP' : 'EXIT';
-    drawHint(ctx, ctx.width - hintWidth(ctx, 'BACK', back) - 1, 'BACK', back);
+    drawHint(ctx, ctx.width - hintWidth(ctx, 'BACK', back, font) - 1, y, h, 'BACK', back, font);
     /* ⚠ ASK THE HOST, do not watch CC 49. The host reads Shift from the shim's
      * shared memory; the CC does not reliably reach a canvas. Watching the byte
      * worked under dAVEBOx, which forwards it, and did nothing at all on stock
      * -- reported from the device as the footer never changing. */
     if (typeof ctx.shiftHeld === 'function' && ctx.shiftHeld()) {
-        drawHint(ctx, 1, 'JOG', 'PAGES');
+        drawHint(ctx, 1, y, h, 'JOG', 'PAGES', font);
     }
 }
 

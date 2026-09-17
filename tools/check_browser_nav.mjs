@@ -321,22 +321,39 @@ check('...and stays put, for the host to close', here(), '');
      * one, so a module that measured was right on one host and guessing on the
      * other. A host without it must still draw -- a pixel loose, never absent. */
     const boxes = [];
+    const fonts = [];
+    /* A host that offers the device's own SMALL font, as both do now. */
     const pctx = Object.assign({}, dctx, {
         fillRect: (x, y, w, h, v) => { if (y >= 50) boxes.push({ x, y, w, h, v }); },
+        fontHeight: (f) => (f === 'small' ? 5 : 7),
+        measureText: (t, f) => String(t).length * (f === 'small' ? 4 : 6),
+        print: (x, y, t, c, f) => { if (y >= 50) { drawn.push(String(t)); fonts.push(f); } },
     });
     while (here()) navLeft();
-    boxes.length = 0; drawn.length = 0;
+    boxes.length = 0; drawn.length = 0; fonts.length = 0;
     ov.draw(pctx);
     check('the key sits in a filled pill', boxes.length, 1);
     const pill = boxes[0] || {};
-    check('...one row tall, at the hint row', pill.h, 9);
+
+    /* ⭐ THE TYPE IS THE DEVICE'S. Drawn in the device 5x7 this row was legible
+     * and visibly foreign -- the right shape in the wrong type, which reads as
+     * a different machine. Josh: "make it look like the others." */
+    check('every word is drawn in the small font', fonts.every((f) => f === 'small'), true);
+
+    /* The host's own footer is FONT4_HEIGHT + 2, and the row follows the font
+     * actually in use rather than a copied constant. */
+    check('...and the pill is that line height plus one above and below', pill.h, 7);
+    check('...sitting on the last row', pill.y + pill.h, 64);
     /* BACK is pinned to the right edge, as on every other screen. */
     check('...and the pill is right of centre', pill.x > 64, true);
 
-    delete pctx.measureText;
-    boxes.length = 0;
+    /* A host too old for either must still draw -- wrong type beats no footer. */
+    delete pctx.measureText; delete pctx.fontHeight;
+    boxes.length = 0; fonts.length = 0;
     ov.draw(pctx);
-    check('a host without measureText still draws the pill', boxes.length, 1);
+    check('a host without the font still draws the pill', boxes.length, 1);
+    check('...falling back to the device font', fonts.every((f) => f === undefined), true);
+    check('...and sized for it', (boxes[0] || {}).h, 9);
 }
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
