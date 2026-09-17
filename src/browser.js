@@ -44,9 +44,9 @@ const AUDIO = ['.wav', '.aif', '.aiff'];
 const CC_JOG   = 14;
 const CC_CLICK = 3;
 
-/* Hardware pads arrive as notes 68..99. That is NOT the kit's note map (36..67):
- * this is the physical grid, and the pad NUMBER is what the module's focus
- * parameter speaks. */
+/* Hardware pads arrive as notes 68..99 -- the PHYSICAL grid position, which is
+ * not the kit's note map (36..67) and not the pad number either. We use it only
+ * to know that a finger landed; see the note at the press handler. */
 const PAD_NOTE_LO = 68;
 const PAD_NOTE_HI = 99;
 
@@ -181,11 +181,26 @@ function audition(ctx, st) {
     st.loaded = row.path;
 }
 
-/** Open the highlighted row: a folder, or confirm a sample. */
+/*
+ * Open the highlighted row: a folder, or take the sample and go.
+ *
+ * ⭑ CLICKING A SAMPLE LEAVES. The scroll already put it on the pad, so the
+ * click is not a commit — it is "this one, I'm done", and that is the commonest
+ * path through this screen. Making you press Back afterwards would be one
+ * gesture too many every single time. Josh, from the device: "i'd like clicking
+ * on a sample to exit the browser as well."
+ *
+ * ⚠ `ctx.close` only exists where the host offers it. Without it the click
+ * still confirms and the browser stays up, which is what it did before.
+ */
 function enterRow(ctx, st) {
     const row = st.rows[st.cursor];
     if (!row) return;
-    if (!row.dir) { audition(ctx, st); return; }   /* the scroll already loaded it */
+    if (!row.dir) {
+        audition(ctx, st);
+        if (typeof ctx.close === 'function') ctx.close();
+        return;
+    }
     if (row.path) { seat(st, row.path, null); return; }
     goUp(st);                                      /* the '..' row */
 }
@@ -207,6 +222,23 @@ function goUp(st) {
 }
 
 globalThis.canvas_overlay = {
+    /*
+     * ⭐ ASK FOR THE PADS. Opening a canvas leaves the knob grid, and the grid
+     * is what normally reconciles `pad_observe` — so without this a browser
+     * cannot tell which pad you pressed, on the one screen where filling a pad
+     * is the entire job. Measured on the device: knob touches reached this
+     * script and pad presses did not.
+     *
+     * PASSIVE. The pad still plays the kit; the screen is merely told as well,
+     * which is the whole point — you hit the pad to hear what you just put on
+     * it, at the velocity you hit it with.
+     *
+     * Ignored by a host that does not know the flag, which is exactly the
+     * behaviour we had: the pads play and the browser keeps filling the pad
+     * that was focused when it opened.
+     */
+    wantsPads: true,
+
     onOpen(ctx) {
         const st = ctx.state;
         st.pad = focusedPad(ctx);
@@ -258,10 +290,50 @@ globalThis.canvas_overlay = {
          * focused when it opened.
          */
         if (status === 0x90 && d[2] > 0 && d[1] >= PAD_NOTE_LO && d[1] <= PAD_NOTE_HI) {
-            const pad = d[1] - PAD_NOTE_LO + 1;          /* 1-based, as the wire is */
+            /*
+             * ⚠⚠ THE NOTE IS A DOORBELL, NOT AN ADDRESS. 68..99 is the PHYSICAL
+             * grid position, and it is NOT the pad number: the kit is laid out
+             * in drum-rack order, so deriving `note - 68 + 1` names a different
+             * pad from the one under your finger. That is what the first cut
+             * did, and it showed the grid position as the pad.
+             *
+             * ⭐ WE DO NOT NEED THE MAP, AND MUST NOT OWN A COPY OF IT. The DSP
+             * already moved its own focus: dr32_kit.c sets `ui_current_pad`
+             * from the note it RECEIVED the instant a hand hits a pad with
+             * nothing sequencing (`ui_auto_select_pad`, no vouch required). So
+             * the note only tells us that a finger landed; the module tells us
+             * where. The host says the same thing in as many words -- "the
+             * pad-to-note map is Move's, not ours" (page_controller) -- and a
+             * second copy here would be a copy that can disagree, and would go
+             * wrong under a pad layout or a transpose besides.
+             *
+             * ⚠⚠⚠ AND WE MUST VOUCH, OR THIS STOPS WORKING AFTER A WHILE.
+             *
+             * `host_vouches` is a ONE-WAY LATCH (dr32_kit.h): the moment any
+             * host vouches once, "a bare note-on never moves focus again,
+             * whatever the transport says". Until then the DSP follows live
+             * hits on its own, which is why a fresh session looks perfect --
+             * and why it then quietly stops. Josh, from the device: "was
+             * working great. and then after loading a bunch of samples, the
+             * browser stopped following the pads." Every trip out to the knob
+             * grid vouches, and after the first one our reads went stale.
+             *
+             * `ui_live_press` is the vouch, and dr32_params.c names US as its
+             * writer in as many words: "the canvas is the obvious one". It
+             * carries NO pad -- "a grid position is not a pad, so the note
+             * decides, and this only vouches that a finger was involved". The
+             * DSP looks back at the note it just played (within 20 blocks,
+             * 58 ms) and moves focus, or arms forward if we beat the note here.
+             *
+             * ⓘ Order matters and is reliable: setParam and getParam are both
+             * synchronous round trips, so the vouch has landed and focus has
+             * moved by the time we ask. Both are legal here -- onMidi is not a
+             * draw-path hook, so the accessors are present.
+             */
+            ctx.setParam('ui_live_press', '1');
+            const pad = focusedPad(ctx);
             if (pad === st.pad) return;
             st.pad = pad;
-            ctx.setParam('ui_current_pad', String(pad));
             const cur = ctx.getParam('pad' + pad + '_sample') || '';
             st.loaded = cur;
             if (cur && rootOf(dirName(cur))) seat(st, dirName(cur), baseName(cur));
@@ -304,9 +376,5 @@ globalThis.canvas_overlay = {
             ctx.print(3, y, st.rows[idx].label.slice(0, 20), on ? 0 : 1);
         }
 
-        /* The count, so a long folder is legible as a long folder. ⚠ The host
-         * draws its own footer over the bottom rows unless the param says
-         * `show_footer: false`, so this sits clear of it. */
-        ctx.print(2, ctx.height - 14, (st.cursor + 1) + '/' + st.rows.length, 1);
     },
 };

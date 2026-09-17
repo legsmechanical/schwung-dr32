@@ -81,7 +81,7 @@ const click    = () => cc(3, 127);
  * the click arrives at onMidi, and Back arrives as the handleBack hook. */
 const navRight = () => click();
 const navLeft  = () => ov.handleBack(ctx);
-const pad      = (n) => ov.onMidi(ctx, { data: [0x90, 68 + n - 1, 100] });
+const pad      = (n) => ov.onMidi(ctx, { data: [0x90, 68 + n, 100] });  /* n = grid offset */
 
 const goUpVia = (f) => f();
 const rows = () => ctx.state.rows.map((r) => r.label);
@@ -161,15 +161,39 @@ check('the scroll loaded the pad', params.pad3_sample, '/data/CoreLibrary/Sample
 cursorTo('..');
 check('landing on a folder leaves the pad alone', params.pad3_sample, '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
 
-/* ── 7. a pad press with a sample moves the browser; an empty one does not */
+/* ── 7. a pad press with a sample moves the browser; an empty one does not
+ *
+ * ⚠⚠ THE NOTE IS A DOORBELL. 68..99 is the physical GRID POSITION, in a
+ * different order from the kit's pads, so the browser must NOT derive a pad
+ * from it -- it asks the module, which moved its own focus from the note it
+ * received. So the fixture answers `ui_current_pad` and the note number is
+ * deliberately UNRELATED to it: a browser that went back to arithmetic would
+ * land on pad 1 here and fail. */
+/* ⚠⚠ AND IT MUST VOUCH. `host_vouches` is a one-way latch: once ANY host has
+ * vouched, the DSP stops moving focus on a bare note-on, so a browser that only
+ * READS focus works perfectly until the first trip out to the knob grid and
+ * silently stops afterwards. That is the defect this half pins -- the fixture
+ * only moves the focus when the vouch arrives, exactly as the DSP does. */
+let vouched = 0;
+const dspFocus = { pad: '1' };
+ctx.setParam = (k, v) => {
+    params[k] = String(v);
+    if (k === 'ui_live_press') { vouched++; params.ui_current_pad = dspFocus.pad; }
+    return true;
+};
+
 params.pad7_sample = '/data/UserData/UserLibrary/Mine/own.wav';
-pad(7);
+dspFocus.pad = '7';                   /* the note the DSP just played */
+params.ui_current_pad = '1';          /* focus has NOT moved on its own */
+pad(0);                               /* note 68 -- NOT pad 68, and not pad 1 */
+check('the press was vouched for', vouched, 1);
 check('a loaded pad takes the browser with it', here(), '/data/UserData/UserLibrary/Mine');
 check('…and onto its own sample', at(), 'own.wav');
-check('…and the module follows', params.ui_current_pad, '7');
-pad(9);
+check('…and the browser is filling the pad the MODULE named', ctx.state.pad, 7);
+dspFocus.pad = '9';                   /* an empty pad */
+pad(3);
 check('an empty pad does NOT move the listing', here(), '/data/UserData/UserLibrary/Mine');
-check('…but is the pad being filled', params.ui_current_pad, '9');
+check('…but is the pad being filled', ctx.state.pad, 9);
 
 /* ── 8. Back walks up the tree, and only leaves at the top ────────────── */
 /* The exit contract on a host that knows `enterable`: true means "I went up",
@@ -188,6 +212,28 @@ check('Back leaves the root', ov.handleBack(ctx), true);
 check('...to the picker', here(), '');
 check('Back at the picker declines', ov.handleBack(ctx), false);
 check('...and stays put, for the host to close', here(), '');
+
+/* ── 9. clicking a sample takes it AND leaves ─────────────────────────── */
+/* The scroll already put it on the pad, so the click is "this one, I'm done".
+ * Pinned because the close is easy to lose in a refactor and its absence is
+ * invisible: the browser simply stays up, which is what it used to do. */
+{
+    let closed = 0;
+    ctx.close = () => { closed++; };
+    while (here()) navLeft();
+    cursorTo('Move Library'); click(); cursorTo('Drums/'); click();
+    cursorTo('Kicks/'); click(); cursorTo('kick2.wav');
+    check('the scroll loaded it', params.pad9_sample, '/data/CoreLibrary/Samples/Drums/Kicks/kick2.wav');
+    click();
+    check('clicking a sample closes the browser', closed, 1);
+    cursorTo('..'); click();
+    check('clicking a FOLDER does not close it', closed, 1);
+    check('...it navigates', here(), '/data/CoreLibrary/Samples/Drums');
+    delete ctx.close;
+    cursorTo('Kicks/'); click(); cursorTo('kick1.wav'); click();
+    check('a host without ctx.close still confirms without throwing',
+          params.pad9_sample, '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
+}
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
 process.exit(fail ? 1 : 0);
