@@ -228,16 +228,24 @@ int main(void) {
             CHECK(dr32_state_write(&d, "/kit.ablpreset", dbase, (int)sizeof(dbase), NULL) > 0,
                   "divergence baseline write failed");
 
-            /* Pad 2 appears BETWEEN two pads the baseline knows, and pad 3
-             * (after it) is the one whose dedup must still work. */
-            occupy(&d, 2, "/s2.wav");
-            dr32_apply_param(&d, "pad1_transpose", "-5");
+            /* A pad appears BETWEEN two the baseline knows, and the one AFTER
+             * it is where the dedup must still work.
+             *
+             * ⚠ `occupy` takes the ENGINE index (0-based); the keys are the
+             * WIRE (1-based, since 2026-09-09). They coincided when this case
+             * was written and no longer do, so engine 1/2/3 are wire
+             * pad2/pad3/pad4. Renumbering the assertions rather than the intent
+             * is the whole job here — read as engine indices the original
+             * edited an EMPTY pad and asserted against the newly-occupied one,
+             * which passes for the wrong reason. */
+            occupy(&d, 2, "/s2.wav");                    /* wire pad3 — the new one */
+            dr32_apply_param(&d, "pad2_transpose", "-5");/* engine 1 — known to the baseline */
             int dn = dr32_state_write(&d, "/kit.ablpreset", blob, (int)sizeof(blob), dbase);
             CHECK(dn > 0, "divergence delta write failed");
-            CHECK(strstr(blob, "pad1_transpose") != NULL,
+            CHECK(strstr(blob, "pad2_transpose") != NULL,
                   "divergence delta dropped the edit");
-            CHECK(strstr(blob, "pad3_") == NULL,
-                  "pad3 is unedited and sits AFTER the newly-occupied pad2 — its "
+            CHECK(strstr(blob, "pad4_") == NULL,
+                  "wire pad4 is unedited and sits AFTER the newly-occupied pad3 — its "
                   "fields must still be deduped against the baseline, got: %.300s", blob);
         }
 
