@@ -256,48 +256,127 @@ function goUp(st) {
  */
 const HINT_PAD = 2;     /* inside the pill, each side   -- MV_HINT_PAD */
 const HINT_GAP = 4;     /* pill to action text          -- MV_HINT_GAP */
-const HINT_FONT = 'small';   /* the device's own 4x5 -- see textW */
 
 /*
- * ⚠ THE SMALL FONT, and a fallback to the device one.
+ * ⭐⭐ THE DEVICE'S SMALL FONT, CARRIED HERE.
  *
- * `print(..., 'small')` is the 4x5 the host draws every hint row, header and
- * knob label in. Drawing this row in the DEVICE font instead was legible and
- * visibly foreign -- the right shape in the wrong type, which reads as a
- * different machine. A host too old to offer the font falls back rather than
- * failing: wrong type beats no footer.
+ * The screen is ours -- `show_footer: false` means the host paints nothing on
+ * it -- so the type is ours to supply too. The host draws every hint row,
+ * header and knob label in this 4x5; drawing our footer in the device 5x7
+ * instead was legible and visibly FOREIGN, the right shape in the wrong type.
+ *
+ * ⚠ A MODULE THAT WANTS A TYPEFACE SHIPS THE TYPEFACE. The first fix for this
+ * published the font from the host instead, which made a footer a module could
+ * draw by itself depend on a host release. Josh: "the module has the screen.
+ * why can't it draw it?" It can: the table is data and the blitter needs only
+ * `fillRect`, which every canvas ctx has.
+ *
+ * Transcribed from schwung's src/shared/param_pages/font4x5.mjs (itself from
+ * schwung-movy, MIT), and cut to the 41 glyphs this row can print rather than
+ * all 59 -- A-Z, 0-9, space and the punctuation a path uses. Format is that
+ * file's: [advance, yOff, w, h, ...rowBits] with bit0 the leftmost pixel.
  */
-function smallFont(ctx) {
-    return typeof ctx.fontHeight === 'function' && ctx.fontHeight(HINT_FONT) > 0
-        ? HINT_FONT : undefined;
-}
+const FONT_H = 5;
+const FONT_FALLBACK_ADV = 5;
+const FONT = {
+    " ": [3,0,0,5],
+    "A": [5,0,4,5,6,9,15,9,9],
+    "B": [5,0,4,5,7,9,7,9,7],
+    "C": [5,0,4,5,14,1,1,1,14],
+    "D": [5,0,4,5,7,9,9,9,7],
+    "E": [5,0,4,5,15,1,7,1,15],
+    "F": [5,0,4,5,15,1,7,1,1],
+    "G": [5,0,4,5,14,1,13,9,14],
+    "H": [5,0,4,5,9,9,15,9,9],
+    "I": [2,0,1,5,1,1,1,1,1],
+    "J": [5,0,4,5,12,8,8,9,6],
+    "K": [5,0,4,5,9,5,3,5,9],
+    "L": [5,0,4,5,1,1,1,1,15],
+    "M": [6,0,5,5,17,27,21,17,17],
+    "N": [5,0,4,5,9,11,13,9,9],
+    "O": [5,0,4,5,6,9,9,9,6],
+    "P": [5,0,4,5,7,9,7,1,1],
+    "Q": [5,0,4,5,6,9,9,5,10],
+    "R": [5,0,4,5,7,9,7,5,9],
+    "S": [5,0,4,5,14,1,6,8,7],
+    "T": [4,0,3,5,7,2,2,2,2],
+    "U": [5,0,4,5,9,9,9,9,6],
+    "V": [6,0,5,5,17,17,17,10,4],
+    "W": [6,0,5,5,17,17,21,21,10],
+    "X": [5,0,4,5,9,9,6,9,9],
+    "Y": [4,0,3,5,5,5,2,2,2],
+    "Z": [5,0,4,5,15,8,6,1,15],
+    "0": [5,0,4,5,6,9,9,9,6],
+    "1": [4,0,3,5,2,3,2,2,7],
+    "2": [5,0,4,5,7,8,6,1,15],
+    "3": [5,0,4,5,7,8,6,8,7],
+    "4": [5,0,4,5,9,9,15,8,8],
+    "5": [5,0,4,5,15,1,7,8,7],
+    "6": [5,0,4,5,14,1,7,9,6],
+    "7": [5,0,4,5,15,8,4,2,1],
+    "8": [5,0,4,5,6,9,6,9,6],
+    "9": [5,0,4,5,6,9,14,8,7],
+    ".": [2,0,1,5,0,0,0,0,1],
+    "/": [5,0,4,5,8,8,6,1,1],
+    "-": [4,0,3,5,0,0,7,0,0],
+    "_": [5,0,4,5,0,0,0,0,15],
+};
 
-function textW(ctx, t, font) {
+function glyphFor(ch) { return FONT[ch] || FONT[ch.toUpperCase()] || null; }
+
+/* The advance already carries the 1px inter-glyph gap, so a measured string is
+ * one pixel narrower than the sum -- the same correction the source makes. */
+function textW(ctx, t) {
     const str = String(t);
-    if (typeof ctx.measureText === 'function') return ctx.measureText(str, font);
-    return str.length * 6;   /* the device font's widest advance: err WIDE */
+    let w = 0;
+    for (let i = 0; i < str.length; i++) {
+        const g = glyphFor(str[i]);
+        w += g ? g[0] : FONT_FALLBACK_ADV;
+    }
+    return w > 0 ? w - 1 : 0;
 }
 
-function hintWidth(ctx, key, action, font) {
-    return textW(ctx, key, font) + HINT_PAD * 2 + HINT_GAP + textW(ctx, action, font);
+/* Blit one string. Runs of set bits go out as a single fillRect, which is what
+ * the source does and is why this needs no primitive a canvas lacks. */
+function printSmall(ctx, x, y, str, color) {
+    let cx = x;
+    const t = String(str);
+    for (let i = 0; i < t.length; i++) {
+        const g = glyphFor(t[i]);
+        if (!g) { cx += FONT_FALLBACK_ADV; continue; }
+        const yOff = g[1], w = g[2], h = g[3];
+        for (let row = 0; row < h; row++) {
+            const bits = g[4 + row];
+            if (!bits) continue;
+            let col = 0;
+            while (col < w) {
+                if (bits & (1 << col)) {
+                    const start = col;
+                    while (col < w && (bits & (1 << col))) col++;
+                    ctx.fillRect(cx + start, y + yOff + row, col - start, 1, color);
+                } else col++;
+            }
+        }
+        cx += g[0];
+    }
+}
+
+function hintWidth(ctx, key, action) {
+    return textW(ctx, key) + HINT_PAD * 2 + HINT_GAP + textW(ctx, action);
 }
 
 /*
  * A hint, drawn the way the host's own hint rows are drawn.
  *
- * ⭐ THE SHAPE AND THE TYPE ARE THE DEVICE'S; THE WORDS ARE OURS.
- * `show_footer: false` means the host paints nothing here, so this row is
- * entirely the module's -- but a row that looked homemade would read as a
- * different device. So the metrics come from the real thing (ui_movy's
- * drawKitHintRow and the host's own drawFooter): the KEY inverted in a filled
- * pill, 2px padding each side, all four corners knocked out, the ACTION 4px
- * later in plain ink.
+ * The metrics come from the real thing (ui_movy's drawKitHintRow and the host's
+ * own drawFooter): the KEY inverted in a filled pill, 2px padding each side,
+ * all four corners knocked out, the ACTION 4px later in plain ink.
  *
  * ⚠ The pill is not decoration. Without it "BACK UP JOG PAGES" is an unbroken
  * run of words, which is exactly why the host's own rows have one.
  */
-function drawHint(ctx, x, y, h, key, action, font) {
-    const kw = textW(ctx, key, font) + HINT_PAD * 2;
+function drawHint(ctx, x, y, h, key, action) {
+    const kw = textW(ctx, key) + HINT_PAD * 2;
     ctx.fillRect(x, y, kw, h, 1);
     /* The notch every filled shape on this device wears: one pixel off each
      * corner, so the pill reads as a shape rather than a block. */
@@ -305,8 +384,8 @@ function drawHint(ctx, x, y, h, key, action, font) {
     ctx.setPixel(x + kw - 1, y, 0);
     ctx.setPixel(x, y + h - 1, 0);
     ctx.setPixel(x + kw - 1, y + h - 1, 0);
-    ctx.print(x + HINT_PAD, y + 1, key, 0, font);
-    ctx.print(x + kw + HINT_GAP, y + 1, action, 1, font);
+    printSmall(ctx, x + HINT_PAD, y + 1, key, 0);
+    printSmall(ctx, x + kw + HINT_GAP, y + 1, action, 1);
 }
 
 /*
@@ -318,20 +397,19 @@ function drawHint(ctx, x, y, h, key, action, font) {
  * clutter on a screen that works.
  */
 function drawHints(ctx, st) {
-    const font = smallFont(ctx);
     /* The pill is the line height plus one pixel above and below -- the host's
-     * own footer is FONT4_HEIGHT + 2, and this is that rule, asked rather than
-     * copied so it follows the font actually in use. */
-    const h = (typeof ctx.fontHeight === 'function' ? ctx.fontHeight(font) : 7) + 2;
+     * own footer rule (FONT4_HEIGHT + 2), and now our font, so it cannot drift
+     * from the type actually drawn. */
+    const h = FONT_H + 2;
     const y = ctx.height - h;
     const back = st.dir ? 'UP' : 'EXIT';
-    drawHint(ctx, ctx.width - hintWidth(ctx, 'BACK', back, font) - 1, y, h, 'BACK', back, font);
+    drawHint(ctx, ctx.width - hintWidth(ctx, 'BACK', back) - 1, y, h, 'BACK', back);
     /* ⚠ ASK THE HOST, do not watch CC 49. The host reads Shift from the shim's
      * shared memory; the CC does not reliably reach a canvas. Watching the byte
      * worked under dAVEBOx, which forwards it, and did nothing at all on stock
      * -- reported from the device as the footer never changing. */
     if (typeof ctx.shiftHeld === 'function' && ctx.shiftHeld()) {
-        drawHint(ctx, 1, y, h, 'JOG', 'PAGES', font);
+        drawHint(ctx, 1, y, h, 'JOG', 'PAGES');
     }
 }
 

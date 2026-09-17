@@ -17,6 +17,9 @@
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
+/* The 4x5 the module carries, for the metrics below. */
+const FONT_H_EXPECTED = 5;
+
 /* ⚠ vm.SourceTextModule needs --experimental-vm-modules, so the script hands
  * itself the flag rather than making every caller remember it. Evaluating
  * browser.js in a vm is what lets its `import * as os` be a stub: the alternative
@@ -266,94 +269,68 @@ check('...and stays put, for the host to close', here(), '');
           params[padKey], '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
 }
 
-/* ── 10. the browser draws its OWN hint row ───────────────────────────── */
+/* ── 10. the browser draws its OWN hint row, in its OWN type ──────────── */
 /*
- * ⭐ THE MODULE OWNS THE SCREEN. A first cut had the HOST draw these hints,
- * fed by a `canGoUp` hook -- and "up a level" / "exit" are a file browser's
- * vocabulary, meaningless to a scope or a meter. Josh: "baking ui elements into
- * the canvas feature was a mistake and misses the whole point of the canvas."
- * So `show_footer: false` turns the host's footer off and we draw our own.
+ * ⭐⭐ THE MODULE OWNS THE SCREEN, SO IT OWNS THE CHROME AND THE TYPE.
  *
- * Pinned on what is DRAWN, because that is the only place the words exist now.
+ * A first cut had the HOST draw these hints, fed by a `canGoUp` hook -- and
+ * "up a level" / "exit" are a file browser's vocabulary, meaningless to a scope
+ * or a meter. A second published the host's FONT to draw them with, which made
+ * a footer this module can draw by itself depend on a host release. Josh, on
+ * each in turn: "baking ui elements into the canvas feature was a mistake", and
+ * "the module has the screen. why can't it draw it?"
+ *
+ * It can. `show_footer: false` turns the host's footer off, the words are ours,
+ * and the glyphs are blitted from our own table through `fillRect` -- so these
+ * assertions are on PIXELS, the only place any of it now exists.
  */
 {
-    const drawn = [];
-    const dctx = Object.assign({}, ctx, {
-        clear() {}, fillRect() {}, drawLine() {}, setPixel() {},
-        measureText: (t) => String(t).length * 6,
-        print: (x, y, t) => { if (y >= 50) drawn.push(String(t)); },
-    });
-    while (here()) navLeft();
-    ov.draw(dctx);
-    check('at the picker, the hint says EXIT', drawn.join(' ').includes('EXIT'), true);
-
-    drawn.length = 0;
-    cursorTo('Move Library'); click();
-    ov.draw(dctx);
-    check('inside a library, it says UP', drawn.join(' ').includes('UP'), true);
-    check('...and not EXIT', drawn.join(' ').includes('EXIT'), false);
-
-    /* The escape hatch is advertised only while Shift is DOWN -- a permanent
-     * hint for "when navigation goes wrong" is clutter on a screen that works.
-     * The gesture itself is the HOST's; we only watch the key. */
-    let shift = false;
-    dctx.shiftHeld = () => shift;
-    drawn.length = 0;
-    ov.draw(dctx);
-    check('Shift up: no jog hint', drawn.join(' ').includes('PAGES'), false);
-    shift = true;
-    drawn.length = 0;
-    ov.draw(dctx);
-    check('Shift down: the escape hatch is advertised', drawn.join(' ').includes('PAGES'), true);
-    shift = false;
-    drawn.length = 0;
-    ov.draw(dctx);
-    check('Shift up again: it goes away', drawn.join(' ').includes('PAGES'), false);
-
-    /* A host too old to offer it must not throw -- the hint simply never shows. */
-    delete dctx.shiftHeld;
-    drawn.length = 0;
-    ov.draw(dctx);
-    check('a host without ctx.shiftHeld still draws', drawn.join(' ').includes('BACK'), true);
-
-    /* ⭐ THE PILL IS THE SHAPE, and it must be laid out from a MEASUREMENT.
-     * Stock grew measureText alongside this work; before that only dAVEBOx had
-     * one, so a module that measured was right on one host and guessing on the
-     * other. A host without it must still draw -- a pixel loose, never absent. */
     const boxes = [];
-    const fonts = [];
-    /* A host that offers the device's own SMALL font, as both do now. */
-    const pctx = Object.assign({}, dctx, {
+    let shift = false;
+    const pctx = Object.assign({}, ctx, {
+        clear() {}, drawLine() {}, setPixel() {},
+        shiftHeld: () => shift,
         fillRect: (x, y, w, h, v) => { if (y >= 50) boxes.push({ x, y, w, h, v }); },
-        fontHeight: (f) => (f === 'small' ? 5 : 7),
-        measureText: (t, f) => String(t).length * (f === 'small' ? 4 : 6),
-        print: (x, y, t, c, f) => { if (y >= 50) { drawn.push(String(t)); fonts.push(f); } },
+        /* ⚠ If the row ever reaches for a HOST font or measurer again, these
+         * fail loudly rather than silently working on one host only. */
+        print: (x, y, t) => { if (y >= 50) { fail++; console.log('  FAIL the row used ctx.print: ' + t); } },
+        measureText: () => { fail++; console.log('  FAIL the row measured through the host'); return 0; },
     });
+    const draw = () => { boxes.length = 0; ov.draw(pctx); return boxes; };
+    const pills = () => boxes.filter((b) => b.h === FONT_H_EXPECTED + 2);
+    const ink = () => boxes.filter((b) => b.h === 1);
+
+    /* --- at the picker: BACK EXIT, alone, pinned right --- */
     while (here()) navLeft();
-    boxes.length = 0; drawn.length = 0; fonts.length = 0;
-    ov.draw(pctx);
-    check('the key sits in a filled pill', boxes.length, 1);
-    const pill = boxes[0] || {};
+    draw();
+    check('one pill on the row', pills().length, 1);
+    const atTop = pills()[0];
+    check('...the line height plus one above and below', atTop.h, FONT_H_EXPECTED + 2);
+    check('...sitting on the last row', atTop.y + atTop.h, 64);
+    check('...pinned to the right edge', atTop.x > 64, true);
+    check('the words are blitted from our own glyph table', ink().length > 20, true);
+    check('...in both inks, so the key is knocked out of its pill',
+          ink().some((b) => b.v === 0) && ink().some((b) => b.v === 1), true);
+    const topInk = ink().length;
 
-    /* ⭐ THE TYPE IS THE DEVICE'S. Drawn in the device 5x7 this row was legible
-     * and visibly foreign -- the right shape in the wrong type, which reads as
-     * a different machine. Josh: "make it look like the others." */
-    check('every word is drawn in the small font', fonts.every((f) => f === 'small'), true);
+    /* --- inside a library: BACK UP. "UP" is narrower than "EXIT", so the
+     *     right-pinned row starts FURTHER RIGHT. That difference is the only
+     *     way to see which word was drawn, now that no string is printed. --- */
+    cursorTo('Move Library'); click();
+    draw();
+    check('still one pill', pills().length, 1);
+    check('UP is narrower than EXIT, so the row sits further right',
+          pills()[0].x > atTop.x, true);
+    check('...and fewer glyphs are drawn', ink().length < topInk, true);
 
-    /* The host's own footer is FONT4_HEIGHT + 2, and the row follows the font
-     * actually in use rather than a copied constant. */
-    check('...and the pill is that line height plus one above and below', pill.h, 7);
-    check('...sitting on the last row', pill.y + pill.h, 64);
-    /* BACK is pinned to the right edge, as on every other screen. */
-    check('...and the pill is right of centre', pill.x > 64, true);
-
-    /* A host too old for either must still draw -- wrong type beats no footer. */
-    delete pctx.measureText; delete pctx.fontHeight;
-    boxes.length = 0; fonts.length = 0;
-    ov.draw(pctx);
-    check('a host without the font still draws the pill', boxes.length, 1);
-    check('...falling back to the device font', fonts.every((f) => f === undefined), true);
-    check('...and sized for it', (boxes[0] || {}).h, 9);
+    /* --- Shift held: a second pill appears at the left --- */
+    shift = true;
+    draw();
+    check('Shift adds the escape-hatch hint', pills().length, 2);
+    check('...at the left edge', Math.min(...pills().map((b) => b.x)) <= 2, true);
+    shift = false;
+    draw();
+    check('...and it goes when Shift does', pills().length, 1);
 }
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
