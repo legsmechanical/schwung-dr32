@@ -358,20 +358,24 @@ check('...and stays put, for the host to close', here(), '');
     drawHdr();
     check('the header is blitted from our own glyph table', ink.length > 20, true);
 
-    /* ⚠ NO RULE. There was one, and the device does not draw one -- the band
-     * carries its own clear row. A full-width 1px line under the header is the
-     * tell of a screen drawn by eye rather than to the geometry. */
-    check('no rule under the header', ink.some((b) => b.w > 100 && b.h === 1), false);
+    /* ⭑ THE RULE, at the first row below the band -- TITLE_RULE_Y, which is
+     * HEADER_H. The host's own list pages drop it and let the band's clear row
+     * separate; this screen keeps it (Josh), because the body is a file listing
+     * in a larger font and wants a harder edge than a blank row. */
+    const rule = ink.find((b) => b.w >= 128 && b.h === 1);
+    check('a rule under the header band', !!rule, true);
+    check('...on the first row below it', rule && rule.y, 7);
 
     /* A 5-row glyph at y=1 means ink from row 1 to row 5, and rows 0 and 6 clear
      * so an inverted band would not run its ink into the boundary. */
-    const rows = ink.map((b) => b.y);
+    const glyphs = ink.filter((b) => b.w < 128);
+    const rows = glyphs.map((b) => b.y);
     check('the glyph row starts at y=1', Math.min(...rows), 1);
     check('...and ends by y=5, leaving the band its clear row', Math.max(...rows), 5);
 
     /* Three elements, so ink spans the full width rather than hugging the left
      * as a single title would. */
-    const xs = ink.map((b) => b.x);
+    const xs = glyphs.map((b) => b.x);
     check('ink starts at the left margin', Math.min(...xs), 2);
     check('...and the right of the screen', Math.max(...xs) > 90, true);
 

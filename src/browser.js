@@ -56,10 +56,8 @@ const PAD_NOTE_HI = 99;
  *
  *   rows 0..6    the header band -- HEADER_H is 7: a 5-row glyph at y=1 with
  *                one clear row above and below it
- *   row  7..9    the gap. ⚠ NO RULE. There was one here, and the device does
- *                not draw one: "TITLE_RULE_Y is no longer a rule at all -- the
- *                band carries its own clear row". A rule under the header is
- *                the tell of a screen that was drawn by eye.
+ *   row  7       the rule, at TITLE_RULE_Y
+ *   rows 8..9    the gap
  *   rows 10..    the list, at MENU_LIST_Y
  *   last 7 rows  our hint row
  */
@@ -67,6 +65,16 @@ const HDR_H = 7;        /* HEADER_H */
 const HDR_Y = 1;        /* TITLE_Y -- the glyph row inside the band */
 const HDR_PAD = 2;      /* the device's own side margin */
 const HDR_GAP = 4;      /* HEADER_GAP, between header elements */
+/*
+ * The rule under the band, at the first row below it -- which is what
+ * list_geometry's TITLE_RULE_Y names (it equals HEADER_H).
+ *
+ * ⓘ The host's own list pages no longer draw one: the band's clear row is
+ * their separator. This screen does, at Josh's call -- the body here is a file
+ * listing in a larger font, not a knob grid, and the header needs a harder edge
+ * against it than a blank row gives.
+ */
+const HDR_RULE_Y = HDR_H;
 const ROW_H = 10;
 /* ⚠ 11, not 10. The row HIGHLIGHT is drawn one row above its text, so a first
  * row at 10 put its highlight on row 9 -- inside the clear row the header band
@@ -451,6 +459,8 @@ function drawHeader(ctx, st) {
     const rightRoom = ctx.width - HDR_PAD - (midX + midW + HDR_GAP);
     const r = fitSmall(ctx, where.toUpperCase(), Math.max(0, rightRoom));
     if (r) printSmall(ctx, ctx.width - HDR_PAD - textW(ctx, r), HDR_Y, r, 1);
+
+    ctx.fillRect(0, HDR_RULE_Y, ctx.width, 1, 1);
 }
 
 /*
