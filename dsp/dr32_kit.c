@@ -196,7 +196,18 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     /* Already holding exactly this file — keep the decoded buffer. Returns
      * before the retire below, so the audio thread's pointer is untouched and
      * no voice is silenced: re-decoding identical audio was the only thing
-     * being skipped. */
+     * being skipped.
+     *
+     * ⚠⚠ AND `set_param` IS THE HOST'S SPI AUDIO CALLBACK, not a control
+     * thread — the comment at the `kit` case in dr32.c claimed otherwise for
+     * months. A WAV read here blocks the audio budget directly, and a state
+     * restore re-asserts every pad's path: measured by Charles at 18.9 ms warm
+     * and 111 ms cold against a ~2.9 ms block, an audible click on every
+     * Shift+Delete (PR #2).
+     *
+     * ⭑ This guard compares size+mtime through sample_is_current, not the path
+     * alone, so a sample EDITED in place still reloads. PR #2 proposed the
+     * path-only form; this one subsumes it. */
     if (path && path[0] && sample_is_current(s, path)) return DR32_WAV_OK;
 
     // Silence the pad first: the audio thread checks `active` before touching
