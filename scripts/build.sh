@@ -180,6 +180,10 @@ mkdir -p "dist/${MODULE_ID}"
 cp build/dsp.so     "dist/${MODULE_ID}/"
 cp build/ui.js      "dist/${MODULE_ID}/"
 cp src/module.json  "dist/${MODULE_ID}/"
+# The sample browser is a CANVAS: a module-drawn page, loaded by name from the
+# module directory (module.json's canvas_script). It is plain JS running in the
+# host's QuickJS, so it is copied, not compiled.
+cp src/browser.js   "dist/${MODULE_ID}/"
 # On-device help. The host discovers help.json by scanning module directories,
 # so shipping it is the whole wiring — and a module without one gets no
 # "Module Help" row at all, which is why it is copied rather than optional in

@@ -147,24 +147,9 @@
               "key": "sample",
               "name": "Sample",
               "short_name": "SMPL",
-              "type": "filepath",
-              "root": "/data",
-              "start_path": "/data",
-              "filter": [
-                ".wav",
-                ".aif",
-                ".aiff"
-              ],
-              "live_preview": true,
-              "browser_hooks": {
-                "on_open": [
-                  {
-                    "key": "ui_auto_select_pad",
-                    "value": "off",
-                    "restore": true
-                  }
-                ]
-              }
+              "type": "canvas",
+              "canvas_script": "browser.js",
+              "enterable": true
             },
             {
               "key": "start",
@@ -223,13 +208,18 @@
               "default": 0
             },
             {
-              "key": "browse",
-              "name": "Browse",
-              "short_name": "BRWS",
-              "type": "int",
-              "min": 0,
-              "max": 255,
-              "default": 0
+              "key": "volume",
+              "name": "Volume",
+              "type": "float",
+              "min": -36.0,
+              "max": 12.0,
+              "step": 0.5,
+              "unit": "dB",
+              "short_name": "VOL",
+              "viz": {
+                "kind": "fader"
+              },
+              "default": 0.0
             }
           ],
           "knobs": [
@@ -240,7 +230,7 @@
             "transpose",
             "detune",
             "choke",
-            "browse"
+            "volume"
           ],
           "child_key_overrides": {
             "ui_current_pad": "ui_current_pad"

@@ -220,6 +220,44 @@ if (isBuild) {
     }
 }
 
+/* ---- 4b. every script module.json NAMES must actually be packaged ---------
+ *
+ * ⚠⚠ THIS FAILS SILENTLY AND COMPLETELY. `canvas_script` is resolved on the
+ * DEVICE, by name, out of the installed module directory. Declare one that
+ * build.sh does not copy and everything still succeeds: the build packages, the
+ * installer ships what was packaged, the module loads, the page appears -- and
+ * the canvas is simply blank, because the file the host went looking for is not
+ * there. Nothing in the chain has anything to complain about.
+ *
+ * It is the same shape as the help.json defect below, one step earlier: a
+ * second list of filenames that has to be kept in step with a first one. Here
+ * the first list is module.json itself, so this reads it rather than restating
+ * it.
+ */
+if (isBuild) {
+    const decl = JSON.parse(fs.readFileSync('src/module.json', 'utf8'));
+    const scripts = new Set();
+    (function walk(o) {
+        if (Array.isArray(o)) { o.forEach(walk); return; }
+        if (!o || typeof o !== 'object') return;
+        for (const k of ['canvas_script', 'card_script']) {
+            if (typeof o[k] === 'string' && o[k]) {
+                /* "file.js#overlay" names one file. */
+                scripts.add(o[k].split('#')[0].trim());
+            }
+        }
+        for (const v of Object.values(o)) walk(v);
+    })(decl);
+    for (const f of scripts) {
+        if (!new RegExp(`cp\\s+src/${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s`).test(src)) {
+            errors.push(
+                `module.json names "${f}" as a script but build.sh never copies it into ` +
+                `dist/<id>/.\n        The host resolves it BY NAME on the device, so this fails ` +
+                `silently: the page draws its chrome around an empty body and nothing reports why.`);
+        }
+    }
+}
+
 /* ---- 5. install.sh must ship what build.sh packaged, not a second list ----
  *
  * Checked in install.sh rather than build.sh, so it is passed that path

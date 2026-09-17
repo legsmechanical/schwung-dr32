@@ -16,13 +16,43 @@ const levels = ((caps.ui_hierarchy || {}).levels) || {};
 
 let errors = [];
 
+/*
+ * Keys deliberately shown on TWO banks. A key here is one parameter with two
+ * cells, never two parameters — the same `pad<N>_volume` either way.
+ *
+ * ⚠ This list is the ONLY way past the two duplicate rules below, so adding to
+ * it is a decision, not a convenience.
+ *
+ * `volume` — Josh, 2026-09-16: a clone of the pad volume knob on the Sample
+ * bank, "useful to have there while you're messing with samples".
+ */
+const CLONED = new Set(['volume']);
+
 // 1. duplicate keys across the whole hierarchy
 const seen = new Map();
 for (const [lname, level] of Object.entries(levels)) {
     for (const p of level.params || []) {
         if (!p || typeof p !== 'object' || !p.key) continue;
-        if (seen.has(p.key)) {
-            errors.push(`duplicate key "${p.key}" (in levels "${seen.get(p.key)}" and "${lname}") — the host rejects the WHOLE hierarchy for this`);
+        if (seen.has(p.key) && !CLONED.has(p.key)) {
+            /*
+             * ⚠ This used to say "the host rejects the WHOLE hierarchy for
+             * this". It does not, and the claim cited nothing.
+             *
+             * Measured 2026-09-16 with `volume` declared on both `pads` and
+             * `pad_mix`: `node tools/pages_check.mjs` — which runs upstream's
+             * own validator over the hierarchy the DSP SERVES — printed
+             * "pages_check: OK" and planned all 8 pages, the duplicate drawn
+             * on both banks. The host's planner expects this: its dedupe note
+             * records that 16 fleet modules publish a `children` alias level
+             * re-listing root's knobs, and buildMetaIndex is a map, so a
+             * repeat resolves to the same parameter rather than a conflict.
+             *
+             * The rule is still worth keeping, because an ACCIDENTAL duplicate
+             * means a key drifted between banks and one of the two cells is
+             * addressing something nobody meant. That is why it fails unless
+             * the key is named in CLONED above.
+             */
+            errors.push(`duplicate key "${p.key}" (in levels "${seen.get(p.key)}" and "${lname}") — declare it in CLONED if the second cell is deliberate`);
         } else {
             seen.set(p.key, lname);
         }
@@ -129,7 +159,8 @@ const PAD_LEVELS = ['pads', 'pad_shape', 'pad_mix'];
         const lvl = levels[name] || {};
         const declared = (lvl.params || []).map((p) => p && p.key).filter(Boolean);
         for (const k of declared) {
-            if (seen.has(k)) errors.push(`pad param "${k}" is declared on both ${seen.get(k)} and ${name}`);
+            if (seen.has(k) && !CLONED.has(k))
+                errors.push(`pad param "${k}" is declared on both ${seen.get(k)} and ${name} — the banks PARTITION the pad params, so add it to CLONED if the second cell is deliberate`);
             seen.set(k, name);
         }
         const knobs = (lvl.knobs || []).filter((k) => typeof k === 'string' && k);
