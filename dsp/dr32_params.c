@@ -29,18 +29,39 @@
  * With an alias the UI does not have to — it binds to fixed keys and the DSP
  * redirects them to kit->ui_current_pad, which the DSP moves itself because it
  * DOES see the notes (it plays them). */
+/*
+ * `volume_clone` IS `volume` — the Sample bank's copy of the Mix bank's Volume
+ * knob (Josh, 2026-09-16: "useful to have there while you're messing with
+ * samples"). One parameter, two cells.
+ *
+ * 🔴 IT NEEDS ITS OWN KEY because the host's C loader (chain_params.c
+ * parse_hierarchy_params) rejects the WHOLE ui_hierarchy with count=-1 when any
+ * key appears twice. That took the send_a/send_b ranges down with it, so the
+ * host refused both per-pad sends and they were silent — on stock 1.4.0 and on
+ * dbxhost alike (device logs, 2026-09-19). The JS page planner tolerates the
+ * repeat, which is why pages_check never saw it.
+ *
+ * Resolved HERE, in the one place both the read and the write path (and Link's
+ * "is this the same parameter?" test) get their sub-key from, so nothing below
+ * ever sees the alias. It is not in PAD_FIELDS: state only ever stores
+ * `volume`.
+ */
+static const char *canon_pad_sub(const char *sub) {
+    return strcmp(sub, "volume_clone") ? sub : "volume";
+}
+
 static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) {
     if (strncmp(key, "pad", 3) != 0) return -1;
     const char *p = key + 3;
     if (*p == '_') {                       /* alias: the focused pad */
-        *rest = p + 1;
+        *rest = canon_pad_sub(p + 1);
         int cur = k ? k->ui_current_pad : 0;
         return (cur >= 0 && cur < DR32_PADS) ? cur : 0;
     }
     int idx = 0, digits = 0;
     while (*p >= '0' && *p <= '9') { idx = idx * 10 + (*p - '0'); p++; digits++; }
     if (!digits || *p != '_') return -1;
-    *rest = p + 1;
+    *rest = canon_pad_sub(p + 1);
     idx -= 1;                                   /* wire 1..32 -> engine 0..31 */
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
 }

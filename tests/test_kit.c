@@ -753,6 +753,33 @@ int main(void) {
         sh("rm -rf /tmp/dr32_br");
     }
 
+    /* `volume_clone` IS `volume`: the Sample bank's copy of the Mix bank's
+     * knob, given its own key only because the host's C loader rejects a
+     * repeated key (and the per-pad sends with it). Both directions, both
+     * addressing forms, and Link must see ONE parameter — sweeping the clone
+     * then the original is one sweep, not "reached for another knob". */
+    {
+        dr32_kit c; dr32_kit_init(&c);
+        char v[32];
+        dr32_apply_param(&c, "pad3_volume_clone", "-6");
+        CHECK(c.pads[2].params.volume_db == -6.0f, "writing the clone did not move volume");
+        dr32_apply_param(&c, "pad3_volume", "4.5");
+        dr32_read_param(&c, "pad3_volume_clone", v, sizeof v);
+        CHECK(atof(v) == 4.5, "the clone reads %s, want volume's 4.5", v);
+        c.ui_current_pad = 2;
+        dr32_apply_param(&c, "pad_volume_clone", "-1.5");
+        CHECK(c.pads[2].params.volume_db == -1.5f, "the focused-pad clone missed");
+
+        dr32_apply_param(&c, "link", "All");
+        dr32_apply_param(&c, "pad3_volume_clone", "-2");
+        dr32_apply_param(&c, "pad3_volume", "-3");
+        CHECK(c.link_all == 1, "Link took the clone and the original for two parameters");
+        int all = 1;
+        for (int i = 0; i < DR32_PADS; i++) if (c.pads[i].params.volume_db != -3.0f) all = 0;
+        CHECK(all, "a clone-then-original sweep did not reach every pad");
+        dr32_kit_free(&c);
+    }
+
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);
     return failures ? 1 : 0;
 }
