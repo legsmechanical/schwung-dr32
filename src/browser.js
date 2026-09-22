@@ -140,14 +140,19 @@ const FAMILIES = [
     ] },
     { id: "fm", label: "FM", models: [
         { slug: "fm/kick", name: "Kick" },
-        { slug: "fm/snare", name: "Snare" },
         { slug: "fm/tom", name: "Tom" },
+        { slug: "fm/snare", name: "Snare" },
         { slug: "fm/clap", name: "Clap" },
         { slug: "fm/rim", name: "Rim" },
-        { slug: "fm/cowbell", name: "Cowbell" },
         { slug: "fm/chat", name: "Closed Hat" },
         { slug: "fm/ohat", name: "Open Hat" },
         { slug: "fm/cymbal", name: "Cymbal" },
+        { slug: "fm/cowbell", name: "Cowbell" },
+        { slug: "fm/perc", name: "Percussion" },
+        { slug: "fm/zap", name: "Zap" },
+        { slug: "fm/drip", name: "Drip" },
+        { slug: "fm/glitch", name: "Glitch" },
+        { slug: "fm/clank", name: "Clank" },
     ] },
 ];
 /* END GENERATED MODELS */

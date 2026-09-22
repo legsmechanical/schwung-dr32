@@ -24,7 +24,10 @@ const dr32_engine_ops *dr32_engine_get(int id) {
         case DR32_ENG_URCHIN_SNARE:  return &dr32_engine_urchin_snare;
         case DR32_ENG_URCHIN_CYMBAL: return &dr32_engine_urchin_cymbal;
         case DR32_ENG_CHOWKICK:      return &dr32_engine_chowkick;
-        case DR32_ENG_FM:            return &dr32_engine_fm;
+        case DR32_ENG_FM_KICK:       return &dr32_engine_fm_kick;
+        case DR32_ENG_FM_SNARE:      return &dr32_engine_fm_snare;
+        case DR32_ENG_FM_METAL:      return &dr32_engine_fm_metal;
+        case DR32_ENG_FM_PERC:       return &dr32_engine_fm_perc;
         default: break;
     }
     for (int p = 0; p < N_PORTS; p++) {

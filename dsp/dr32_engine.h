@@ -43,8 +43,14 @@ enum {
     DR32_ENG_8W8_BASE      = 24,    /* 16 lanes: 24..39 */
     DR32_ENG_CW78_BASE     = 40,    /* 14 lanes: 40..53 */
     DR32_ENG_CHOWKICK      = 54,
-    DR32_ENG_FM            = 55,
-    DR32_ENG_COUNT         = 56,
+    /* DR32's own FM drums: one core, an engine per drum TYPE so each has its
+     * own ranges (fm_engine.cpp). 55 was the single FM engine; its sets were
+     * not carried over (Josh: no backward compatibility). */
+    DR32_ENG_FM_KICK       = 55,
+    DR32_ENG_FM_SNARE      = 56,
+    DR32_ENG_FM_METAL      = 57,
+    DR32_ENG_FM_PERC       = 58,
+    DR32_ENG_COUNT         = 59,
 };
 
 /* ui_family values: which INSTRUMENT the focused pad's engine comes from.
@@ -141,7 +147,10 @@ extern const dr32_engine_ops dr32_engine_urchin_drum;
 extern const dr32_engine_ops dr32_engine_urchin_snare;
 extern const dr32_engine_ops dr32_engine_urchin_cymbal;
 extern const dr32_engine_ops dr32_engine_chowkick;
-extern const dr32_engine_ops dr32_engine_fm;
+extern const dr32_engine_ops dr32_engine_fm_kick;
+extern const dr32_engine_ops dr32_engine_fm_snare;
+extern const dr32_engine_ops dr32_engine_fm_metal;
+extern const dr32_engine_ops dr32_engine_fm_perc;
 /* The kit ports: each family's lane engines, in id order from its BASE. */
 const dr32_engine_ops *dr32_9w9_engine(int lane, int *count);
 const dr32_engine_ops *dr32_6w6_engine(int lane, int *count);

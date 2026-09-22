@@ -137,7 +137,7 @@ Master   MASTR
 - ⚠ **A knob GAP cannot be declared.** `knobKeys` filters null entries out, so authored knobs are
   packed — an intended blank in a `knobs` array closes up rather than reserving a slot.
 
-## 🥁 Synth engines: any pad can be a SIMIAN, URCHIN, 9W9, 6W6, 8W8 or CW-78 voice (branch `multiengine`)
+## 🥁 Synth engines: any pad can be a SIMIAN, URCHIN, 9W9, 6W6, 8W8, CW-78, ChowKick or FM voice (branch `multiengine`)
 
 Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a sample engine
 (what's there now) or a synthesis engine per pad."* Josh's rules:
@@ -293,24 +293,45 @@ chowdsp_wdf, tuning-library).
   its saved 80 Hz, and its golden is rendered unlinked to match. It rings ~30 s by design.
 - Engine params may now be FLOATS (`step` < 1): `gen_engine_ui` emits `type: float` with a step.
 
-### 🎛 FM (2026-09-22)
+### 🎛 FM (2026-09-22) — four engines on one core
 
 Josh: *"from scratch"*, after looking at ctag-fh-kiel/md-drum-synth (an EFM-style FM drum test app,
-AI-written, with **NO LICENCE**, so it can't be vendored or ported). `fm_engine.cpp` is DR32's own:
-one engine (`DR32_ENG_FM`, prefix `fm_`, pages Tone · FM · Noise · Velocity), nine models of our own values.
+AI-written, with **NO LICENCE**, so it can't be vendored or ported). `fm_engine.cpp` is DR32's own.
 ⚠ Keep it clean-room: take nothing from that repo.
 
-- 2-op FM (sine table, uint32 phases), a Hz-offset pitch sweep, a modulator with feedback and
-  Mod Track, white noise through an SVF (LP/BP/HP), clap bursts. Every decay is time-to-−60 dB.
-- There is NO ORIGINAL to A/B, so `tests/test_fm.c` pins what each knob promises, measured on the
-  audio (pitch within 1%, decay −60 dB ± 2 dB at the knob's ms, sweep start/end, clap burst count,
-  velocity law, a live knob change, the stop). Every mutation tried was caught.
-- ⭐ **Velocity page** (Josh: *"so velocity changes tone in a meaningful way"*): Level, Mod, Sweep,
-  Pitch, Decay (bipolar), Noise, Noise Freq. ONE law: a FULL-velocity hit is the knobs as set, bit
-  for bit (tested for every model with every amount at max), and softer hits move each target by
-  amount x (1 - velocity). So turning an amount up never changes a hard hit.
-- Cost: 0.8–3.7 µs/block sounding on the workstation, the cheapest engine here; zeros without
-  compute once both envelopes are under −120 dB.
+⭐ **Why four engines, not one** (Josh's first listen, verbatim in `_worklogs/schwung-dr32.md`:
+pitch/decays "way too compressed at the minimum side", "tweaks ... more suitable to the drum
+type", hats "more bell-like than cymbal-like"). **The host knob is LINEAR: a detent is 0.5% of
+the range** (`knob_engine.mjs`, no taper field). One engine's 20–2000 Hz / 5–4000 ms left a kick
+~3 semitones a detent. The fix is RANGES, not a curve: one engine per drum type, each with its own
+ranges and only its knobs, all on one core (Josh: *"keep all the engines fm-based"*).
+
+| engine (id, prefix) | models | shape |
+|---|---|---|
+| FM Kick (55, `fk_`) | Kick, Tom | Pitch 20–300 Hz, Sweep Decay ≤ 200 ms, Noise Decay ≤ 200 ms |
+| FM Snare (56, `fs_`) | Snare, Clap, Rim | Pitch 60–1000, **Bursts / Burst Gap** (was "Claps": read as a clap sound) |
+| FM Metal (57, `fx_`) | Closed/Open Hat, Cymbal, Cowbell | THREE pairs at the 808's six cymbal ratios, Spread, no sweep |
+| FM Perc (58, `fp_`) | Percussion, Zap, Drip, Glitch, Clank | wide ranges ON PURPOSE + **Mangle** (Noise FM, Ring, Crush, Bits) |
+
+- Pages: Tone · FM (Metal: Metal) · Noise · (Mangle) · **Output** · Velocity. **Level is knob 1**
+  of Tone and Noise (Josh). Output = **Mix** (−100 tone only … 0 both … +100 noise only; Josh's
+  "Mixer page"), Drive, Low Cut, **High Cut** (off at 20 kHz). ⚠ The page is NOT called "Mix":
+  DR32's own per-pad Mix page is in the same nav list.
+- **Sweep is bipolar** (−48..+48 st; negative rises into the note).
+- ⭐ **Metal is not a bell because of CROSS-modulation**: each pair's carrier is bent by the one
+  before, and feedback runs twice FM's depth. Measured as the share of 43 Hz bins above 4 kHz within
+  20 dB of the peak: the first engine's hats **0.13–0.17**, three plain pairs 0.25–0.5, with
+  cross-mod **0.62 / 0.87 / 0.92** (CH/OH/Cymbal). `test_fm` pins > 0.5.
+- The table suffix after the prefix is the same knob on every engine; `test_fm.c` runs every check
+  on every engine that has the knob. Pitch within 1%, decay −60 dB ± 2 dB, sweep start PREDICTED
+  from the decay law (both signs), bursts, mix ends, high cut, velocity law, mangle, density, live
+  knob, stop. Mutations: mix (both sides), high cut, cross-mod, bits, crush, noise FM, ring,
+  bursts, a unipolar sweep all caught; halving Metal's feedback is NOT (it thins, it doesn't break).
+- ⚠ Served hierarchy is now **~98 KB of the 128 KB** value channel (engine_ui.json 75 KB, the FM
+  split added ~35 KB). The next engines need the room back: trim FM's pages' copy lists first.
+- Cost: 0.5–3 µs/block sounding on the workstation; zeros without compute once both envelopes are
+  under −120 dB.
+- Old FM pads/sets (engine 55 with `fm_` keys) are not carried over (Josh: no backward compat).
 
 - **Licence:** GPL-3.0-or-later since the engines (they are GPL; the combined `dsp.so` is too).
   `NOTICES.md` carries the MIT notice for the earlier code, including Charles's two PRs.
