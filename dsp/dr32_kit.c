@@ -312,78 +312,58 @@ static void source_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames)
 }
 
 /*
- * WIDE — a Haas spread of one pad's stereo output, in place.
+ * WIDE — a complementary-comb widener (Lauridsen's), one pad, in place.
  *
- * One side is delayed by wide_ms(wide) (+ the right, - the left). Above a
- * crossover only: each channel is split Linkwitz-Riley 24 dB (two Butterworth
- * 2nd-order sections per band, from one SVF split), the low band passes on
- * both sides as it was, and only the delayed side's HIGH band goes through the
- * delay. Both channels are split, so they keep the same phase below the
- * crossover (LR4 sums to an allpass; a channel left unsplit would not match).
- * At 20 Hz there is no split: the whole delayed side is delayed.
+ *     side = g * HP(mid)(t - 8 ms)        mid = (L + R) / 2,  g = Wide / 100
+ *     L += side        R -= side
+ *
+ * Why this and not the Haas delay it replaced (Josh, 2026-09-22, hearing the
+ * Haas version: "the lean ... seems more intense now"): a one-sided delay
+ * moves the image toward the side that arrives first, at every setting —
+ * the precedence effect. Here both sides are treated alike and opposite, so
+ * the image stays where Pan put it and only widens. And L + R is untouched —
+ * the added copy cancels — so a mono sum is exactly the dry pad.
+ *
+ * The crossover: only the mid's HIGH band (above Wide Freq, 24 dB, two
+ * Butterworth high-passes) is added, so nothing below it widens; the low end
+ * needs no split at all, since nothing is added there. 20 Hz = full band.
+ * Width is linear in g: the side is 20*log10(g) dB under the mid, so 1% is
+ * -40 dB (a hint) and 100% is a full-depth comb.
  *
  * Andy Simper's trapezoidal SVF, Q = 1/sqrt(2).
  */
-static inline void svf_step(const dr32_wide *d, float st[2], float v0, float *lp, float *hp) {
+static inline float svf_hp(const dr32_wide *d, float st[2], float v0) {
     float v3 = v0 - st[1];
     float v1 = d->a1 * st[0] + d->a2 * v3;
     float v2 = st[1] + d->a2 * st[0] + d->a3 * v3;
     st[0] = 2.0f * v1 - st[0];
     st[1] = 2.0f * v2 - st[1];
-    *lp = v2;
-    *hp = v0 - d->k * v1 - v2;
-}
-
-/* The knob's % -> a signed delay in ms: 15 ms x (pct/100)^2, sign kept. */
-static float wide_ms(float pct) {
-    if (pct > 100.0f) pct = 100.0f;
-    if (pct < -100.0f) pct = -100.0f;
-    const float a = pct * 0.01f;
-    return (a < 0.0f ? -1.0f : 1.0f) * DR32_WIDE_MS_MAX * a * a;
+    return v0 - d->k * v1 - v2;
 }
 
 static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
-    const float ms = wide_ms(p->wide_pct);
-    int side = ms > 0.0f ? 1 : (ms < 0.0f ? -1 : d->side);
-    if (side != d->side) {                 /* the other side now: start clean */
-        memset(d->buf, 0, sizeof(d->buf));
-        d->side = side;
-    }
-    const int dly = (int)(fabsf(ms) * 0.001f * DR32_SR + 0.5f);   /* <= 662 */
-    const int split = p->wide_hz > 20.5f;
-    if (split && d->hz != p->wide_hz) {
-        float fc = p->wide_hz;
-        d->g = tanf(3.14159265f * fc / DR32_SR);
+    float pct = p->wide_pct;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    const float g = pct * 0.01f;
+    const int dly = (int)(DR32_WIDE_MS * 0.001f * DR32_SR + 0.5f);   /* 353 */
+    const int hp = p->wide_hz > 20.5f;
+    if (hp && d->hz != p->wide_hz) {
+        const float t = tanf(3.14159265f * p->wide_hz / DR32_SR);
         d->k = 1.41421356f;
-        d->a1 = 1.0f / (1.0f + d->g * (d->g + d->k));
-        d->a2 = d->g * d->a1;
-        d->a3 = d->g * d->a2;
-        d->hz = fc;
+        d->a1 = 1.0f / (1.0f + t * (t + d->k));
+        d->a2 = t * d->a1;
+        d->a3 = t * d->a2;
+        d->hz = p->wide_hz;
     }
-    const int dch = side < 0 ? 0 : 1;      /* the delayed channel */
     for (int i = 0; i < frames; i++) {
-        float y[2];
-        for (int c = 0; c < 2; c++) {
-            float v = x[2 * i + c];
-            float lo = v, hi = 0.0f;
-            if (split) {
-                float l1, h1, l2, h2, dump;
-                svf_step(d, d->s[c][0], v, &l1, &h1);
-                svf_step(d, d->s[c][1], l1, &l2, &dump);
-                svf_step(d, d->s[c][2], h1, &dump, &h2);
-                lo = l2; hi = h2;
-            } else {
-                lo = 0.0f; hi = v;
-            }
-            if (c == dch && side != 0) {
-                d->buf[d->w] = hi;
-                hi = d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
-                d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
-            }
-            y[c] = lo + hi;
-        }
-        x[2 * i] = y[0];
-        x[2 * i + 1] = y[1];
+        float m = 0.5f * (x[2 * i] + x[2 * i + 1]);
+        if (hp) m = svf_hp(d, d->s[1], svf_hp(d, d->s[0], m));
+        d->buf[d->w] = m;
+        const float side = g * d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
+        d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
+        x[2 * i]     += side;
+        x[2 * i + 1] -= side;
     }
 }
 

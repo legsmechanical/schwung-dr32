@@ -24,83 +24,26 @@ Master   MASTR
 ```
 
 - ⭑ **WIDE / WFREQ** (Josh, 2026-09-22: *"a haas stereo spread to each drum's mix page ... and a
-  knob to set a crossover below which the sound is not spread"*; names his). `wide` −100..+100 %
-  (+ delays the RIGHT side), CURVED to 15 ms × (wide/100)²: width comes on between 0 and ~3 ms, and
-  a linear ms knob spent that in a few detents (Josh: *"goes to zero from pretty darn wide pretty
-  quickly"*). Capped at 15 ms, not 30: past ~10–15 ms a drum transient stops fusing and reads as a
-  flam. `wide_freq` 20..4000 Hz (20 = full band, default 150; 4 kHz so a pad can spread only its
-  top). The stage is
-  `wide_run` in `dr32_kit.c`, per PAD after the source, inside the one `pad_render` both render
-  paths share. LR4 split from one SVF per channel, BOTH channels split so their low bands stay in
-  phase; only the delayed side's high band is delayed.
-  - ⚠ **Wide 0 is a TRUE bypass**, and it is proven: a hash probe over sample pads (filters,
-    Peak, Punch, choke, pan, a synth pad, both render paths) matched the pre-Wide build bit for
-    bit, and a 1 Hz cutoff change moved it.
-  - ⚠ **A pad renders while `pad_live`, not only while sounding** — the delayed side's last
-    15 ms outlive the source. BOTH render loops ask `pad_live`. It only shows on a SAMPLE pad (a
-    sample stops dead; a synth has 100 ms of near-silence before its gate), so `test_wide.c` checks
-    the tail with an abruptly-ending WAV on both paths.
+  knob to set a crossover below which the sound is not spread"*; names his). It STARTED as a Haas
+  delay and is now a **complementary-comb (Lauridsen) widener**: `side = g·HP(mid)(t−8 ms)`,
+  `L += side`, `R −= side`, `g = wide/100` (`wide_run`, `dr32_kit.c`). Why it changed: a one-sided
+  delay LEANS toward the leading side at every setting (the precedence effect; Josh: *"the lean
+  ... seems more intense now"*, after a curve put more knob travel under ~1 ms, where it mostly
+  moves the image). This one does not lean and its MONO SUM IS THE DRY PAD exactly. So `wide` is
+  0..100 %, no sign; `wide_freq` 20..4000 Hz (default 150; 20 = full band); the 8 ms delay is
+  internal (short enough not to flam a drum, comb teeth ~125 Hz apart). Linear in g: side is
+  20·log10(g) dB under the mid. Cost +0.02 µs/pad full band, +0.16 with the crossover (Mac).
+  - ⚠ **Wide 0 is a TRUE bypass**, proven: a hash probe over sample pads matched the pre-Wide build
+    bit for bit. (Forcing the stage on at 0 is an EQUIVALENT mutation: +0·x changes nothing.)
+  - ⚠ At 100% a SIDE can peak at twice the dry level (the mono sum cannot). Loud pads can clip on
+    the split path's int16 — which in a test reads as a "lost tail". Keep test tones quiet.
+  - ⚠ **A pad renders while `pad_live`, not only while sounding** — the delayed copy's last 8 ms
+    outlive the source. BOTH render loops ask `pad_live`. It only shows on a SAMPLE pad (a sample
+    stops dead; a synth has 100 ms of near-silence before its gate), so `test_wide.c` checks the
+    tail with an abruptly-ending WAV on both paths.
   - It is "where the pad sits", like the sends: kept across sample <-> synth, in the state blob,
     never in the `.ablpreset`. Punch moved to its own bank (`pad_punch`, gated `ui_engine == 0`) to
     make room; `check_module_json` now partitions FOUR banks.
-- ⭑⭑ **THE PAD KNOBS ARE THREE SIBLING CHILD LEVELS, ONE PER BANK** (Josh, 2026-09-09: *"put each
-  pad page on its own bank so the list is easy to navigate"*). They were one 24-knob level that the
-  planner chunked into "Pads / Pads 2 / Pads 3" — pages with no names, reachable only by jogging
-  past each other. Three levels give three named banks in the nav list at no cost, because
-  everything that makes them ONE rack is declared rather than inferred:
-  - **All three name the same `child_index_param`** (`ui_current_pad`), so they are three views of
-    one focus. `childPickerNeeded` (`page_plan.mjs`) dedupes on exactly that — the FIRST level to
-    plan a picker keeps it, the rest defer — and `allListedKeys` is GLOBAL, so the PAD knob on the
-    Sample bank suppresses the picker for all three. **Do not take the PAD knob off the Sample
-    bank**: three picker pages come back.
-  - 🔴 **`child_note_base` is declared ONCE, on `pads`, and nowhere else.** `voicesOf`
-    (`voices.mjs`) emits a voice per child of EVERY level that declares a note map, so all three
-    declaring it published **96 voices at notes 36..131** and the drum surface seated three copies
-    of the kit. Caught by `pages_check`, which walks the voice list; the pages themselves looked
-    perfect. Shape and Mix are further EDITING VIEWS of the same 32 pads, not 32 more pads.
-  - ⚠ **`child_press_param` / `child_press_note_param` stay on `pads` alone.** dAVEBOx takes *"the
-    FIRST child level declaring `child_press_param`"* (`davebox/ui/ui_discover.mjs`), and the host's
-    rule is the same — a second declaration is a second answer to a question with one answer.
-  - The three banks **partition** the pad params: every key on exactly one, none dropped.
-    `tools/check_module_json.mjs` pins the partition, the single note map, the single press
-    declaration, the shared index base and the 8-knob ceiling per bank; six mutations fire.
-  - ⚠ **`pads` keeps its name.** It is the level `check_module_json.mjs` addresses by name and the
-    first davebox walks; renaming it to `pad_sample` reads better and breaks both.
-- ⚠ **`child_names` is spliced before EVERY `"child_index_param"`, not the first.** Each bank names
-  the pads it draws, so a splice that stopped at the first anchor left Shape and Mix reading
-  "Pad 7" while Sample said "Kick 707" — not a page that looks broken, one that looks like a
-  different pad. `dr32_refresh_hierarchy` loops, and ⚠ it must **step past** the anchor each time:
-  resuming the search AT it finds the same one again and re-splices into its own output until the
-  buffer fills, which fails soft as the plain document, so the only symptom is names that never
-  appear at all.
-- **The OLED header reads `module.json`'s `name`, so `name` is `"DrumRack32"`** (Josh, 2026-09-09:
-  *"replace the drum rack 32 on the header with dr32 to save space"*, then *"make DrumRack32 the
-  title"*). ⚠ **The header and the module PICKER read the SAME field** — `scanModulesForType`
-  pushes `name: json.name || entry` — so there is no way to be long in the list and short in the
-  band; `"DrumRack32"` is the compromise that fits both. `headerTitle`
-  (`shadow_ui_param_pages.mjs`) resolves `getModuleDisplayName` → `moduleNameCache[id]` → the
-  `name` field; **`abbrev` is only the fallback until module.json has been read**, so setting
-  `abbrev: "DR32"` alone changed nothing. The long form lives in `description`, `docs/manual.html`
-  and `src/help.json`.
-
-- ⭐ **A kit's pads are SEATED BY NOTE, not file order** (Josh, 2026-09-22: *"can't we just use the
-  pad number ... note assignment isn't something we expose to the user"*). `dr32_preset_load` puts
-  the entry receiving note 36+s at pad s+1; out-of-range or duplicate notes take the free pads in
-  file order, and a duplicate never steals its note's routing. Before this, pad N was the file's Nth
-  entry: Core Library's Glide Kit (notes 41 39 37 36 ...) numbered its bottom row 4 3 6 2, which
-  only became visible when the PAD cell drew its number big. It also made `child_note_base`'s
-  promise to the host (pad i = note 36+i) false. ⓘ State blobs saved before it are NOT remapped
-  (Josh: *"i don't care about backward compatibility or prior sets"*).
-- ⭑ **The Init kit** (Josh, 2026-09-22: *"an 'Init' category that has one preset - 'Init'
-  basically puts the module in the state it's in when you first load it"*). FIRST category, one
-  kit. It is not a file: its path is the marker `DR32_KIT_INIT_PATH` ("dr32:init",
-  `dr32_kits.h`), seeded into the catalogue on every rebuild, and `load_kit_any` (`dr32.c`) is the
-  ONE loader every kit load goes through (browser, state restore, cancelled preview), so the
-  marker is a kit everywhere a path is. `dr32_kit_reset` retires samples/engines one-deep like
-  `clear`, then defaults, notes, master, Link, focus — `test_browser.c` compares every pad key
-  against a FRESH instance. ⚠ The same-kit shortcut is OFF for Init: a baseline replay cannot EMPTY
-  a pad (an empty pad writes no `sample`), so a sample added since would survive a re-Init.
-  ⚠ Category 0 is Init now: a test that picks the first category expecting a folder gets one kit.
 - ⭐ **Choosing a category LOADS what the kit list lands on** (Josh, 2026-09-22: *"to get a kit to
   load, have to first scroll to it"*). The host's preset page writes `kit_index` ONLY when the jog
   moves — an arrival writes nothing and a click inside it leaves without writing

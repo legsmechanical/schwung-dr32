@@ -40,21 +40,21 @@ typedef struct {
 
 /* Wide (Josh, 2026-09-22: "a haas stereo spread ... and a knob to set a
  * crossover below which the sound is not spread"). Per PAD, after everything
- * else the pad does, so it spreads a sample pad and a synth pad alike.
- * `buf` holds the delayed side's (high band of the) signal; 1024 frames is
- * 23 ms, over the 15 ms the knob reaches. `tail` keeps a pad rendering after
- * it stops sounding, so the delayed side's last 15 ms are not cut off. */
-#define DR32_WIDE_BUF    1024
-#define DR32_WIDE_MS_MAX 15.0f
+ * else the pad does, so it widens a sample pad and a synth pad alike. A
+ * COMPLEMENTARY-COMB widener (dr32_kit.c wide_run), not the Haas delay it
+ * started as. `buf` holds the delayed, high-passed MID; 512 frames is 11.6 ms,
+ * over the 8 ms delay. `tail` keeps a pad rendering after it stops sounding,
+ * so the delayed copy's last 8 ms are not cut off. */
+#define DR32_WIDE_BUF    512
+#define DR32_WIDE_MS     8.0f
 #define DR32_WIDE_HZ_MAX 4000.0f
 typedef struct {
     float buf[DR32_WIDE_BUF];
     int   w;             // write index
-    int   side;          // which side buf holds: 1 right, -1 left, 0 none yet
     int   tail;          // frames still to render once the pad is silent
     float hz;            // the crossover the coefficients below are for (0 = none)
-    float g, k, a1, a2, a3;
-    float s[2][3][2];    // SVF state [channel][stage: split, low 2nd, high 2nd][ic1, ic2]
+    float k, a1, a2, a3;
+    float s[2][2];       // SVF state [stage][ic1, ic2]: the high-pass, twice
 } dr32_wide;
 
 typedef struct {

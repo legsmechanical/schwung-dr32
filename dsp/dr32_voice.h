@@ -95,15 +95,13 @@ typedef struct {
     int   sending_note;    // note the rack feeds the cell (factory kits: 60)
     int   speaker_on;      // mixer speakerOn; 0 = sample-exact silence
     float send_db[2];      // post-fader send amounts, dB (-70 = off), like native
-    /* Wide: a Haas spread of the pad's stereo output (dr32_kit.c, wide_run).
-     * DR32's own, not the Move's: never in an .ablpreset, only the state blob.
-     * wide: -100..+100 %, + delays the RIGHT side, - the LEFT, 0 = off (a
-     *       true bypass). The delay is 15 ms x (wide/100)^2: CURVED, because
-     *       width comes on between 0 and ~3 ms and a linear knob spent that in
-     *       a few detents (Josh: "goes to zero from pretty darn wide pretty
-     *       quickly"). CAPPED at 15 ms: past ~10-15 ms a drum's transient
-     *       stops fusing and reads as a flam.
-     * wide_hz: the crossover below which nothing is delayed (20 = full band). */
+    /* Wide: a complementary-comb widener on the pad's stereo output
+     * (dr32_kit.c, wide_run). DR32's own, not the Move's: never in an
+     * .ablpreset, only the state blob.
+     * wide: 0..100 %, the side's level against the mid (linear), 0 = off (a
+     *       true bypass). No sign: this widener does not lean, so there is no
+     *       side to choose.
+     * wide_hz: the crossover below which nothing widens (20 = full band). */
     float wide_pct;
     float wide_hz;
 } dr32_pad;

@@ -449,7 +449,7 @@
               "name": "Wide",
               "short_name": "WIDE",
               "type": "int",
-              "min": -100,
+              "min": 0,
               "max": 100,
               "unit": "%",
               "default": 0
