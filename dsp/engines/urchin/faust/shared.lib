@@ -1,0 +1,233 @@
+/*
+   ┏━━━┓╱╱╱╱╱┏┓╱╱┏┓╱╱╱╱╱┏┓╱╱   
+   ┃┏━┓┃╱╱╱╱╱┃┃╱╱┃┃╱╱╱╱╱┃┃╱╱╱  
+   ┃┗━┛┣┓┏┳━━┫┃┏┓┃┃╱╱┏━━┫┗━┳━━┓
+   ┃┏━━┫┃┃┃┏┓┃┗┛┃┃┃╱┏┫┏┓┃┏┓┃━━┫
+   ┃┃╱╱┃┗┛┃┃┃┃┏┓┃┃┗━┛┃┏┓┃┗┛┣━━┃
+   ┗┛╱╱┗━━┻┛┗┻┛┗┛┗━━━┻┛┗┻━━┻━━┛
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+
+	Copyright (c) 2023 Punk Labs LLC
+
+	This file is part of OneTrick URCHIN
+
+	OneTrick URCHIN is free software: you can redistribute it and/or modify it
+	under the terms of the GNU General Public License as published by the Free
+	Software Foundation, either version 3 of the License, or (at your option)
+	any later version.
+
+	OneTrick URCHIN is distributed in the hope that it will be useful, but WITHOUT
+	ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+	FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+	more details.
+
+	You should have received a copy of the GNU General Public License along with
+	OneTrick URCHIN.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+declare name "OneTrick URCHIN DSP";
+declare copyright "Copyright (c) 2023 Punk Labs LLC";
+declare license "GPLv3 (or later)";
+
+import("onetrick.lib");
+
+NYQUIST=ot.NYQUIST;
+MAX_FREQ = NYQUIST * 0.95; // Filters can become unstable at nyquist
+MIN_FREQ = 20;
+clampFreq = max(MIN_FREQ):min(MAX_FREQ);
+
+MIN_VELOCITY = 0.01;
+
+pitchWheel = nentry("PitchWheel", 0, -1, 1, 0.001) * 12.0;
+transpose = nentry("Transpose", 0, -12, 12, 0.001);
+pitchShift = ba.semi2ratio(sampleSpeed + pitchWheel + transpose : ot.smoothParam);
+//transposeSafe = *(pitchShift) : min(MAX_FREQ);
+
+inches2meters(in) = in * 0.0254;
+
+// Effect Helpers
+
+// Returns the signal an effect adds:
+effectDifference(effect, signal) = signal : effect : -(signal);
+
+// Dynamically boost a signal through an effect for things like saturation at lower volumes
+// Allows for MAX saturation as volume decreases up to a certain amount(drop)
+effectDynamicBoostHard(maxBoost, effect, signal) = signal : *(gain) : effect : /(gain) with {
+	currentLevel = signal : an.amp_follower_ud(0.1/1000, 0.1/1000);
+	gain = 1 / (currentLevel : max(0.1) : max(1-amount));
+};
+// Allows for gradually decreasing saturation as volume decreases
+effectDynamicBoostSmooth(maxBoost, effect, signal) = signal : *(gain) : effect : /(gain) with {
+	currentLevel = signal : an.amp_follower_ud(0.1/1000, 0.1/1000);
+	adjustedLevel = it.interpolate_linear(min(0.9, maxBoost), 1, currentLevel);
+	gain = 1 / adjustedLevel;
+};
+
+effectAsym(dc, effect) = *(dc_safe_scale) : +(dc) : effect : -(dc) : /(dc_safe_scale) : ot.dcblocker with {
+	dc_safe_scale = max(0.01, 1-abs(dc));
+};
+//saturation(x) = ma.tanh;
+// Note: Asymmetry adds EVEN harmonics, without it we get only ODD
+saturationAsym(dc) = effectAsym(dc, ma.tanh);
+
+saturationHigh(signal) = signal + (effectDifference(saturationAsym(0.075), signal) : fi.highpass(2, 1000));
+saturationLow(signal) = signal + (effectDifference(saturationAsym(0.075), signal) : fi.lowpass(2, 1000));
+
+saturation = ma.tanh;
+lightSaturation = ef.dryWetMixer(0.5, ma.tanh);
+harshSaturation = saturationAsym(0.075);
+dynamicHarshSaturation = effectDynamicBoostSmooth(0.25, harshSaturation); //Allow 25% boosting max
+
+
+sign(t) = 1.0 - ((t<0)*2);
+falloff(t, halfwayValue) = t / ((1.0 / min(max(halfwayValue, 0.001), 0.999) - 2.0) * (1.0 - t) + 1.0);
+waveshape(halfwayValue, t) = falloff(abs(t), halfwayValue) * sign(t);
+customSaturation(s) = result with {
+	saturationInverseGain = it.interpolate_linear(s, 1, 0.3);
+    result = waveshape(it.interpolate_linear(s, 0.5, 0.9)) * saturationInverseGain;
+};
+
+stereo(node) = (node, node);
+stereoPanner(pan) = *(min(1,1-pan)), *(min(1,pan+1));
+
+// ==== AGE / SAMPLING ====
+addSampleSaturation = ef.dryWetMixer(sampleSaturation, lightSaturation);
+addCutoff = fi.lowpass(4, sampleCutoff*pitchShift:min(MAX_FREQ));
+addTone = fi.peak_eq(sampleToneGain, sampleToneFreq, sampleToneFreq * 0.5);
+addGain = *(voiceGain);
+
+transientShaper = *(env) with {
+    // Attack instantly
+    // Hold using Decay for 20ms to allow full transient
+    // Release based on Punchiness...
+    //env = en.adsre(0/1000, 20/1000/pitchShift, 1.0, it.interpolate_linear(voicePunchiness, 500/1000, 150/1000)/pitchShift, pluginTrigger);
+    env = ot.ar(0.15/1000, it.interpolate_linear(voicePunchiness, 500/1000, 150/1000)/pitchShift, pluginTrigger);
+};
+addPunchiness = ef.dryWetMixer(voicePunchiness, transientShaper);
+
+addSampleLength = *(env) with {
+    //env = ba.if(sampleLength>0, en.ahdsre(0, sampleLength/pitchShift, 0, 1.0, 5/1000, pluginTrigger), 1);
+    //timer = ba.countup(rs4,on)
+    active = ba.countdown(sampleLength/pitchShift*ma.SR, pluginTrigger)>0;
+    env = it.interpolate_linear((sampleLength>0):ot.smoothParam, 1, en.adsr(0, 0, 1.0, 1/1000, active));
+};
+
+// ==== PARAMETERS ====
+//gate = button("gate");
+//trigger = gate > gate';
+
+interpolate_freq(t, from, to) = result with {
+    result = ba.midikey2hz(it.interpolate_linear(t, ba.hz2midikey(from), ba.hz2midikey(to)));
+};
+
+pluginTriggerAndVelocity = trigger : de.delay(maxDelay, delay) with {
+    trigger = nentry("Trigger", 0, 0, 1, 0.01);
+    maxDelayMS = 20;
+    lateness = hslider("[1010]Lateness[export:Lateness][unit:ms]", 0, 0, maxDelayMS, 0.01);
+    maxDelay = maxDelayMS/1000 * ma.SR;
+    delay = lateness/1000 * ma.SR;
+};
+pluginTrigger = pluginTriggerAndVelocity > pluginTriggerAndVelocity';
+pluginVelocity = it.interpolate_linear(pluginTriggerAndVelocity, MIN_VELOCITY, 1.0) : ba.sAndH(pluginTrigger);
+
+voiceGain = ba.db2linear(max(-100,
+    hslider("[1020]Voice_Gain[export:Gain][unit:dB]", 0, -100, 6, 0.1)
+    +nentry("GainAdjustment", 0, -100, 12, 0.1)
+    +6
+    ));
+voicePan = hslider("[1030]Voice_Pan[export:Pan][unit:%]", 0, -100, 100, 0.01) * 0.01;
+//voiceTranspose = hslider("[1040]Voice_Transpose[export:Transpose][unit:st]",0,-24,24,0.01);
+voiceReverbSend = hslider("[1050]Voice_Reverb[export:Reverb Send][unit:%]", 50, 0, 100, 0.01) * 0.01;
+
+voicePunchiness = hslider("[1060]Voice_Punchiness[export:Voice Punchiness][unit:%]", 0, 0, 100, 0.01)/100 : ot.smoothParam;
+
+// ==== SAMPLE PARAMETERS ====
+
+sampleCutoff = hslider("[1070]Sample_Cutoff[export:Cutoff][unit:kHz]", 20, 2, 20, 0.01) * 1000;
+sampleToneFreq = hslider("[1080]Sample_ToneFreq[export:Sample ToneFreq][unit:kHz]", 1.5, 1, 12, 0.01) * 1000;
+sampleToneGain = hslider("[1090]Sample_ToneGain[export:Sample ToneGain][unit:db]", 0, 0, 6, 0.01);
+
+sampleSaturation = 1;//hslider("[1100]Sample_Saturation[export:Sample Saturation][unit:%]", 100, 0, 100, 0.01)/100;
+sampleReverbSize = it.interpolate_linear(hslider("[1110]Sample_ReverbSize[export:Reverb Size][unit:%]", 15, 0, 100, 0.01) * 0.01, 0.1, 2); //(0.1-5) is a little much
+sampleReverbDiffusion = hslider("[1120]Sample_ReverbDiffusion[export:Reverb Diffusion][unit:%]", 50, 0, 100, 0.01) * 0.01;
+sampleReverbDamp = hslider("[1130]Sample_ReverbDamp[export:Reverb Damp][unit:%]", 50, 0, 100, 0.01) * 0.01;
+sampleReverbAmount = hslider("[1140]Sample_Reverb[export:Sample Reverb][unit:%]", 15, 0, 100, 0.01) * 0.01;
+//sampleReverbFeedback = hslider("[1150]Sample_ReverbFeedback[export:Reverb Feedback][unit:%]", 15, 0, 100, 0.01) * 0.01;
+sampleReverbGate = hslider("[1150]Sample_ReverbGate[export:Reverb Gate][unit:db]", -60, -60, 0, 0.01);
+sampleLength = hslider("[1160]Sample_Length[export:Sample Length][unit:s][minlabel:∞]", 0, 0, 3.0, 0.01);
+sampleSpeed = hslider("[1165]Sample_Speed[export:Sample Speed][unit:st]", 0, -12, 12, 0.001);
+
+
+//*
+energyTracker(decay, trigger, energy) = energyCurrent : ot.smoothEnvelope letrec { // Fast Attack, but not clicky
+    'energyCurrent = energyVelocity : *(energyTrigger) : si.smooth(decayPole) with {
+        energyTrigger = trigger > trigger';
+        //energyVelocity = energyCurrent+energy : min(1); // Add Energies (Works!)
+        //energyVelocity = max(energyCurrent, energy) : min(1); // Use Max Energy (Works!)
+        energyVelocity = max(energyCurrent+energy*0.5, energy) : min(1); // Allow some accumulation (Works!)
+
+        // Higher energies decay faster:
+        T60_CORRECTION = 0.25; //t60 calculations need tweaking
+        nonlinearDecay = it.interpolate_linear(1-pow(1-energyCurrent, 3), 1.75, 0.05);
+        t60 = decay*(1-energyTrigger) * T60_CORRECTION * nonlinearDecay;
+
+        // Let's blend between a fixed fast decay, and the selected decay...
+        // TOO STEEP
+        //T60_CORRECTION = 0.3; //t60 calculations need tweaking
+        //nonlinearDecay = it.interpolate_linear(1-pow(1-energyCurrent, 4), decay, 0.05);
+        //t60 = nonlinearDecay*(1-energyTrigger) * T60_CORRECTION;
+
+        decayPole = ba.tau2pole(t60);///6.91);
+    };
+};
+energyTrackerAR(attack, decay, trigger, energy) =  energyTracker(decay, trigger, energy) : an.amp_follower_ar(attack, 0);
+//*/
+/* // Kinda works! only accepts higher energies, exponential decay
+energyTracker(decay, trigger, energy) = result with {
+    T60_CORRECTION = 0.4; //t60 calculations need tweaking
+    result = energy*trigger : si.onePoleSwitching(0.1/1000, decay * T60_CORRECTION);
+};
+//*/
+//energyTracker(decay, trigger, energy) = en.ar(0.1/1000, decay, trigger)*energy;
+
+//energyTracker(decay, trigger, energy) = energy : si.smooth_imp(2, ba.tau2pole(decay * T60_CORRECTION));
+
+// ==== REVERB ====
+sampleRevTime = 0.05;//0.2; // 0.1 - 60 
+sampleRevDamp = sampleReverbDamp; //0 - 1
+sampleRevSize = sampleReverbSize;//1; //0.5 - 5
+sampleRevDiffusion = sampleReverbDiffusion;//0.5;
+sampleRevFeedback = 0.4;
+sampleRevModDepth = 0;//0.1;
+sampleRevModFreq = 2;
+
+// Mono-to-Stereo
+sampleRev = re.greyhole(sampleRevTime, sampleRevDamp, sampleRevSize, sampleRevDiffusion, sampleRevFeedback, sampleRevModDepth, sampleRevModFreq);
+
+// Mono-to-Monono.noise
+//sampleRev = _*0;
+//sampleRev = re.satrev; //Silent... regression?
+//sampleRev = re.jcrev; //Can't hear anything... regression?
+//sampleRev = re.mono_freeverb(sampleReverbSize, sampleReverbDiffusion, sampleRevDamp, 0);
+//addSampleReverb = _ <: (_,(_<:sampleRev:>_:*(sampleReverbAmount))) :> _;
+
+toStereoAddSampleReverb = _ <: (si.bus(2),(sampleRev : stereo(*(sampleReverbAmount)))) :> si.bus(2);
+
+voiceChain = addPunchiness : addTone : addCutoff : addSampleSaturation : addGain : addSampleLength;
+
+
+mixStrike = hslider("[1170]Mix_Strike[export:Mix Strike][unit:%]", 100, 0, 100, 0.01) / 100;
+strikeBrightness = hslider("[1180]Strike_Brightness[export:Strike Brightness][unit:%]", 75, 0, 100, 0.001) / 100;
+// ==== STRIKE CLICK ====
+// Sould detune be nonlinear based on mode/harmonic? Upper harmonics are pitched more from lower...
+// detune = ba.semi2ratio((pow(en.ar(0, drumDetuneDecay, pluginTrigger), 2)) * drumDetuneRange * pluginVelocity);
+strikeClick = result with {
+    gain = pluginVelocity * ba.db2linear(-12 - strikeBrightness*9);
+    lowFreq = interpolate_freq(strikeBrightness, 40, 240) * pitchShift : max(40);
+    highFreq = interpolate_freq(strikeBrightness, 500, 10000) * pitchShift : min(MAX_FREQ);
+    attack = 3 / 1000 / pitchShift;
+    release = 5 / 1000 / pitchShift;
+    osc = ot.noise : fi.highpass(2,lowFreq) : fi.lowpass(2,highFreq);
+    env = en.ar(attack, release, pluginTrigger) * gain; // Should be en.are
+    result = osc * env;
+};

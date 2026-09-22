@@ -11,13 +11,22 @@ cd "$(dirname "$0")/.."
 rm -rf dist/tests
 mkdir -p dist/tests
 fail=0
+# The synth engines are C++ (Faust output). Compiled ONCE — they do not depend
+# on the test — and linked into every test through the C++ driver, because
+# they need its runtime. -Wno-comment: the generated headers nest '/*'.
+for src in dsp/engines/*.cpp; do
+  c++ -std=c++14 -O2 -Wall -Wextra -Werror -Wno-comment -Wno-unused-parameter \
+      -fno-exceptions -fno-rtti -Idsp -Idsp/engines \
+      -c "$src" -o "dist/tests/eng_$(basename "${src%.cpp}").o"
+done
 for src in tests/test_*.c; do
   name=$(basename "$src" .c)
   cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$src" -o "dist/tests/$name.o"
   for c in dsp/*.c; do
     cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$c" -o "dist/tests/$(basename "${c%.c}").o"
   done
-  cc -o "dist/tests/$name" "dist/tests/$name.o" dist/tests/dr32.o dist/tests/dr32_*.o dist/tests/wav.o -lm
+  c++ -o "dist/tests/$name" "dist/tests/$name.o" dist/tests/dr32.o dist/tests/dr32_*.o dist/tests/wav.o \
+      dist/tests/eng_*.o -lm
   "./dist/tests/$name" "$@" || fail=1
 done
 # module.json must satisfy the host's constraints (duplicate keys reject the
@@ -42,7 +51,8 @@ node tests/roundtrip.mjs tests/fixtures || fail=1
 # fixtures + a sample mirror; see docs/NULL_TESTING.md). The reverb renderer
 # that used to sit beside it went with the FX bus.
 cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/render_score.o -c tests/render_score.c
-cc -o dist/tests/render_score dist/tests/render_score.o \
+c++ -o dist/tests/render_score dist/tests/render_score.o \
    dist/tests/dr32_params.o dist/tests/dr32_kit.o dist/tests/dr32_voice.o \
-   dist/tests/dr32_effects.o dist/tests/dr32_preset.o dist/tests/dr32_json.o dist/tests/wav.o -lm || fail=1
+   dist/tests/dr32_effects.o dist/tests/dr32_preset.o dist/tests/dr32_json.o dist/tests/wav.o \
+   dist/tests/dr32_engine.o dist/tests/eng_*.o -lm || fail=1
 exit $fail

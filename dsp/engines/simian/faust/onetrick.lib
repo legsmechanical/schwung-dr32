@@ -1,0 +1,746 @@
+/*
+   ┏━━━┓╱╱╱╱╱┏┓╱╱┏┓╱╱╱╱╱┏┓╱╱   
+   ┃┏━┓┃╱╱╱╱╱┃┃╱╱┃┃╱╱╱╱╱┃┃╱╱╱  
+   ┃┗━┛┣┓┏┳━━┫┃┏┓┃┃╱╱┏━━┫┗━┳━━┓
+   ┃┏━━┫┃┃┃┏┓┃┗┛┃┃┃╱┏┫┏┓┃┏┓┃━━┫
+   ┃┃╱╱┃┗┛┃┃┃┃┏┓┃┃┗━┛┃┏┓┃┗┛┣━━┃
+   ┗┛╱╱┗━━┻┛┗┻┛┗┛┗━━━┻┛┗┻━━┻━━┛
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+
+	Copyright (c) 2023 Punk Labs LLC
+
+	This file is part of OneTrick
+
+	OneTrick is free software: you can redistribute it and/or modify it
+	under the terms of the GNU General Public License as published by the Free
+	Software Foundation, either version 3 of the License, or (at your option)
+	any later version.
+
+	OneTrick is distributed in the hope that it will be useful, but WITHOUT
+	ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+	FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+	more details.
+
+	You should have received a copy of the GNU General Public License along with
+	OneTrick.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+/*
+    This library provides common functions used by OneTrick plugins
+    Everything here should be...
+        * Sample-rate independent, with no noticable tonal differences.
+        * Our favorite version of whatever functionality is needed.
+*/
+
+declare name "OneTrick DSP Library";
+declare copyright "Copyright (c) 2023 Punk Labs LLC";
+declare license "GPLv3 (or later)";
+
+import("stdfaust.lib");
+
+ot = environment {
+    // ====================== CONSTANTS ======================
+    
+    // Nyquist frequency is 1/2 samplerate, maximum reproducable frequency
+    NYQUIST = NYQUIST_AT(ma.SR);
+    NYQUIST_AT(sr) = sr/2;
+
+    // Many filters become unstable as they approach Nyquist
+    // So this is a safe upper limit for filters.
+    // NOTE: This is a rough estimate, there's probably a better formula
+    MAX_FILTER_FREQ = MAX_FILTER_FREQ_AT(ma.SR);
+    MAX_FILTER_FREQ_AT(sr) = sr/2 * 0.95;
+
+    // Minimum attack to prevent any audible clicking
+    MIN_ATTACK = 0.15/1000; // 0.17 is safer, but let's allow as much punch as possible...
+
+    // Ideal samplerate for any hacks that are needed to keep sound uniform
+    IDEAL_SR = 48000; // We tend to work in 48khz so 
+    IDEAL_TO_SR = ma.SR / IDEAL_SR;
+    CD_TO_SR = ma.SR / 44100;
+    SR_TO_IDEAL = IDEAL_SR / ma.SR;
+    SR_TO_CD = 44100 / ma.SR;
+
+    // ====================== CONVERSIONS ======================
+
+    // ms2s(ms)
+    //  Miliseconds to Seconds
+    ms2s(ms) = ms/1000;
+    
+    // us2s(us)
+    //  Microseconds to Seconds
+    us2s(us) = us/1000000;
+
+    // ns2s(ns)
+    //  Nanoseconds to Seconds
+    ns2s(ns) = ns/1000000000;
+
+
+    // ====================== MATH ======================
+
+    // fmodSigned
+    //  fmod that supports negative values.
+    fmodSigned(x, m) = result with {
+        value = x - floor(min(x, 0)/m)*m;
+        result = ba.if(value<0, 0, fmod(value, m));
+    };
+
+
+    // ratioRange
+    //  Returns low and high ratios to multiply by, based on the range
+    //  eg. a range of 1 results in low=0.5, high=2.0
+    // range (0+)
+    ratioRange(range) = environment {
+        low = 1/(1+max(0, range));
+        high = 1*(1+max(0, range));
+    };
+
+
+    // ====================== FAST MATH ======================
+
+    // fast_sin
+    //  Table-based version of sin()
+    fast_sin(x) = ba.tabulate(0, sin, resolution, 0, ma.PI*2, fmodSigned(x, ma.PI*2)).lin with {
+        resolution = 5000; //Multiple of 5 works best
+    };
+
+    // fast_cos
+    //  Table-based version of cos()
+    fast_cos(x) = ba.tabulate(0, cos, resolution, 0, ma.PI*2, fmodSigned(x, ma.PI*2)).lin with {
+        resolution = 5000; //Multiple of 5 works best
+    }; 
+
+
+    // fast_atan2
+    //  manual implementation of atan2, not necessarily faster, but a good place to start
+    fast_atan2(y, x) = result with {
+        ax = abs(x);
+        ay = abs(y);
+        a = min (ax, ay) / max (ax, ay);
+        s = a * a;
+        r = ((-0.0464964749 * s + 0.15931422) * s - 0.327622764) * s * a + a;
+        if_a=(ay>ax);
+        if_b=(x<0);
+        if_c=(y<0);
+        result = r
+            + if_a*(1.57079637 - r*2)
+            + if_b*(3.14159274 - r*2)
+            + if_c*(-r*2);
+    };
+
+
+    // ====================== TABLES ======================
+
+    noiseTable(size, state) = ba.tabulate(1, noise, size, 0, size-1, state).lin with {
+        noise(x) = no.noise;//noise_env(48271).noise;
+    };
+
+
+    // ====================== INPUT ======================
+
+    input = environment {
+        // wakeUp
+        //  WakeUp gate for resetting smoothed parameters
+        wakeUp = button("WakeUp");
+
+        // triggerAndVelocity
+        //  Trigger and Velocity for percussive instruments
+        triggerAndVelocity = nentry("Trigger", 0, 0, 1, 0.01);
+
+        // trigger
+        //  Trigger for percussive instruments
+        trigger = triggerAndVelocity > triggerAndVelocity';
+
+        // triggerVelocity
+        //  Velocity for percussive instruments
+        triggerVelocity = triggerAndVelocity : ba.sAndH(trigger);
+
+        // velocity
+        //  Velocity for any instrument type
+        velocity = max(gain, triggerVelocity);
+
+        // gate
+        //  Gate for melodic instruments
+        gate = button("gate");
+
+        // gain
+        //  Velocity for melodic instruments
+        gain = nentry("gain", 0, 0, 1, 0.01);
+
+        // freq
+        //  Frequency for melodic instrument
+        freq = nentry("freq", 440, 20, 20000, 0.001);
+
+        // key
+        //  Midi Key for melodic instruments
+        key = nentry("key", 36, 0, 128, 1);
+
+        // transpose
+        //  Transpose in semitones
+        transpose = nentry("Transpose", 0, -48, 48, 0.001);
+
+        // sustain
+        //  Sustain gate for melodic instruments
+        sustain = button("Sustain");
+
+        // pitchWheel
+        //  Pitch Wheel [-1, 1]
+        pitchWheel = nentry("PitchWheel", 0, -1, 1, 0.001);
+
+        // modWheel
+        //  ModWheel [0, 1]
+        modWheel = nentry("ModWheel", 0, 0, 1, 0.001);
+
+        // choke
+        //  Choke term for drums/notes
+        choke = button("Choke");
+
+        // hold
+        //  Hold term for vinyl/tape noise
+        hold = button("Hold");
+
+        // pitchShift
+        //  Combines Transpose with Pitch Wheel to give a smoothed pitch ratio.
+        //  pitchWheelRange: Range in semitones for the PitchWheel
+        pitchShift(pitchWheelRange) = ba.semi2ratio(transpose + pitchWheel * pitchWheelRange);
+
+        // pitchShiftSmooth
+        //  Combines Transpose with Pitch Wheel to give a smoothed pitch ratio.
+        //  pitchWheelRange: Range in semitones for the PitchWheel
+        pitchShiftSmooth(pitchWheelRange) = ba.semi2ratio(transpose + pitchWheel * pitchWheelRange : smoothParam);
+
+        // pitchShiftUpDown
+        //  Combines Transpose with separate up/down Pitch Wheel to give a smoothed pitch ratio.
+        //  pitchWheelRangeUp: Range in semitones for the PitchWheel bending up
+        //  pitchWheelRangeDown: Range in semitones for the PitchWheel bending down
+        pitchShiftUpDown(pitchWheelRangeUp, pitchWheelRangeDown) = ba.semi2ratio(
+            transpose +
+            max(0, pitchWheel) * pitchWheelRangeUp +
+            min(0, pitchWheel) * pitchWheelRangeDown);
+
+        // pitchShiftUpDownSmooth
+        //  Combines Transpose with separate up/down Pitch Wheel to give a smoothed pitch ratio.
+        //  pitchWheelRangeUp: Range in semitones for the PitchWheel bending up
+        //  pitchWheelRangeDown: Range in semitones for the PitchWheel bending down
+        pitchShiftUpDownSmooth(pitchWheelRangeUp, pitchWheelRangeDown) = ba.semi2ratio(
+            transpose +
+            max(0, pitchWheel) * pitchWheelRangeUp +
+            min(0, pitchWheel) * pitchWheelRangeDown
+            : smoothParam);
+    };
+
+    // ====================== OUTPUT ======================
+
+    output = environment {
+        vuMeterStereo = (
+                (_ <: attach(_, vuProcess : vbargraph("VuMeterLeft", minDb, 0))),
+                (_ <: attach(_, vuProcess : vbargraph("VuMeterRight", minDb, 0)))
+            ) with {
+            minDb = -40;
+            vuProcess = abs
+                // TODO: Amp follower would be better in linear dB space
+                : ba.peakholder(0.05 * ma.SR) // Holds the peak just a bit
+                : an.amp_follower_ud(0, 0.05) // Smooths the downward animation just a bit
+                : ba.linear2db
+                : it.remap(minDb, 0, 0, 1);
+        };
+    };
+    
+    // ====================== BASIC / MISC ======================
+    
+    // effectAsym(dc, effect)
+    //  Aplies any effect with a DC offset, followed by a dc blocker
+    effectAsym(dc, effect) = *(dc_safe_scale) : +(dc) : effect : -(dc) : /(dc_safe_scale) : dcblocker with {
+        dc_safe_scale = max(0.01, 1-abs(dc));
+    };
+
+    // effectDifference(effect, signal)
+    //  Returns the signal an effect adds:
+    // Example usage:
+    //  saturationHigh(signal) = signal + (effectDifference(saturationAsym(0.075), signal) : fi.highpass(2, 1000));
+    //  saturationLow(signal) = signal + (effectDifference(saturationAsym(0.075), signal) : fi.lowpass(2, 1000));
+    effectDifference(effect, signal) = signal : effect : -(signal);
+
+    // pingpong(trig)
+    //  Returns 0 or 1 and alternates every time the trigger is set
+    pingpong(trig) = \(c).(c+(trig>trig')%2) ~ _;
+
+    // pingpong(trig)
+    //  Returns a sliding term between 0-1 alternating every time the trigger is set
+    pingpong_seconds(seconds, trig) = pingpong(trig) : ba.line(seconds*ma.SR);
+
+    // downSampleLinear
+    //  Improves ba.downSample using linear interpolation.
+    //  sampleRate: Simulated sampleRate
+    //  NOTE: Susceptible to aliasing in line segment length, not an issue in practice.
+    downSampleLinear(sampleRate) = ba.downSample(SR) : ba.line(ma.SR/SR) with {
+        SR = min(sampleRate, ma.SR);
+    };
+
+    // zipStereo
+    //  Interleaves 2 stereo signals so they can be interpolated, ie. (L1,L2, R1, R2)
+    zipStereo = route(4,4,(1,1),(2,3),(3,2),(4,4));
+
+    // interpolate_linear_stereo
+    //  Just like interpolate_linear, but with 2 stereo signals
+    // dv: Interploation term
+    // v0: Stereo signal A
+    // v1: Stereo signal B
+    interpolate_linear_stereo(dv, v0, v1) = (v0, v1) : zipStereo :> par(i, 2, it.interpolate_linear(dv));
+
+    // interpolate_freq
+    //  Just like interpolate_linear, but performed in linear "note space"
+    // t: Interploation term
+    // from: From frequency
+    // to: To frequency
+    interpolate_freq(t, from, to) = result with {
+        result = ba.midikey2hz(it.interpolate_linear(t, ba.hz2midikey(from), ba.hz2midikey(to)));
+    };
+
+    // ====================== SMOOTHING ======================
+    
+    // smoothT60(t60)
+    //  Smooths values based on a t60 time in seconds, resetting on pluginWakeUp
+    smoothT60(t60) = si.smooth(ba.tau2pole(t60*timeScale) * (pluginWakeUp<=pluginWakeUp')) with {
+        // According to tau2pole:
+        // "t60 (time to decay 60 dB) is ~6.91 time constants."
+        // It feels like 1.0 is a better scale though...
+        timeScale = 1; //6.91;
+    };
+
+    // smoothT60(t60)
+    //  Smooths values based on a raw 0-1 term (same as si.smooth), resetting on pluginWakeUp
+    smoothRaw(s) = si.smooth(s * (pluginWakeUp<=pluginWakeUp'));
+
+    // smoothT60_WithoutWake(t60)
+    //  Same as smoothT60, but skipping the Wake logic (for rapid smoothing)
+    smoothT60_WithoutWake(t60) = si.smooth(ba.tau2pole(t60));
+
+    // smoothParam
+    //  Smooth regular plugin parameters
+    smoothParam = smoothT60(10/1000);
+    
+    // smoothEnvelope
+    //  Smooths out clicks in envelopes.
+    smoothEnvelope = smoothT60_WithoutWake(1/1000);
+
+
+    // ====================== SIGNAL ======================
+
+    // stereo
+    //  Doubles a signal into stereo
+    stereo(node) = (node, node);
+    
+    // stereoPanner
+    //  Adjusts the Left/Right balance of a stereo signal
+    // pan: normalized left-to-right [0, 1]
+    stereoPanner(pan) = *(min(1,1-pan)), *(min(1,pan+1));
+
+    // stereoSwap
+    //  Swaps left/right channels, equivalent to route(2,2, 1,2, 2,1);
+    stereoSwap(left, right) = (right, left);
+
+    // expandStereoWidth
+    //  Expands the stereo width using a delay on the Right channel
+    // width: Width in meters (0 - 10)
+    expandStereoWidth(width) = (_, delay) with {
+        delay = de.delay(pm.l2s(10.0), pm.l2s(width));
+    };
+
+    // expandStereoWidthLeft
+    //  Expands the stereo width using a delay on the Left channel
+    // width: Width in meters (0 - 10)
+    expandStereoWidthLeft(width) = stereoSwap : expandStereoWidth(width) : stereoSwap;
+
+    // stereoize
+    //  Converts mono to stereo using a delay on the Right channel
+    // width: Width in meters
+    stereoize(width) = _ <: expandStereoWidth(width);
+
+    // stereoizeLeft
+    //  Converts mono to stereo using a delay on the Left channel
+    // width: Width in meters
+    stereoizeLeft(width) = _ <: expandStereoWidthLeft(width);
+
+    // monoizeBlend
+    //  Blends stereo into mono by blending Left and Right
+    // amount: Amount to move towards mono [0, 1]
+    monoizeBlend(amount, left, right) = it.interpolate_linear(amount/2, left, right), it.interpolate_linear(amount/2, right, left);
+
+    // monoize
+    //  Blends stereo into mono by fading to Left only
+    // amount: Amount to move towards mono [0, 1]
+    monoize(amount, left, right) = left, it.interpolate_linear(amount, right, left);
+
+    // effectMixer
+    //  Blends between 2 effects, similar to ef.dryWetMixer
+    // mixAmount: the mix amount (0-1) between FX1 and FX2
+    // FX1: an arbitrary effect
+    // FX2: an arbitrary effect
+    effectMixer(mixAmount, FX1, FX2) = si.bus(N) <: ((FX1:par(i,N,*(1-mixAmount))), (FX2:par(i,N,*(mixAmount)))) :> si.bus(N) with {
+        N = inputs(FX1);
+    };
+
+    // ====================== OSCILLATORS ======================
+
+    // pulseSin
+    //  Creates a sine-shaped pulse wave.
+    //  freq: Frequency
+    //  dutyCycle: Ratio of the time spent in a pulse. 50% = /\__
+    pulseSin(freq, dutyCycle) = result with {
+        dutyCycleSafe = max(dutyCycle, 0.001);
+        phase = os.phasor_imp(freq, 0, 0) : /(dutyCycleSafe) : min(1) : +(0.75);
+        result = max(0, fast_sin(phase * ma.PI * 2.0) * 0.5 + 0.5);
+    };
+
+    // ====================== NOISE ======================
+    // NOTE: Unfiltered white noise gets quieter at higher samplerates
+    // The random values are effectively averaged and converge on zero
+    
+    // fixNoise
+    //  Fixs noise with linear downsampling:
+    fixNoise = downSampleLinear(min(IDEAL_SR, ma.SR));
+
+    // fixNoiseFast
+    //  Fixs noise with downsampling, works best at integer multiples like 96kHz, 192kHz:
+    fixNoiseFast = ba.downSample(min(IDEAL_SR, ma.SR));
+
+    // noise
+    //  Fixes regular white noise
+    noise = no.noise : fixNoise;
+
+    // noiseFast
+    //  Fixes regular white noise
+    noiseFast = no.noise : fixNoiseFast;
+
+    // noises
+    //  Fixes decorrolated white noise
+    noises(i, n) = no.noises(i, n) : fixNoise;
+
+    // noisesFast
+    //  Fixes decorrolated white noise
+    noisesFast(i, n) = no.noises(i, n) : fixNoiseFast;
+
+    // pink_noise
+    //  Fixes regular pink noise
+    pink_noise = no.pink_noise : fixNoise;
+
+    // sparse_noise(f0)
+    //  Fixes sparse noise (sporatic impulses between -1 and 1)
+    //  NOTE: This uses a sample-and-hold to keep pulses around longer
+    sparse_noise(f0) = result with {
+        noise = no.sparse_noise(f0);
+        trig = abs(ma.signum(noise));
+        holdSamples = round(ma.SR / min(IDEAL_SR, ma.SR));
+        counter = ba.countdown(holdSamples, trig);
+        result = (noise : ba.sAndH(trig)) * (counter > 0);
+    };
+    
+    // velvet_noise(amp, f0)
+    //  Fixes velvet noise (sporatic impulses of a fixed +/- amplitude)
+    velvet_noise(amp, f0) = ma.signum(sparse_noise(f0)) * amp;
+
+    // stereoTapeNoise
+    //  Tape hiss from URCHIN
+    stereoTapeNoise = ((noises(2, 0):filter), (noises(2, 1):filter)) : stereo(*(ba.db2linear(-24))) with {
+        filter = fi.lowshelf(1, 17, 100) : fi.lowpass(24, 16500 : min(MAX_FILTER_FREQ));
+    };
+
+    // stereoVinylNoise
+    //  Vinyl crackle from URCHIN
+    stereoVinylNoise = ((noiseChannel(0)), (noiseChannel(1))) with {
+        filter = fi.lowshelf(1, 17, 100) : ef.dryWetMixer(0.75,fi.lowpass(1, 500)) : fi.peak_eq(warble*10, 1500, 3500) : fi.lowpass(24, 8000 : min(MAX_FILTER_FREQ));
+        rpmFreq = 78/60;
+        wobble1 = os.osc(rpmFreq) : it.remap(-1, 1, 0, 1);
+        wobble2 = os.osc(rpmFreq*2) : it.remap(-1, 1, 0, 1);
+        wobble4 = os.osc(rpmFreq*4) : it.remap(-1, 1, 0, 1);
+        warble01 = it.interpolate_linear(wobble1*wobble2*wobble4, 0, 1);
+        warble = it.interpolate_linear(warble01, 0.8, 1);
+        noiseChannel(x) = noises(4, x) + pop + crackle : *(warble) : *(ba.db2linear(-21)) : filter with {
+            attackDecay = noise : it.remap(-1, 1, 1, 8) : ba.downSample(10) : /(1000);
+            popFilter = fi.bandpass(1, 500, 4000);
+            popFrequency = 1.5;
+            pop = noises(4, x+2) * en.ar(attackDecay, attackDecay, velvet_noise(1, popFrequency)) : popFilter : *(15);
+            crackleFrequency = 10*warble;
+            crackle = noises(4, x+2) * en.ar(attackDecay*0.25, attackDecay*0.25, velvet_noise(1, crackleFrequency)) : popFilter : *(10);
+        };
+    };
+
+    // addStereoNoiseUngated
+    //  Adds stereo noise into a signal
+    // stereoNoise: A stereo noise signal
+    // noiseDB: Amount of noise to add in decibels
+    addStereoNoiseUngated(stereoNoise, noiseDB, l, r) = addStereoNoiseGated(stereoNoise, noiseDB, -80, l, r) [
+        noiseEnv=1;
+    ];
+    
+    // addStereoNoiseGated
+    //  Adds stereo noise into a signal when sound is detected
+    // stereoNoise: A stereo noise signal
+    // noiseDB: Amount of noise to add in decibels
+    // gateDB: Minimum volume to add noise in decibels, -100db to disable
+    // holdOpen: Holds the gate open continuing the noise [0, 1]
+    addStereoNoiseGated(stereoNoise, noiseDB, gateDB, holdOpen, l, r) = (l, r) <: (si.bus(2), adjustedNoise) : zipStereo :> stereo(+) with {
+	    noiseGateLevel = ba.db2linear(gateDB);
+        noiseLevel = ba.db2linear(noiseDB);
+        signalFollower = an.amp_follower_ud(0.1/1000, 30/1000);
+        signalEnv = max((ba.if(holdOpen, 1, l):signalFollower), (ba.if(holdOpen, 1, r):signalFollower)) : /(noiseGateLevel) : min(1);
+	    noiseEnv = ba.if(gateDB < -99, 1, signalEnv) : *(noiseLevel);
+        adjustedNoise = (stereoNoise : stereo(*(noiseEnv)));
+    };
+
+    // addStereoNoise
+    //  Adds stereo noise into a signal when sound is detected
+    //  Uses a -80db gate
+    // stereoNoise: A stereo noise signal
+    // noiseDB: Amount of noise to add in decibels
+    addStereoNoise(stereoNoise, noiseDB, l, r) = addStereoNoiseGated(stereoNoise, noiseDB, -80, l, r);
+
+
+
+    // ====================== FILTERS ======================
+
+    // dcblocker
+    //  Replacement for fi.dcblocker
+    //  NOTE: The built-in fi.dcblocker isn't samplerate independent!
+    //  NOTE: It starts at ~35hz at 44.1kHz, but rises with samplerate, killing bass
+    dcblocker = fi.dcblockerat(20);
+
+    // filterClicks
+    //  Filters out clicks and pops
+    //  NOTE: A better solution might be to use an amp follower...?
+    filterClicks = fi.lowpass(4, min(15000, NYQUIST*0.7));
+
+    
+    // ====================== COMPRESSION ======================
+    // limiter_mono
+    //  Mono brickwall limiter at -1db
+    limiter_mono = co.compressor_mono(20, -1, us2s(20), ms2s(50));
+
+    //limiter_stereo
+    //  Stereo brickwall limiter at -1db
+    limiter_stereo = co.compressor_stereo(20, -1, us2s(20), ms2s(50));
+
+
+    // ====================== DISTORTION ======================
+
+    // bitcrusherFiltered
+    //  bitcrusher with filtered down-sampling and bit-reducing
+    //  NOTE: Tweaked from Urchin
+    //  bitdepth: Simulated bitdepth
+    //  samplerate: Simulated sample-rate
+    bitcrusherFiltered(bitdepth, samplerate) = filter with {
+        downsample(samplerate) = ba.downSample(samplerate) : hardware_filter with {
+            hardware_filter = fi.lowpass(8, min(MAX_FILTER_FREQ, NYQUIST_AT(samplerate)));
+        };
+        filter = _
+            : ef.dryWetMixer(bitdepth < 15.9, ba.bitcrusher(bitdepth))
+            : ef.dryWetMixer(samplerate < 44099.9, downsample(samplerate));
+    };
+
+    // bitcrusherLinear
+    //  bitcrusher with linear down-sampling and bit-reducing
+    //  bitdepth: Simulated bitdepth
+    //  samplerate: Simulated sample-rate
+    bitcrusherLinear(bitdepth, samplerate) = filter with {
+        filter = _
+            : ef.dryWetMixer(bitdepth < 15.9, ba.bitcrusher(bitdepth))
+            : ef.dryWetMixer(samplerate < 44099.9, downSampleLinear(samplerate));
+    };
+
+    // bitcrusher
+    //  Wraps bitcrusherLinear
+    bitcrusher = bitcrusherLinear;
+
+    // ====================== SATURATION ======================
+    // saturationTanh
+    //  Basic Tanh saturation.
+    //  NOTE: The built-in AA version clicks, don't use it
+    saturationTanh = ma.tanh;
+    
+    // saturationTanhAsym(dc)
+    //  Basic Tanh saturation with asymmetry
+    //  NOTE: This adds EVEN harmonics, without it we get only ODD
+    saturationTanhAsym(dc) = effectAsym(dc, ma.tanh);
+
+    // saturationFalloff(amount)
+    //  Applies saturation using a falloff curve used in gamedev
+    //  NOTE: I think it sounds pretty good ¯\_(ツ)_/¯
+    saturationFalloff(amount) = result with {
+        falloff(t, halfwayValue) = t / ((1.0 / min(max(halfwayValue, 0.001), 0.999) - 2.0) * (1.0 - t) + 1.0);
+        waveshape(halfwayValue, t) = falloff(abs(t), halfwayValue) * ma.signum(t);
+        compensatePerseptually = it.interpolate_linear(amount, 1, 0.25);
+        result = waveshape(it.interpolate_linear(amount, 0.5, 0.9)) * compensatePerseptually;
+    };
+
+    // saturationUrchin
+    //  Saturation from Urchin
+    saturationUrchin(s) = result with {
+        sign(t) = 1.0 - ((t<0)*2);
+        falloff(t, halfwayValue) = t / ((1.0 / min(max(halfwayValue, 0.001), 0.999) - 2.0) * (1.0 - t) + 1.0);
+        waveshape(halfwayValue, t) = falloff(abs(t), halfwayValue) * sign(t);
+        saturationInverseGain = it.interpolate_linear(s, 1, 0.3);
+        result = waveshape(it.interpolate_linear(s, 0.5, 0.9)) * saturationInverseGain;
+    }; 
+
+    // ====================== ENVELOPES ======================
+
+    // Internal Envelope Environment
+    _env = environment {
+        // make_legato(env, at, t)
+        // Attempts to smooth out an envelope by running 2 copies and pingponging between them
+        // TODO: Test this before using, and also we need a velocity pingpong 
+        make_legato(env, at, t) = result with {
+            trigger = t > t';
+            envelope = env(trigger);
+            heldStart = envelope' : ba.sAndH(trigger);
+            legato_envelope = ba.if(
+                ba.countdown(at*ma.SR, trigger)>0,
+                it.interpolate_linear(envelope, heldStart, 1),
+                envelope
+            );
+            result = legato_envelope;
+        };
+
+        // Make attacks click-free
+        AT(at) = max(at, MIN_ATTACK);
+    };
+    
+    // Wrappers arround regular envelopes:
+    ar(at, rl, t) = _env.make_legato(en.ar(_env.AT(at), rl), _env.AT(at), t);
+    are(at, rl, t) = _env.make_legato(en.are(_env.AT(at), rl), _env.AT(at), t);
+    adsr(at, dt, sl, rt, t) = _env.make_legato(en.adsr(_env.AT(at), dt, sl, rt), _env.AT(at), t);
+    adsre(at, dt, sl, rt, t) = _env.make_legato(en.adsre(_env.AT(at), dt, sl, rt), _env.AT(at), t);
+
+    /*
+    _env = environment {
+        envelope(attack, decay, sustainLevel, release, level, gate) = release with {
+            on = t>0;
+            off = t==0;
+            rs1 = attack*ma.SR;
+            rs2 = decay*ma.SR;
+            rs3 = R3*ma.SR;
+            rs4 = R4*ma.SR;
+            up = ba.countup(rs1+rs2+rs3,off) : ba.bpf.start(0,L4) : ba.bpf.point(rs1,L1) :
+            ba.bpf.point(rs1+rs2,L2) : ba.bpf.end(rs1+rs2+rs3,L3);
+            down = _,ba.countup(rs4,on) : ba.bpf.start(0) : ba.bpf.end(rs4,L4);
+
+
+            ba.bpf(start(t0, l0)) : ba.bpf.point(t1, )
+        };
+    };
+    */
+
+    // ====================== DELAYS ======================
+
+    // flutterChaoticMono
+    //  amount01: Amount of flutter to apply
+    flutterChaoticMono(amount01) = result with {
+        triggerFreq = 0.5;
+        maxDuration = 0.75;
+        delay = 30/1000;
+        trigger = velvet_noise(1, triggerFreq);
+        amp = abs(noise : ba.sAndH(trigger)) * 0.5 + 0.5; // Keep it between 0.5-1
+        flutter = ar(maxDuration/2, maxDuration/2, trigger) * amp * amount01 : smoothT60(maxDuration);
+        maxDelayS = 0.1 * ma.SR;
+        delayS = delay * ma.SR * flutter;
+        result = de.fdelay(maxDelayS, delayS);
+    };
+
+    // flutterChaoticStereo
+    //  amount01: Amount of flutter to apply
+    flutterChaoticStereo(amount01) = stereo(flutterChaoticMono(amount01));
+
+    // flutterMono
+    //  freq: Frequency of flutter in hz
+    //  amount01: Amount of flutter to apply
+    flutterMono(freq, dutyCycle, amount01) = result with {
+        delay = 10/1000 * amount01 : smoothT60(10/1000);
+        flutter = pulseSin(freq, dutyCycle);
+        //flutter = os.osc(freq)*0.5+0.5;
+        maxDelayS = 0.1 * ma.SR;
+        delayS = delay * ma.SR * flutter;
+        result = de.fdelay(maxDelayS, delayS);
+        //result(signal) = signal+no.noise*0.02*flutter; // DEBUG with noise
+    };
+
+    // flutterTapeLFOStereo
+    //  freq: Frequency of flutter in hz
+    //  amount01: Amount of flutter to apply
+    flutterStereo(freq, dutyCycle, amount01) = stereo(flutterMono(freq, dutyCycle, amount01));
+
+
+    // ====================== REVERBS ======================
+
+    // reverbZitaMono(t60)
+    //  Wrapper around re.zita_rev1_stereo
+    //  NOTE: Creates a smooth diffused reverb
+    reverbZitaMono(decayT60, damp01) = result with {
+        // f1: Crossover freq between low/mid
+        f1 = 200;
+
+        // f2: Crossover freq between mid/high
+        f2 = 6000;
+
+        // t60dc: T60 at 0hz
+        t60dc = decayT60;
+
+        // t60m: T60 at midrange
+        t60m = t60dc * (1-damp01*0.9);
+
+        // fsmax: Max samplerate. Used for max_delay on comb filters
+        fsmax = 192000;
+
+        result = re.zita_rev_fdn(f1, f2, t60dc, t60m, fsmax);
+    };
+    // reverb_zita_stereo(t60)
+    //  Wrapper around re.zita_rev1_stereo
+    //  NOTE: Creates a smooth diffused reverb
+    reverbZitaStereo(initialDelayMS, decayT60, damp01) = result with {
+        // rdel: Initial delay in ms (0-100)
+        rdel = initialDelayMS; //20ms is a good default, but
+
+        // f1: Crossover freq between low/mid
+        f1 = 200;
+        
+        // f2: Crossover freq between mid/high
+        f2 = 6000;
+
+        // t60dc: T60 at 0hz
+        t60dc = decayT60;
+
+        // t60m: T60 at midrange
+        t60m = t60dc * (1-damp01*0.9);
+
+        // fsmax: Max samplerate. Used for max_delay on comb filters
+        fsmax = 192000;
+
+        result = re.zita_rev1_stereo(rdel, f1, f2, t60dc, t60m, fsmax);
+    };
+
+
+    // ====================== LEGACY ======================
+
+    SAMPLE_RATE_TO_IDEAL = IDEAL_TO_SR;
+    pluginWakeUp = input.wakeUp;
+    pluginTriggerAndVelocity = input.triggerAndVelocity;
+    pluginTrigger = input.trigger;
+    pluginTriggerVelocity = input.triggerVelocity;
+    pluginVelocity = input.velocity;
+    pluginGate = input.gate;
+    pluginGain = input.gain;
+    pluginFreq = input.freq;
+    pluginKey = input.key;
+    pluginTranspose = input.transpose;
+    pluginSustain = input.sustain;
+    pluginPitchWheel = input.pitchWheel;
+    pluginModWheel = input.modWheel;
+    pluginChoke = input.choke;
+    pluginHold = input.hold;
+    pluginPitchShift = input.pitchShift;
+    pluginPitchShiftSmooth = input.pitchShiftSmooth;
+    pluginPitchShiftUpDown = input.pitchShiftUpDown;
+    pluginPitchShiftUpDownSmooth = input.pitchShiftUpDownSmooth;
+
+};
+

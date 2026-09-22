@@ -1,0 +1,78 @@
+/*
+   ┏━━━┓╱╱╱╱╱┏┓╱╱┏┓╱╱╱╱╱┏┓╱╱   
+   ┃┏━┓┃╱╱╱╱╱┃┃╱╱┃┃╱╱╱╱╱┃┃╱╱╱  
+   ┃┗━┛┣┓┏┳━━┫┃┏┓┃┃╱╱┏━━┫┗━┳━━┓
+   ┃┏━━┫┃┃┃┏┓┃┗┛┃┃┃╱┏┫┏┓┃┏┓┃━━┫
+   ┃┃╱╱┃┗┛┃┃┃┃┏┓┃┃┗━┛┃┏┓┃┗┛┣━━┃
+   ┗┛╱╱┗━━┻┛┗┻┛┗┛┗━━━┻┛┗┻━━┻━━┛
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+
+	Copyright (c) 2024 Punk Labs LLC
+
+	This file is part of OneTrick SIMIAN
+
+	OneTrick SIMIAN is free software: you can redistribute it and/or modify it
+	under the terms of the GNU General Public License as published by the Free
+	Software Foundation, either version 3 of the License, or (at your option)
+	any later version.
+
+	OneTrick SIMIAN is distributed in the hope that it will be useful, but WITHOUT
+	ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+	FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+	more details.
+
+	You should have received a copy of the GNU General Public License along with
+	OneTrick SIMIAN.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+declare name "OneTrick SIMIAN";
+declare author "Oren Kurtz";
+declare copyright "Punk Labs LLC 2024";
+declare version "2.00";
+declare license "GPLv3-or-later";
+
+import("shared.lib");
+
+//[style:knob]
+// Hack:	Combine faust midiGate with "Trigger_N" parameter so either work
+//			Also, multiply by midiVelocity for implicit Velocity
+//			This will allow "Trigger_N" to include velocity!
+staccato = ot.input.pitchWheel * 0.8 + 1.0 : ot.smoothParam;
+djFilter = ot.input.modWheel : ot.smoothParam : it.remap(0, 1, 0, -32) : ba.semi2ratio; // 3 octaves down
+chromaticNote = nentry("key", 0, -108, 108, 1); // Relative key, don't use the ot.input.key here!
+transposeChromatic = *(ba.semi2ratio(chromaticNote));
+
+gate = ot.input.trigger;
+
+velocity = ot.input.velocity;
+
+//"_%voiceIndex"
+
+chokeGate = ot.input.choke;
+
+// Tone
+oscWaveform = hslider("[1]OscWaveform[unit:%][export:Osc Waveform]", 0, 0, 100, 0.001) * 0.01 : ot.smoothParam;
+oscPitch = hslider("[1]OscPitch[midi:ctrl 71][unit:hz][export:Osc Pitch]", 220, 30, 4400, 0.001) : ot.smoothParam : transposeChromatic;
+oscEnvBend = hslider("[2]OscEnvBend[midi:ctrl 72][unit:st][export:Osc Env Bend]", 0, -36, 36, 0.01);
+oscEnvBendDynamics = hslider("[3]OscEnvBendDynamics[unit:%][export:Osc Env Bend Dynamics]", 100, 0, 100, 0.01) * 0.01;
+
+// Noise
+lowpassFreq = hslider("[10]LowpassFreq[unit:hz][export:Lowpass Freq]", 10000, 440, 15000, 0.01) * djFilter;
+lowpassQ = hslider("[11]LowpassQ[unit:%][export:Lowpass Q]", 0, 0, 100, 0.01) * 0.01 + 1;
+lowpassEnvBend = hslider("[12]LowpassEnvBend[midi:ctrl 72][unit:st][export:Lowpass Env Bend]", 0, -36, 36, 0.01);
+lowpassEnvBendDynamics = hslider("[13]LowpassEnvBendDynamics[unit:%][export:Lowpass Env Bend Dynamics]", 100, 0, 100, 0.01) * 0.01;
+
+// Envelope
+envDecay = hslider("[20]EnvDecay[midi:ctrl 74][unit:ms][export:Env Decay]", 200, 10, 2000, 0.01) * staccato;
+envPunch = hslider("[21]EnvPunch[midi:ctrl 74][unit:%][export:Env Punch]", 0, 0, 100, 0.01) * 0.01;
+
+// Mix
+fadeToneNoise = hslider("[30]FadeToneNoise[midi:ctrl 73][unit:%][export:Fade Tone Noise]", 25, 0, 100, 0.01) * 0.01;
+fadeClick = hslider("[31]FadeClick[unit:%][export:Fade Click]", 50, 0, 100, 0.01) * 0.01;
+sendReverb = hslider("[32]SendReverb[unit:%][export:Send Reverb]", 0, 0, 100, 0.01) * 0.01;
+
+// Output
+gain = ba.db2linear(max(-100, hslider("[40]Gain[unit:db][export:Gain]", 0, -100, 6, 0.1))) : ot.smoothParam;
+pan = hslider("[41]Pan[unit:%][export:Pan]", 0, -100, 100, 0.01) * 0.01 : ot.smoothParam;
+gainDynamics = hslider("[42]GainDynamics[unit:%][export:Gain Dynamics]", 100, 0, 100, 0.01) * 0.01;
+saturation = hslider("[43]Saturation[unit:%][export:Saturation]", 0, 0, 100, 0.01) * 0.01;

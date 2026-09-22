@@ -1,0 +1,329 @@
+/*
+   ┏━━━┓╱╱╱╱╱┏┓╱╱┏┓╱╱╱╱╱┏┓╱╱   
+   ┃┏━┓┃╱╱╱╱╱┃┃╱╱┃┃╱╱╱╱╱┃┃╱╱╱  
+   ┃┗━┛┣┓┏┳━━┫┃┏┓┃┃╱╱┏━━┫┗━┳━━┓
+   ┃┏━━┫┃┃┃┏┓┃┗┛┃┃┃╱┏┫┏┓┃┏┓┃━━┫
+   ┃┃╱╱┃┗┛┃┃┃┃┏┓┃┃┗━┛┃┏┓┃┗┛┣━━┃
+   ┗┛╱╱┗━━┻┛┗┻┛┗┛┗━━━┻┛┗┻━━┻━━┛
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+
+	Copyright (c) 2023 Punk Labs LLC
+
+	This file is part of OneTrick URCHIN
+
+	OneTrick URCHIN is free software: you can redistribute it and/or modify it
+	under the terms of the GNU General Public License as published by the Free
+	Software Foundation, either version 3 of the License, or (at your option)
+	any later version.
+
+	OneTrick URCHIN is distributed in the hope that it will be useful, but WITHOUT
+	ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+	FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+	more details.
+
+	You should have received a copy of the GNU General Public License along with
+	OneTrick URCHIN.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+declare name "OneTrick URCHIN DSP";
+declare copyright "Copyright (c) 2023 Punk Labs LLC";
+declare license "GPLv3 (or later)";
+
+import("onetrick.lib");
+import("shared.lib");
+
+// ==== CONSTANTS / DATA ====
+STRIKE_GAIN = -3;
+DRUM_GAIN = 4;
+DRUM_SHELL_GAIN = 0;
+DRUM_SHELL_DECAY = 1/2;
+DRUM_SHELL_FUND_BIAS = 1.0; // Adjust for materials...
+
+SHELL_CLOSED = 0;
+SHELL_OPEN = 1;
+
+HEAD_MODES = 5;
+SHELL_MODES = 2;
+
+// ENABLE_SNARE_FEATURES = 1;
+
+// UNIFIED MODES (Important ones exhibited by actual drums)
+// Coupling sounds like crap, maybe we shouldn't use it...
+/*
+drumModesUnified(headFreq, otherHeadFreq, allowCoupling, i) = result with {
+    // Modes (0,1) and (1,1) exhibit the most coupling (air coupling)
+    // These are also the modes SoS claimed created 2 new modes
+    // Lower frequency modes tend to "double" so each head is doing the same thing (an octave up?)
+    //result = (headFreq+otherHeadFreq)/2 * (i+1);
+    baseResult = ((headFreq-drumInharmonicShift)*(i+1)+drumInharmonicShift);
+    // Coupling...
+    //50->118   or  50->86
+    //93->86        93->118
+    couplingActive = 0;//(i<2)*allowCoupling; // First 2 modes exhibit coupling when close together
+    couplingHeadAlignment = pow(min(headFreq, otherHeadFreq) / max(headFreq, otherHeadFreq), 2); // how perfectly the pitches are aligned
+    couplingFreqRamp = baseResult : it.remap(50, 93, 1.72, 1.27) : max(1.0) : min(3.0); // Coupling goes down at higher freq
+    couplingDetune = it.interpolate_linear(couplingActive*couplingHeadAlignment, 1, couplingFreqRamp);
+    result = baseResult * couplingDetune;
+};
+*/
+drumModesUnifiedBasic(headFreq, i) = result with { // Should use this for the WHOLE drum...
+    result = (headFreq-drumInharmonicShift)*(i+1)+drumInharmonicShift;
+};
+// DRUM HEAD
+
+// // Not practical, some of these modes are very quiet
+// drumHeadModesTheoretical(i) = ba.take(i+1, (
+//     1,      // (0,1)
+//     1.59,   // (1,1)
+//     2.14,   // (2,1)
+//     2.30,   // (0,2)
+//     2.65,   // (3,1)
+//     2.92,   // (1,2)
+//     3.16,   // (4,1)
+//     3.50    // (2,2)
+//     ));
+// drumHeadModesSimplified(i) = 1 + (i*0.59);
+
+// drumHeadModes(freq, i) = drumHeadModesTheoretical(i)*freq;
+// //drumHeadModes(freq, i) = drumModesUnifiedBasic(freq, i);
+
+// // DRUM SHELL
+// drumShellFundamental(depthMeters, open) = result with {
+//     // Formula SpeedOfSound/(4*Depth)
+//     // Open Measurements: (Open fundamentals are 2x Closed?)
+//     // Open+Open=2L, Open+Closed=4L, Closed+Closed=?L
+//     // Open+Open=100Hz, Open+Closed=50Hz, Closed+Closed=?L
+//     /*
+//         Bing: Open+Open = SpeedOfSound/(2*Depth)
+//         Bing: Open+Closed = SpeedOfSound/(4*Depth) (Higher)
+//         Bing: Closed+Closed = SpeedOfSound/(2*Depth) [Odd Harmonics]
+//     */
+//     result = pm.speedOfSound / (depthMeters * 4.0) * DRUM_SHELL_FUND_BIAS / (1+open);
+// };
+// drumShellModes(open, i) = 1 + (i * (1+open));
+
+//pluginResoVelocity = pluginVelocity * ba.db2linear(it.interpolate_linear(pluginVelocity, -24, -10));
+//normalized for full velocity:
+pluginResoVelocity = pluginVelocity * ba.db2linear(it.interpolate_linear(pluginVelocity, -14, 0));
+
+
+// VOICE
+//strikeRnd = ot.noise * 0.5 + 0.5 : ba.sAndH(pluginTrigger);
+//strikeRnd = (os.oscsin(22.34)+os.oscsin(70))/2 * 0.5 + 0.5: ba.sAndH(pluginTrigger);
+strikeRnd = 0;
+//strikePunch = hslider("[010]PunchPunchinessiness", 0.95, 0, 1.0, 0.01);
+strikeEnergy = hslider("[010]Strike_Energy[export:Strike Energy][unit:x]", 1, 0.1, 10, 0.001);
+strikePos = hslider("[030]Strike_Pos[export:Strike Pos][unit:%]", 0, 0, 100, 0.01) / 100 * (1-strikeRange);
+strikeRange = hslider("[040]Strike_Range[export:Strike Range][unit:%]", 10, 0, 100, 0.01) / 100;
+strikeRimshot = hslider("[050]Strike_Rimshot", 0, 0, 1, 0.01) * ENABLE_SNARE_FEATURES;
+
+striker01 = hslider("[060]Striker[export:Striker][unit:%]", 25, 0, 100, 0.01)/100;
+striker = it.interpolate_linear(striker01, 0, 0.4);
+
+drumFreq = hslider("[070]Tuning[export:Transpose][unit:Hz]", 120, 40, 240, 0.01) * pitchShift;
+drumInharmonicShift = 20;//hslider("[080]Inharmonic[export:Inharmonic][unit:s]", 50, 0, 100, 0.0001) / 100 * 20;
+shellDepthIn = hslider("[090]Shell_Depth[export:Shell Depth][unit:in]", 12, 5, 24, 0.01);
+shellDepth = inches2meters(shellDepthIn);
+shellDepth01 = shellDepthIn : it.remap(5, 24, 0, 1);
+
+//drumShellFreq = hslider("[100]Shell_Freq[export:Shell Freq][unit:Hz]", 700, 500, 900, 0.01); //150,214,316,420,580,710,820...1300
+drumShellFreq = interpolate_freq(shellDepth01, 710, 500) * pitchShift;
+drumShellDamp = it.interpolate_linear(hslider("[110]Shell_Damp[export:Shell Damp][unit:%]", 30, 0, 100, 0.01) / 100, 1.00, 0.0001) : ot.smoothParam;
+drumResoInterval = hslider("[120]Reso_Tuning[export:Reso Tuning][unit:st]", 0, -6, 6, 0.01);
+drumDecay = hslider("[130]Decay[export:Decay][unit:s]", 0.5, 0.15, 5, 0.0001) / pitchShift;
+drumBeaterDamp = 1 - hslider("[140]Beater_Dampening[export:Beater Damp][unit:%]", 50.0, 0, 100, 0.0001) / 100 * 0.80; // Max 80% damp
+drumSnareTightness = 0.97;//hslider("[150]Snare_Tightness[export:Snare Tightness][unit:%]", 90, 0.0, 100, 0.01) / 100;
+drumResoHead = hslider("[160]Reso_Head[export:Reso Head][type:bool]", 1, 0, 1, 1);
+
+//mixStrike = it.interpolate_linear(0.4, mixBeater, mixReso); //We should lowpass Reso
+mixBeater = 1.0;//hslider("[180]Mix_Beater[export:Mix Beater][unit:%]", 100, 0, 100, 0.01) / 100;
+// Let's just combine Strike+Rattle because they're so similar
+mixRattle = mixStrike;// hslider("[190]Mix_Rattle[export:Mix Rattle][unit:%]", 100, 0, 100, 0.01) / 100;
+mixRing = hslider("[200]Mix_Ring[export:Mix Ring][unit:%]", 35, 0, 100, 0.01) / 100;
+mixReso = hslider("[210]Mix_Reso[export:Mix Reso][unit:%]", 100, 0, 100, 0.01) / 100;
+//mixBeaterReso = hslider("[220]Mix_Beater_Reso[export:Mix Beater Reso][unit:%]", 0, -100, 100, 0.01) / 200 + 0.5;
+mixSnare = ENABLE_SNARE_FEATURES * mixReso;//hslider("[230]Mix_Snare[export:Mix Snare][unit:%]", 0, 0, 100, 0.01) / 100 * ENABLE_SNARE_FEATURES;
+
+
+
+
+//drumDetuneDecay = hslider("[240]Detune_Decay[export:Detune Decay][unit:sec]", 1.5, 0, 3, 0.001);
+drumDetuneRange = hslider("[250]Detune_Range[export:Detune Range][unit:st]", 8, 0, 32, 0.001);
+
+
+
+// ==== RIMSHOT MODEL ====
+// Simple clonk based on filtered noise with a second harmonic for good measure
+rimshotModel = result with {
+    env = en.are(0, 120/1000/pitchShift, pluginTrigger) * pluginVelocity;
+    band(f, w) = fi.bandpass(2, f/w, f*w);
+    is_rimshot = 1.0; // 0.0 for Sidestick
+    f0 = 1275 * pitchShift;
+    result = ot.noise * env <: (band(f0, 1.2), band(f0*2, 1.2) * 0.5) :> *(strikeRimshot * ba.db2linear(-10));
+};
+
+
+
+// ==== STRIKE MODEL ====
+strikeModel(pos) = strikeClick + rimshotModel;
+
+// ==== SHELL RING MODEL ====
+shellRingModel = result with {
+    adjustment = ba.db2linear(-34 + strikeRimshot*9);
+    gain = ba.db2linear(shellDepth01 * -12) * adjustment;
+    decay = drumDecay * DRUM_SHELL_DECAY; //*(drumShellDamp*0.5+0.5)
+    env = energyTracker(decay, pluginTrigger, pow(pluginVelocity, 3));
+    freq = drumShellFreq;//interpolate_freq(shellDepth01, 900, 600);
+
+    //filter = fi.highpass(3, freq) : fi.lowpass(3, freq);
+    //bandwidth = 0.06;
+    //lowhigh = 1+(bandwidth/2);
+    //filter = fi.bandpass(3, freq/lowhigh, freq*lowhigh);
+
+    //filter = fi.lowpass(2, 1000);
+    //result = os.square(freq) : filter : *(gain) : *(env);
+
+    //*
+    fm = 1 + os.osc(117.123) * 0.25;
+    result = os.osc(freq*fm) : *(gain) : *(env);
+    //*/
+
+    /*
+    result = par(i, 5, osc with {
+        oscFreq = freq + 117.123 * (i-2);
+        oscGain = abs(i-2) : it.remap(0, 2, 1, 0.5);
+        osc = os.osc(oscFreq) * oscGain * gain * env;
+    }) :> _;
+    */
+
+
+};
+
+// ==== SHELL RATTLE MODEL ====
+// Produces a brighter strike sound
+shellRattleModel = result with {
+    sharpness = it.interpolate_linear(pluginVelocity, 0.80, 1.0);
+    attack = it.interpolate_linear(sharpness, 10, 1)/1000;
+    env = energyTracker(150/1000, pluginTrigger, pluginVelocity); // Not chunky enough?
+    amount = it.interpolate_linear(strikeBrightness, 0.33, 1);
+    brightness = it.interpolate_linear(pluginVelocity, 0.8, 1.1) * it.interpolate_linear(env, 0.8, 1);
+    lowFreq = it.interpolate_linear(shellDepth01, 3000, 1000) * pitchShift; //2000-1000 (increasing for shellDepth)
+    highFreq = it.interpolate_linear(shellDepth01, 4400, 1500) * brightness * pitchShift; //3075-2000 (increasing for shellDepth)
+    upperResult = ot.noise * amount * it.interpolate_linear(pow(pluginVelocity, 2), 0.06, 0.35) : fi.highpass(2, lowFreq) : fi.lowpass(2, highFreq) : *(env);
+
+    // Should this be grouped with Click?
+    knockFreq = interpolate_freq(shellDepth01, 800, 500) * pitchShift : max(200); //drumFreq * 5; // CAREFUL of SELF OSCILLATING!
+    knockResult = 0;//ot.noise * amount * 0.25 * env : fi.bandpass(2, knockFreq / 1.2, knockFreq * 1.2);
+
+    result = knockResult + upperResult : *(env);
+};
+
+
+// ==== DRUM MODEL ====
+// TODO: Use pos in calculations
+spectralModel(modes, modeCount, freq, damp, pos, trigger, velocity) = result with {
+    mode(i) = result with {
+        modeFreq = modes(i);
+        modeRelativeToFundamental = (modeFreq/freq);
+        invModeRelativeToFundamental = (freq/modeFreq);
+        posDelta = abs(i/(modeCount-1)-pos);
+        excitementTerm = 1;//Used to be based on strike pos...//it.interpolate_linear(posDelta, 1, spread);
+        flipOddHarmonics = ((i%2)*2-1);
+        theta = 0; // angle
+        //modeGain = it.interpolate_linear(cos((i+1)*theta)/float(i+1)*(1/(i+1)), 0.0, 1);
+        //modeGain = it.interpolate_linear(cos(modeRelativeToFundamental*theta)/modeRelativeToFundamental*invModeRelativeToFundamental, 0.0, 1);
+        //modeGain = it.interpolate_linear(invModeRelativeToFundamental, 0.0, 1);
+        // suppress harmonics on weaker strikes:
+        modeGain = flipOddHarmonics * pow(invModeRelativeToFundamental, 1.6);
+
+        // Note: Hardsync oscillators could simulate the uniformity of always "hitting down" on the drum
+        // but unfortunately these will cause clicks/pops...
+        // A fancy solution would be to dual-weild hardsync oscillators and pingpong crossfade
+        //osc(f) = trigger : os.hs_oscsin(f); // HARDSYNC (clicks need filtering)
+        
+        // For now let's just use regular oscillators, they have a more organic feel anyways...
+        osc(f) = os.oscsin(f);
+        
+
+        // Higher frequencies decay faster at constant friction...
+        // The math is confusing so let's just scale with frequency...
+        modeDamp = invModeRelativeToFundamental;
+        decay = drumDecay * damp * modeDamp;
+        result = osc(modeFreq) * energyTracker(decay, trigger, velocity*excitementTerm) * modeGain;
+    };
+    result = par(i, modeCount, mode(i)) :> si.bus(1) : /(modeCount);
+};
+
+// ==== DRUM RESONATOR ====
+shellResonator(depth, singleHead, excitation) = pm.endChain(chain) with {
+    // Using si.smooth() here because this is an echo dampening, samplerate has no effect
+    basicReflection = si.smooth(0.92)*max(0.01, drumShellDamp); // smooth=freq falloff, shell materials would be ~ (0.9 - 0.95)
+    beaterHeadReflection = basicReflection;
+    resoHeadReflection = basicReflection;
+    adjustedDepth = depth / 2;// / (1+singleHead);  // Drums are really never "closed" since membranes let lower frequencies pass
+    chain = pm.chain(
+        pm.in(excitation) :
+        //pm.stringSegment(1,depth) :
+        pm.terminations(beaterHeadReflection,
+            pm.openTube(1.0, adjustedDepth), //pm.maxLength=3m, but 1m is plenty
+            resoHeadReflection) :
+        pm.out
+    );
+} : ot.dcblocker;
+
+// ==== DRUM EQ ====
+drumEQ = fi.highpass(1, 40);//fi.peak_eq(4, 650*pitchShift, 200*pitchShift); // The midrange should be boosted elsewhere ideally...
+
+
+// Velvet noise is appropriate because snare wires can only 'hit' in one direction
+// We add a chaotic term to amp to vary the wire's impact
+snare_noise(amp, chaos, f0) = ot.velvet_noise(chaos_amp, f0) with {
+    // built-in noise is okay here because impulses are only ever 1 sample
+    noise = no.noise * chaos : it.remap(-1, 1, 0.25, 1.0);
+    chaos_amp = amp * noise;
+};
+
+drumModel = result with {
+    randomStrikePos = strikePos+strikeRnd*strikeRange;
+    strike = strikeModel(randomStrikePos);
+
+    detuneEnergyTracker = energyTracker : it.remap(0.15, 1, 0, 1) : max(0);
+    beaterDetune = ba.semi2ratio(detuneEnergyTracker(drumDecay*drumBeaterDamp, pluginTrigger, pluginVelocity) * drumDetuneRange);
+    resoDetune = ba.semi2ratio(detuneEnergyTracker(drumDecay, pluginTrigger, pluginVelocity) * drumDetuneRange);
+
+    drumHeadFreq = drumFreq*beaterDetune : max(40);
+    drumResoFreq = drumFreq*ba.semi2ratio(drumResoInterval)*resoDetune : max(40);
+
+    beaterHead = spectralModel(drumModesUnifiedBasic(drumHeadFreq), HEAD_MODES, drumHeadFreq, drumBeaterDamp, randomStrikePos, pluginTrigger, pluginVelocity);
+
+    drumResoDecay = drumFreq/drumResoFreq;
+    resoHead = spectralModel(drumModesUnifiedBasic(drumResoFreq), HEAD_MODES, drumResoFreq, drumResoDecay, 0, pluginTrigger, pluginResoVelocity);
+
+    snareEnv = resoHead : ef.gate_mono(-drumSnareTightness*48, 0/1000, 0/1000, 20/1000) : an.amp_follower_ar(20/1000, 20/1000);
+    snareNoise = snare_noise(snareEnv, 0.5, it.interpolate_linear(snareEnv, 5000, 10000));
+    snare = snareNoise * mixSnare : fi.peak_eq(4, 2400*pitchShift, 1200*pitchShift) : fi.lowpass(1, 7500*pitchShift:min(MAX_FREQ));
+
+    shellRattle = shellRattleModel;
+    shellRing = shellRingModel;
+    result =
+        (
+            (
+                strike*mixStrike * ba.db2linear(STRIKE_GAIN)
+                + beaterHead * mixBeater
+                + resoHead * mixReso * drumResoHead * (1-mixSnare*0.5) // lower with snare mix
+                + snare * mixSnare * drumResoHead * ba.db2linear(10.5)
+                + shellRattle * mixRattle
+                + shellRing * ba.db2linear(DRUM_SHELL_GAIN) * mixRing
+            ) : shellResonator(shellDepth/pitchShift, (1-drumResoHead)) : drumEQ
+        )
+        : *(ba.db2linear(DRUM_GAIN));
+};
+
+
+// ==== OUTPUT ====
+
+processTEST = energyTracker(drumDecay, pluginTrigger, pluginVelocity);
+
+processDrum = voice /*: toStereoAddSampleReverb :*/ <: si.bus(2) : stereoPanner(voicePan), voice*voiceReverbSend with {
+    voice = drumModel : voiceChain;
+};

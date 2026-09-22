@@ -1,0 +1,199 @@
+/*
+   ┏━━━┓╱╱╱╱╱┏┓╱╱┏┓╱╱╱╱╱┏┓╱╱   
+   ┃┏━┓┃╱╱╱╱╱┃┃╱╱┃┃╱╱╱╱╱┃┃╱╱╱  
+   ┃┗━┛┣┓┏┳━━┫┃┏┓┃┃╱╱┏━━┫┗━┳━━┓
+   ┃┏━━┫┃┃┃┏┓┃┗┛┃┃┃╱┏┫┏┓┃┏┓┃━━┫
+   ┃┃╱╱┃┗┛┃┃┃┃┏┓┃┃┗━┛┃┏┓┃┗┛┣━━┃
+   ┗┛╱╱┗━━┻┛┗┻┛┗┛┗━━━┻┛┗┻━━┻━━┛
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+
+	Copyright (c) 2024 Punk Labs LLC
+
+	This file is part of OneTrick SIMIAN
+
+	OneTrick SIMIAN is free software: you can redistribute it and/or modify it
+	under the terms of the GNU General Public License as published by the Free
+	Software Foundation, either version 3 of the License, or (at your option)
+	any later version.
+
+	OneTrick SIMIAN is distributed in the hope that it will be useful, but WITHOUT
+	ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+	FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+	more details.
+
+	You should have received a copy of the GNU General Public License along with
+	OneTrick SIMIAN.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+declare name "OneTrick SIMIAN";
+declare author "Oren Kurtz";
+declare copyright "Punk Labs LLC 2024";
+declare version "2.00";
+declare license "GPLv3-or-later";
+
+//declare options "[midi:on][nvoices:1]";
+declare options "[midi:on]";
+import("stdfaust.lib");
+import("onetrick.lib");
+
+simianAttackSeconds = 1/1000; // 0 could result in popping
+simianClickSeconds = 19/1000; // Original Was 12ms? Seems short
+simianChokeSeconds = 20/1000;
+
+
+simianNoise =
+	  no.noise
+	: ba.downSample(min(ma.SR, 48000)) // Cut above sparkle, prevents dulling when downsampling from 96kHz+
+	: fi.highpass(2, 200); // Cut mud
+
+
+//log_interpolate(n, a, b) = 2^it.interpolate_linear(n, ma.log2(a), ma.log2(b));
+
+// Inputs:
+// Doesn't work in FaustIDE, but does work in builds... Useful for combining a kit.
+
+sign(t) = 1.0 - ((t<0)*2);
+falloff(t, halfwayValue) = t / ((1.0 / min(max(halfwayValue, 0.001), 0.999) - 2.0) * (1.0 - t) + 1.0);
+waveshape(halfwayValue, t) = falloff(abs(t), halfwayValue) * sign(t);
+applySaturation(s) = result with {
+	saturationInverseGain = it.interpolate_linear(s, 1, 0.3);
+    result = waveshape(it.interpolate_linear(s, 0.5, 0.9)) * saturationInverseGain;
+};
+
+ms2s(ms) = ms/1000;
+ns2s(ns) = ns/1000000;
+
+// 1176-style Limiting using a fast compressor
+//1176
+//applyLimit = stereo(*(2.0) : co.limiter_lad_bw : *(0.5));
+//applyLimit = co.compressor_stereo(8, -3, ns2s(20), ms2s(50));
+applyLimit = co.compressor_stereo(20, -1, ns2s(20), ms2s(50));
+
+
+
+
+addStereo(b) = (_,b,_) : par(i, 2, +);
+// Stereo Addition
+/*
+addModule = addStereo;
+moduleToStereo(l,r) = (l, r);
+//*/
+// Stereo + Sidechain Addition
+//*
+moduleToStereo(l,r,fx) = (l, r);
+getModuleStereo(m) = m:moduleToStereo;
+moduleToSidechain(l,r,fx) = fx;
+getModuleSidechain(m) = m:moduleToSidechain;
+modulesCombine(l1,r1,fx1,l2,r2,fx2) = (l1+l2,r1+r2,fx1+fx2);
+addModule(m) = m,(_,_,_):modulesCombine;
+addModules(m1,m2) = modulesCombine;
+//*/
+
+
+// = = = = = = = = = = = = = = = = From OneTrick = = = = = = = = = = = = = = = =
+
+sample_counter(gate) = result with {
+    result = (raise*reset + upfront) ~ _
+    with {
+        upfront = gate > gate';
+        reset = gate <= gate';
+        raise(x) = (x + (x > 0));
+    };
+};
+
+// Used for locking the AR result at the time of attack 
+sAndHGate(value, gate) = value : ba.sAndH(gate > gate');
+
+// = = = = = = = = Private Functions = = = = = = = =
+ar_running(attack, release, gate, velocity) = result
+letrec
+{
+	'AR = _ar_running_curve(sAndHGate(AR, gate), max(sAndHGate(AR, gate), velocity), attack, release, gate, curve);
+	'result = AR;
+} with {
+	curve(n) = n;
+};
+_ar_running_curve_ar(start, peak, at, rt, gate, curveA, curveR) = AR : max(0) : min(1)
+with {
+    // Durations in samples
+    an = max(1, at*ma.SR);
+    rn = max(1, rt*ma.SR);
+
+    // Deltas per samples
+    adelta = 1/an;
+    rdelta = 1/rn;
+
+    // Sample counter
+    stime = sample_counter(gate);
+
+    // Attack curve
+    //A = it.interpolate_linear((1 - (stime * adelta)) ^ exponent, peak, start); //exponential
+    //A = it.interpolate_linear(_ar_slope(stime * adelta, attackSlope), start, peak); //slope
+    A = it.interpolate_linear(curveA(stime * adelta), start, peak);
+
+	// Release curve    
+    //D = it.interpolate_linear((1 - ((stime-an) * rdelta)) ^ exponent, 0, peak); //exponential
+    //D = it.interpolate_linear(_ar_slope(min(1, (stime-an) * rdelta), releaseSlope), peak, 0); //slope
+    D = it.interpolate_linear(curveR((stime-an) * rdelta), peak, 0);
+
+    // Result
+    AR = (A, D) : select2(stime>=an);
+};
+_ar_running_curve(start, peak, at, rt, gate, curve) = _ar_running_curve_ar(start, peak, at, rt, gate, curve, curve);
+
+ar_running_slope_ar(attack, release, gate, velocity, attackSlope, releaseSlope) = result
+letrec
+{
+	'AR = _ar_running_curve_ar(sAndHGate(AR, gate), max(sAndHGate(AR, gate), velocity), attack, release, gate, curveA, curveR);
+	'result = AR;
+} with {
+	slope(t, halfwayValue) = t / ((1.0 / min(max(halfwayValue, 0.001), 0.999) - 2.0) * (1.0 - t) + 1.0);
+	curveA(n) = slope(n, attackSlope);
+	curveR(n) = slope(min(1, n), releaseSlope);
+};
+ar_running_slope(attack, release, gate, velocity, slope) = ar_running_slope_ar(attack, release, gate, velocity, slope, slope);
+
+
+sampleOscHard(freq, sampleLib) = sampleLib.sampleWave,int(os.phasor(sampleLib.sampleCount,freq)) : rdtable;
+sampleOscLinear(freq, sampleLib) = result with {
+	fSample = os.phasor(sampleLib.sampleCount,freq);
+	t = fSample - int(fSample);
+	a = sampleLib.sampleWave,int(fSample) : rdtable;
+	b = sampleLib.sampleWave,(int(fSample)+1)%sampleLib.sampleCount : rdtable;
+	result = it.interpolate_linear(t, a, b);
+};
+sampleOscCubic(freq, sampleLib) = result with {
+	fSample = os.phasor(sampleLib.sampleCount,freq);
+	mu = fSample - int(fSample);
+	y0 = sampleLib.sampleWave,int(fSample) : rdtable;
+	y1 = sampleLib.sampleWave,(int(fSample)+1)%sampleLib.sampleCount : rdtable;
+	y2 = sampleLib.sampleWave,(int(fSample)+2)%sampleLib.sampleCount : rdtable;
+	y3 = sampleLib.sampleWave,(int(fSample)+3)%sampleLib.sampleCount : rdtable;
+	mu2 = mu * mu;
+	a0 = y3 - y2 - y0 + y1;
+	a1 = y0 - y1 - a0;
+	a2 = y2 - y0;
+	a3 = y1;
+	result = (a0*mu*mu2+a1*mu2+a2*mu+a3);
+};
+
+/*
+			   double CubicInterpolate(
+			   double y0,double y1,
+			   double y2,double y3,
+			   double mu)
+			{
+			   double a0,a1,a2,a3,mu2;
+
+			   mu2 = mu*mu;
+			   a0 = y3 - y2 - y0 + y1;
+			   a1 = y0 - y1 - a0;
+			   a2 = y2 - y0;
+			   a3 = y1;
+
+			   return(a0*mu*mu2+a1*mu2+a2*mu+a3);
+			}
+*/
+//sampleOsc = sampleOscHard;
+//sampleOsc = sampleOscLinear;
+sampleOsc = sampleOscCubic;
