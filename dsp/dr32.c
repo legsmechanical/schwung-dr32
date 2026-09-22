@@ -570,11 +570,36 @@ static void set_param(void *instance, const char *key, const char *val) {
      * choice: it auditions as you scroll and there is no cancel — the host
      * offers no `live_preview` or `browser_hooks` here. See the board item.
      */
+    /*
+     * ⭐ CHOOSING A CATEGORY LOADS WHAT THE CURSOR LANDS ON (Josh, 2026-09-22).
+     * The host's preset page writes kit_index only when the jog MOVES: an
+     * arrival writes nothing, and a click inside the list leaves without
+     * writing either (page_controller.mjs). So the kit the cursor lands on
+     * could only be loaded by scrolling off it and back, and a one-kit
+     * category (Init) could not be loaded at all. The category commit is the
+     * one write we get, so it decides:
+     *   - the LOADED kit is in this category: the cursor lands on it and
+     *     nothing reloads (going in to look disturbs nothing);
+     *   - otherwise: the first kit, auditioned exactly as a detent onto it
+     *     would be (deferred, dr32_service_pending_kit).
+     * Only once the catalogue is complete: before that, "not found" may mean
+     * "not scanned yet", and loading on that guess replaces the user's kit.
+     */
     if (!strcmp(key, "kit_cat")) {
         int v = atoi(val);
         int n = dr32_kits_cat_count(in->kits);
         in->kit_cat = (v < 0) ? 0 : (n > 0 && v >= n ? n - 1 : v);
         in->kit_idx = 0;
+        in->kit_pending = -1;
+        if (dr32_kits_ready(in->kits)) {
+            int c = 0, i = 0;
+            if (dr32_kits_locate(in->kits, in->kit_path, &c, &i) == 0 && c == in->kit_cat) {
+                in->kit_idx = i;
+            } else if (dr32_kits_count(in->kits, in->kit_cat) > 0) {
+                in->kit_pending = 0;
+                in->kit_pending_at = in->kit.block;
+            }
+        }
         return;
     }
     if (!strcmp(key, "kit_index")) {

@@ -101,6 +101,15 @@ Master   MASTR
   against a FRESH instance. ⚠ The same-kit shortcut is OFF for Init: a baseline replay cannot EMPTY
   a pad (an empty pad writes no `sample`), so a sample added since would survive a re-Init.
   ⚠ Category 0 is Init now: a test that picks the first category expecting a folder gets one kit.
+- ⭐ **Choosing a category LOADS what the kit list lands on** (Josh, 2026-09-22: *"to get a kit to
+  load, have to first scroll to it"*). The host's preset page writes `kit_index` ONLY when the jog
+  moves — an arrival writes nothing and a click inside it leaves without writing
+  (`page_controller.mjs`) — so the landing kit was unreachable, and a one-kit category (Init)
+  unloadable. A host rule, every module's; fixed module-side on the one write we get, `kit_cat`:
+  the loaded kit's own category lands ON it and reloads nothing; any other lands on kit 0 and
+  auditions it (deferred, like a detent). ⚠ Only once `dr32_kits_ready`: mid-scan, "not found" can
+  mean "not scanned yet", and loading on it would replace the user's kit. That guard is reasoned,
+  NOT tested (a partial scan's order is readdir's); `test_browser.c` §8 pins the rest.
 - ⭑ **The engine/sample browser (`src/browser.js`) is the host's list**: five rows at y
   10/19/28/37/46, labels at x 9, the selection kept off the last row, `drawScrollbar`'s dotted track
   in column 126 only when the list scrolls (Josh: *"scroll bar and 5th line"*, like Modules / My

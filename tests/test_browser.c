@@ -304,6 +304,38 @@ int main(void) {
             api->destroy_instance(other);
         }
 
+        /*
+         * 8. CHOOSING A CATEGORY LOADS WHAT THE CURSOR LANDS ON (Josh: "to get a
+         *    kit to load, have to first scroll to it ... init is a category with
+         *    one preset and i can't scroll to it"). The host writes kit_index
+         *    only when the jog MOVES, so the category commit is the only write
+         *    the landing kit ever gets. No kit_index write below is the point.
+         */
+        #define SETTLE() for (int i_ = 0; i_ < 90; i_++) api->render_block(inst, sink, 128)
+        api->set_param(inst, "kit_cat", "1");                 /* Hybrid; Init is loaded */
+        CHECK(!strcmp(GET("kit_index"), "0"), "a new category lands on kit %s, want 0", v);
+        CHECK(!strcmp(GET("kit"), "dr32:init"), "the category commit loaded at once — it must settle like a detent");
+        SETTLE();
+        CHECK(!strcmp(GET("kit"), kit_a), "choosing Hybrid did not load its first kit (kit '%s')", v);
+
+        /* ...but the category that HOLDS the loaded kit lands on it and
+         * reloads nothing: an edit made since survives going back in. */
+        api->set_param(inst, "kit_index", "1");
+        SETTLE();
+        CHECK(!strcmp(GET("kit"), kit_b), "the detent did not load kit B: '%s'", v);
+        api->set_param(inst, "pad1_transpose", "5");
+        api->set_param(inst, "kit_cat", "1");
+        CHECK(!strcmp(GET("kit_index"), "1"), "going back into Hybrid landed on %s, not the loaded kit (1)", v);
+        SETTLE();
+        CHECK(!strcmp(GET("kit"), kit_b), "going back into the loaded kit's category loaded '%s'", v);
+        CHECK(!strcmp(GET("pad1_transpose"), "5"), "going back into its category reloaded the kit (transpose %s)", v);
+
+        /* And the one this was for: Init, with nothing to scroll to. */
+        api->set_param(inst, "kit_cat", "0");
+        SETTLE();
+        CHECK(!strcmp(GET("kit"), "dr32:init"), "choosing the Init category did not load Init (kit '%s')", v);
+        #undef SETTLE
+
         #undef GET
         api->destroy_instance(inst);
     }
