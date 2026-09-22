@@ -104,6 +104,9 @@ typedef struct {
      * wide_hz: the crossover below which nothing widens (20 = full band). */
     float wide_pct;
     float wide_hz;
+    /* A/B BUILD ONLY (branch wide-ab): 0 = the comb widener, 1 = the Haas
+     * delay it replaced, so the two can be heard side by side. */
+    int   wide_mode;
 } dr32_pad;
 
 /** One TPT SVF stage's integrator state. */

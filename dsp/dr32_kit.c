@@ -341,7 +341,17 @@ static inline float svf_hp(const dr32_wide *d, float st[2], float v0) {
     return v0 - d->k * v1 - v2;
 }
 
+static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames);
+
 static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
+    /* A/B: a mode change starts the stage clean — the two share `buf`. */
+    if (d->mode != p->wide_mode) {
+        memset(d->buf, 0, sizeof(d->buf));
+        memset(d->s, 0, sizeof(d->s));
+        memset(d->hs, 0, sizeof(d->hs));
+        d->mode = p->wide_mode;
+    }
+    if (p->wide_mode == 1) { haas_run(d, p, x, frames); return; }
     float pct = p->wide_pct;
     if (pct < 0.0f) pct = 0.0f;
     if (pct > 100.0f) pct = 100.0f;
@@ -364,6 +374,64 @@ static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
         d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
         x[2 * i]     += side;
         x[2 * i + 1] -= side;
+    }
+}
+
+/*
+ * A/B BUILD ONLY — the Haas delay Wide started as, restored so it can be
+ * heard beside the comb (Josh: "haas seems to have a lot more character").
+ * The RIGHT side's high band is delayed by 15 ms x (Wide/100)^2; above Wide
+ * Freq only, each channel split LR4 so the two low bands stay in phase.
+ * The image leans LEFT (the precedence effect) — that is the point of the
+ * comparison, not a bug.
+ */
+static inline void svf_split(const dr32_wide *d, float st[2], float v0, float *lp, float *hp) {
+    float v3 = v0 - st[1];
+    float v1 = d->a1 * st[0] + d->a2 * v3;
+    float v2 = st[1] + d->a2 * st[0] + d->a3 * v3;
+    st[0] = 2.0f * v1 - st[0];
+    st[1] = 2.0f * v2 - st[1];
+    *lp = v2;
+    *hp = v0 - d->k * v1 - v2;
+}
+
+static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
+    float pct = p->wide_pct;
+    if (pct < 0.0f) pct = 0.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    const float a = pct * 0.01f;
+    const float ms = DR32_WIDE_HAAS_MS_MAX * a * a;
+    const int dly = (int)(ms * 0.001f * DR32_SR + 0.5f);          /* <= 662 */
+    const int split = p->wide_hz > 20.5f;
+    if (split && d->hz != p->wide_hz) {
+        const float t = tanf(3.14159265f * p->wide_hz / DR32_SR);
+        d->k = 1.41421356f;
+        d->a1 = 1.0f / (1.0f + t * (t + d->k));
+        d->a2 = t * d->a1;
+        d->a3 = t * d->a2;
+        d->hz = p->wide_hz;
+    }
+    for (int i = 0; i < frames; i++) {
+        float y[2];
+        for (int c = 0; c < 2; c++) {
+            const float v = x[2 * i + c];
+            float lo = 0.0f, hi = v;
+            if (split) {
+                float l1, h1, l2, h2, dump;
+                svf_split(d, d->hs[c][0], v, &l1, &h1);
+                svf_split(d, d->hs[c][1], l1, &l2, &dump);
+                svf_split(d, d->hs[c][2], h1, &dump, &h2);
+                lo = l2; hi = h2;
+            }
+            if (c == 1) {
+                d->buf[d->w] = hi;
+                hi = d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
+                d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
+            }
+            y[c] = lo + hi;
+        }
+        x[2 * i] = y[0];
+        x[2 * i + 1] = y[1];
     }
 }
 

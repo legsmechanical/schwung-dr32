@@ -344,7 +344,7 @@ int main(void) {
             /* Four base banks plus the synth engines' pages (41 today). An
              * engine page that loses its names reads "Pad 7" over a pad the
              * Pad bank calls "Kick". */
-            CHECK(anchors == 45, "%d pad levels; expected 45 (4 banks + 41 engine pages, merged from engine_ui.json)", anchors);
+            CHECK(anchors == 46, "%d pad levels; expected 46 (5 banks + 41 engine pages, merged from engine_ui.json)", anchors);
             CHECK(spliced == anchors,
                   "child_names spliced %d times for %d anchors — every pad bank needs its own names",
                   spliced, anchors);

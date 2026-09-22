@@ -45,16 +45,19 @@ typedef struct {
  * started as. `buf` holds the delayed, high-passed MID; 512 frames is 11.6 ms,
  * over the 8 ms delay. `tail` keeps a pad rendering after it stops sounding,
  * so the delayed copy's last 8 ms are not cut off. */
-#define DR32_WIDE_BUF    512
+#define DR32_WIDE_BUF    1024    /* A/B build: the Haas mode's 15 ms needs 662 */
 #define DR32_WIDE_MS     8.0f
+#define DR32_WIDE_HAAS_MS_MAX 15.0f
 #define DR32_WIDE_HZ_MAX 4000.0f
 typedef struct {
     float buf[DR32_WIDE_BUF];
     int   w;             // write index
     int   tail;          // frames still to render once the pad is silent
+    int   mode;          // the mode `buf` and the filters were last run in
     float hz;            // the crossover the coefficients below are for (0 = none)
     float k, a1, a2, a3;
-    float s[2][2];       // SVF state [stage][ic1, ic2]: the high-pass, twice
+    float s[2][2];       // comb: SVF state [stage][ic1, ic2], the high-pass twice
+    float hs[2][3][2];   // Haas: [channel][split, low 2nd, high 2nd][ic1, ic2]
 } dr32_wide;
 
 typedef struct {

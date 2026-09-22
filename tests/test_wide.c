@@ -206,6 +206,33 @@ int main(void) {
         printf("  kick side/mid: full band %.3f, crossover 400 Hz %.4f\n", side[0], side[1]);
     }
 
+    /* ---- A/B build: Haas mode is the Haas delay, exactly ----------------- */
+    {
+        const int pcts[] = {50, 100};
+        for (int t = 0; t < 2; t++) {
+            dr32_kit_init(&k);
+            set(&k, "pad1_model", "fm/snare");
+            set(&k, "pad1_pan", "0");
+            set(&k, "pad1_wide_mode", "Haas");
+            char w[8]; snprintf(w, sizeof w, "%d", pcts[t]);
+            set(&k, "pad1_wide", w);
+            set(&k, "pad1_wide_freq", "20");
+            set(&k, "pad1_play", "127");
+            for (int at = 0; at < LEN; at += FR) dr32_kit_render(&k, b + 2 * at, FR);
+            const float aa = pcts[t] * 0.01f;
+            const int d = (int) (15.0f * aa * aa * 0.001f * SR + 0.5f);
+            int ok_l = 1, ok_r = 1;
+            for (int i = 0; i < LEN; i++) {
+                if (b[2 * i] != a[2 * i]) ok_l = 0;
+                if (b[2 * i + 1] != (i >= d ? a[2 * (i - d) + 1] : 0.0f)) ok_r = 0;
+            }
+            CHECK(ok_l, "Haas %d%% changed the left side", pcts[t]);
+            CHECK(ok_r, "Haas %d%% is not the right side delayed by %d frames", pcts[t], d);
+        }
+        dr32_kit_init(&k);
+        CHECK(!strcmp(get(&k, "pad1_wide_mode"), "Comb"), "Wide Mode defaults to %s, want Comb", get(&k, "pad1_wide_mode"));
+    }
+
     /* ---- both render entry points agree --------------------------------- */
     {
         static dr32_kit c;
@@ -252,6 +279,7 @@ int main(void) {
         /* Choosing a model or a sample keeps it: it is where the pad sits. */
         set(&k, "pad1_wide", "7");
         set(&k, "pad1_wide_freq", "220");
+        set(&k, "pad1_wide_mode", "Haas");
         set(&k, "pad1_model", "fm/kick");
         CHECK(!strcmp(get(&k, "pad1_wide"), "7") && !strcmp(get(&k, "pad1_wide_freq"), "220"),
               "choosing a model reset Wide (%s, %s)", get(&k, "pad1_wide"), get(&k, "pad1_wide_freq"));
@@ -262,6 +290,7 @@ int main(void) {
         static dr32_kit r;
         dr32_kit_init(&r);
         CHECK(dr32_state_read(&r, blob, NULL, NULL), "state read");
+        CHECK(!strcmp(get(&r, "pad1_wide_mode"), "Haas"), "Wide Mode did not survive a state round trip");
         CHECK(!strcmp(get(&r, "pad1_wide"), "7") && !strcmp(get(&r, "pad1_wide_freq"), "220"),
               "Wide did not survive a state round trip (%s, %s)", get(&r, "pad1_wide"), get(&r, "pad1_wide_freq"));
     }
