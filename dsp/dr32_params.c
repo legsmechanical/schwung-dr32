@@ -183,7 +183,23 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * rather than as a default that would look like a real value. */
         if (s->engine) {
             int ix = dr32_engine_param_index(s->eops, sub);
-            if (ix >= 0) return snprintf(buf, buf_len, "%g", (double)s->eparam[ix]);
+            if (ix >= 0) {
+                /* An enum reads as its option's NAME, as DR32's own enums do
+                 * (link, filter_type), so the host and the state blob both see
+                 * "Tape" rather than an index that means nothing out of context. */
+                const char *opt = s->eops->params[ix].options;
+                if (opt) {
+                    int want = (int)(s->eparam[ix] + 0.5f), i = 0;
+                    const char *a = opt;
+                    while (i < want && (a = strchr(a, '|')) != NULL) { a++; i++; }
+                    if (a) {
+                        const char *b = strchr(a, '|');
+                        int len = b ? (int)(b - a) : (int)strlen(a);
+                        return snprintf(buf, buf_len, "%.*s", len, a);
+                    }
+                }
+                return snprintf(buf, buf_len, "%g", (double)s->eparam[ix]);
+            }
         }
         if (!strcmp(sub, "loaded"))      return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);
         /* Folder browse. The cast is deliberate: the browse cache is a lazily
@@ -434,6 +450,20 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
             int ix = dr32_engine_param_index(s->eops, sub);
             if (ix >= 0) {
                 const dr32_eparam *ep = &s->eops->params[ix];
+                /* An enum takes its option NAME (what the host writes and the
+                 * state blob holds) or a plain index. */
+                if (ep->options && val[0] && !(val[0] >= '0' && val[0] <= '9') && val[0] != '-') {
+                    int i = 0, found = -1;
+                    size_t vl = strlen(val);
+                    for (const char *a = ep->options; a; i++) {
+                        const char *b = strchr(a, '|');
+                        size_t len = b ? (size_t)(b - a) : strlen(a);
+                        if (len == vl && !strncmp(a, val, len)) { found = i; break; }
+                        a = b ? b + 1 : NULL;
+                    }
+                    if (found < 0) return 1;       /* not one of its names: no change */
+                    f = (float)found;
+                }
                 if (f < ep->min) f = ep->min;
                 if (f > ep->max) f = ep->max;
                 s->eparam[ix] = f;

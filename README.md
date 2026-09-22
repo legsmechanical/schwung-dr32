@@ -42,7 +42,7 @@ Link, Copy and Delete, and the per-pad buses all treat a synth pad the same as a
 | engine | what it is | its pages |
 |---|---|---|
 | **Simian** | [OneTrick SIMIAN 2](https://punklabs.com/ot-simian)'s voice: a tuned oscillator that morphs from triangle to cymbal, resonant-filtered noise and a click, all swept by one envelope. The early-80s electronic drum. | Tone · Noise |
-| **Urchin** | OneTrick URCHIN's physically modelled drums: a struck shell with a resonant head for kicks, toms and snares (with Rim), and a bank of inharmonic partials for hats and cymbals (with Closed, the hat pedal) | Drum · Shell · Chop, or Cymbal · Chop |
+| **Urchin** | OneTrick URCHIN's physically modelled drums: a struck shell with a resonant head for kicks, toms and snares (with Rim), and a bank of inharmonic partials for hats and cymbals (with Closed, the hat pedal) | Drum · Shell · Chop · Media, or Cymbal · Chop · Media |
 
 Each drum starts from the engine's own factory values and is yours to change from there. The pages
 follow the pad: hit a Simian pad and you get its Tone and Noise pages, hit a sample pad and you get
@@ -96,7 +96,7 @@ Jog moves between them.
 | **Pad** | Pad · Engine · Start · End · Transpose · Detune · Choke · Volume |
 | **Shape** | Attack · Decay · Hold · Envelope · Cutoff · Reso · Type · Filter *(sample pads)* |
 | **Tone · Noise** | the Simian voice *(Simian pads)* |
-| **Drum · Shell · Chop / Cymbal · Chop** | the Urchin voice *(Urchin pads)* |
+| **Drum · Shell · Chop · Media / Cymbal · Chop · Media** | the Urchin voice, and its record: Vinyl/Tape noise, Sat, Rate, Bits *(Urchin pads)* |
 | **Mix** | Vel Vol · Volume · Pan · Link · Send A · Send B · Punch · Punch Time |
 | **Master** | level for the whole kit |
 

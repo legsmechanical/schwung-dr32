@@ -271,6 +271,13 @@ if (isBuild) {
     }
 }
 
+/* The engines' pages are a file the DSP opens by name (merge_engine_ui in
+ * dsp/dr32.c) — the same silent-if-missing shape as a canvas script. */
+if (isBuild && !/cp\s+src\/engine_ui\.json\s/.test(src)) {
+    errors.push('build.sh never copies src/engine_ui.json into dist/<id>/ — dsp.so merges it into ' +
+                'the served hierarchy by name, and without it every synth pad loses its engine pages, silently.');
+}
+
 /* ---- 5. install.sh must ship what build.sh packaged, not a second list ----
  *
  * Checked in install.sh rather than build.sh, so it is passed that path

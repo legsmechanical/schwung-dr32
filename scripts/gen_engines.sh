@@ -39,4 +39,5 @@ gen simian drum.dsp   SimianVoice  simian_voice.hpp
 gen urchin drum.dsp   UrchinDrum   urchin_drum.hpp
 gen urchin snare.dsp  UrchinSnare  urchin_snare.hpp
 gen urchin cymbal.dsp UrchinCymbal urchin_cymbal.hpp
+gen urchin media.dsp  UrchinMedia  urchin_media.hpp    # DR32's per-pad Media stage
 echo "Done."

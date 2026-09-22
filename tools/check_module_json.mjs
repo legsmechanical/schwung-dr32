@@ -14,6 +14,23 @@ const d = JSON.parse(readFileSync(path, 'utf8'));
 const caps = d.capabilities || {};
 const levels = ((caps.ui_hierarchy || {}).levels) || {};
 
+/* ⭑ The synth engines' pages live in engine_ui.json beside module.json and
+ * dsp/dr32.c merges them into the hierarchy it SERVES (nav entries after the
+ * `nav_after` level, levels at the end). Check the merged document — the one
+ * the host actually gets — by merging it the same way here. */
+let engineUi = null;
+{
+    const euPath = path.replace(/module\.json$/, 'engine_ui.json');
+    try { engineUi = JSON.parse(readFileSync(euPath, 'utf8')); } catch { /* none */ }
+    if (engineUi) {
+        Object.assign(levels, engineUi.levels || {});
+        const rp = (levels.root && levels.root.params) || [];
+        const at = rp.findIndex((p) => p && p.level === engineUi.nav_after);
+        if (at < 0) console.error(`engine_ui.json nav_after "${engineUi.nav_after}" is not in root's params`);
+        else rp.splice(at + 1, 0, ...(engineUi.nav || []));
+    }
+}
+
 let errors = [];
 
 /*
@@ -138,7 +155,7 @@ const ALL_PAD_LEVELS = [...PAD_LEVELS, ...ENGINE_LEVELS];
         if (on.length !== 1)
             errors.push(`${k} is declared on ${on.length} pad levels (${on.join(', ')}); dAVEBOx takes the FIRST, so exactly one must declare it`);
     }
-    const raw = readFileSync(path, 'utf8');
+    const raw = JSON.stringify(d);                 /* the MERGED document */
     const n = (raw.match(/"child_index_param"/g) || []).length;
     if (n !== ALL_PAD_LEVELS.length)
         errors.push(`"child_index_param" appears ${n} times; dsp/dr32.c splices at each one, so it must appear exactly once per pad level (${ALL_PAD_LEVELS.length})`);
@@ -188,14 +205,20 @@ const ALL_PAD_LEVELS = [...PAD_LEVELS, ...ENGINE_LEVELS];
                 errors.push(`${lname}.${k} must be gated visible_if ${GATE} == 0 — it is sample-only`);
         }
     }
-    /* Copy/Clear act on the level you stand on, so every pad level carries
-     * the SAME list, with `model` right behind `sample` (written in order: the
-     * model must exist on the target before its knobs can land). */
-    const ref = JSON.stringify((levels.pads || {}).child_copy_keys || []);
+    /* Copy/Clear act on the level you stand on. The base banks show on every
+     * pad, so they carry the SAME full list, with `model` right behind
+     * `sample` (written in order: the model must exist on the target before
+     * its knobs can land). An engine page shows only on a pad running THAT
+     * engine, so its list is the same one with every OTHER engine's keys taken
+     * out — anything else would copy a different pad depending on the page. */
+    const full = (levels.pads || {}).child_copy_keys || [];
+    const prefixes = [...new Set(ENGINE_LEVELS.map((n) => n.slice(4).split('_')[0] + '_'))];
     for (const name of ALL_PAD_LEVELS) {
+        const own = name.startsWith('eng_') ? name.slice(4).split('_')[0] + '_' : null;
+        const want = own ? full.filter((k) => !prefixes.some((p) => p !== own && k.startsWith(p))) : full;
         const ck = (levels[name] || {}).child_copy_keys || [];
-        if (JSON.stringify(ck) !== ref)
-            errors.push(`levels.${name}.child_copy_keys differs from pads' — Copy would copy different things depending on the page`);
+        if (JSON.stringify(ck) !== JSON.stringify(want))
+            errors.push(`levels.${name}.child_copy_keys is not ${own ? `the full list scoped to ${own}*` : "pads' list"} — Copy would copy a different pad depending on the page`);
     }
     const ck = (levels.pads || {}).child_copy_keys || [];
     if (ck.indexOf('model') !== ck.indexOf('sample') + 1)

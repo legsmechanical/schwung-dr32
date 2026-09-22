@@ -14,8 +14,10 @@ fail=0
 # The synth engines are C++ (Faust output). Compiled ONCE — they do not depend
 # on the test — and linked into every test through the C++ driver, because
 # they need its runtime. -Wno-comment: the generated headers nest '/*'.
+# ⓘ -Wno-missing-field-initializers: engine rows leave optional trailing
+# fields (an enum's options, the Media stage flag) to zero, by design.
 for src in dsp/engines/*.cpp; do
-  c++ -std=c++14 -O2 -Wall -Wextra -Werror -Wno-comment -Wno-unused-parameter \
+  c++ -std=c++14 -O2 -Wall -Wextra -Werror -Wno-comment -Wno-unused-parameter -Wno-missing-field-initializers \
       -fno-exceptions -fno-rtti -Idsp -Idsp/engines \
       -c "$src" -o "dist/tests/eng_$(basename "${src%.cpp}").o"
 done

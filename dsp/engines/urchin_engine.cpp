@@ -41,6 +41,7 @@
 #include "urchin/generated/urchin_drum.hpp"
 #include "urchin/generated/urchin_snare.hpp"
 #include "urchin/generated/urchin_cymbal.hpp"
+#include "urchin/generated/urchin_media.hpp"
 #include "urchin/factory_bank.h"
 
 #include "../dr32_engine.h"
@@ -49,7 +50,9 @@ namespace {
 
 /* One parameter: its DR32 face, its zone, the zone's unit factor, and the
  * column it lives in in URCHIN_FACTORY's per-voice run. */
-struct Row { dr32_eparam p; const char *zone; float scale; int col; };
+struct Row { dr32_eparam p; const char *zone; float scale; int col; int stage; };
+enum { STAGE_VOICE = 0, STAGE_MEDIA = 1 };
+enum { COL_ARTIC = -1, COL_DEFAULT = -2 };   /* not from the bank: the model's articulation / the default */
 
 /* ⚠ ORDER IS THE PAGE ORDER AND THE STATE ORDER. Append; never insert.
  * Pages follow schwung-urchin's own (Drum / Shell / Chop). `col` indexes the
@@ -83,7 +86,21 @@ struct Row { dr32_eparam p; const char *zone; float scale; int col; };
     {{P "chop_speed", "Chop Speed",  "SPEED",  -12,    12,     0, 1, "st", "Chop"}, "Sample_Speed",    1.0f,   c4}, \
     {{P "late",       "Late",        "LATE",     0,    20,     0, 1, "ms", "Chop"}, "Lateness",        1.0f,   c5}
 
-const Row DRUM[] = { DRUM_ROWS("ud_") };
+/* --- Media: URCHIN's record and sampler, per pad (faust/media.dsp). In
+ * URCHIN these are the kit's Track Sim "Media" and "Sampler" panels; here each
+ * URCHIN pad carries its own, run after its voice. Every row starts NEUTRAL
+ * (no noise, no saturation, full rate, 16 bits), and a pad whose Media is all
+ * neutral does not run the stage at all. Low Cut / High Cut are left out by
+ * decision (Josh: "let's drop the low/high cut"); Speed, Sens and Volume are
+ * DR32's Transpose, Vel Vol and Volume. --- */
+#define MEDIA_ROWS(P) \
+    {{P "noise_type", "Noise Type", "TYPE",      0,     1,     0, 1, NULL, "Media", "Vinyl|Tape"}, "Global_NoiseType",  1.0f,   COL_DEFAULT, STAGE_MEDIA}, \
+    {{P "noise",      "Noise",      "NOISE",     0,   100,     0, 1, "%",  "Media"}, "Global_Noise",      1.0f,   COL_DEFAULT, STAGE_MEDIA}, \
+    {{P "sat",        "Sat",        "SAT",       0,   100,     0, 1, "%",  "Media"}, "Global_Saturation", 1.0f,   COL_DEFAULT, STAGE_MEDIA}, \
+    {{P "rate",       "Rate",       "RATE",  11025, 44100, 44100, 1, "hz", "Media"}, "Global_SampleRate", 0.001f, COL_DEFAULT, STAGE_MEDIA}, \
+    {{P "bits",       "Bits",       "BITS",      4,    16,    16, 1, NULL, "Media"}, "Global_Bits",       1.0f,   COL_DEFAULT, STAGE_MEDIA}
+
+const Row DRUM[] = { DRUM_ROWS("ud_"), MEDIA_ROWS("ud_") };
 
 /* The snare: the drum's rows under its own prefix, plus Rim, which rides on
  * the Drum page as its eighth knob (it is the only snare-specific control
@@ -91,7 +108,8 @@ const Row DRUM[] = { DRUM_ROWS("ud_") };
  * model starts it from the model's own value below. */
 const Row SNARE[] = {
     DRUM_ROWS("us_"),
-    {{"us_rim", "Rim", "RIM", 0, 100, 0, 1, "%", "Drum"}, "Strike_Rimshot", 0.01f, -1},
+    {{"us_rim", "Rim", "RIM", 0, 100, 0, 1, "%", "Drum"}, "Strike_Rimshot", 0.01f, COL_ARTIC},
+    MEDIA_ROWS("us_"),
 };
 
 /* The cymbal's page carries Closed in place of a drum's Detune. `col`
@@ -100,11 +118,12 @@ const Row CYMBAL[] = {
     {{"uc_size",      "Size",        "SIZE",   10,   24,   14, 1, "in", "Cymbal"}, "Cymbal_Size",       1.0f,  0},
     {{"uc_crash",     "Crash",       "CRASH",   0,  100,   50, 1, "%",  "Cymbal"}, "Cymbal_Crash",      1.0f,  1},
     {{"uc_damp",      "Damp",        "DAMP",    0,  100,    0, 1, "%",  "Cymbal"}, "Damp",              1.0f,  2},
-    {{"uc_closed",    "Closed",      "CLOSD",   0,  100,    0, 1, "%",  "Cymbal"}, "Closed",            0.01f, -1},
+    {{"uc_closed",    "Closed",      "CLOSD",   0,  100,    0, 1, "%",  "Cymbal"}, "Closed",            0.01f, COL_ARTIC},
     {{"uc_punch",     "Punch",       "PUNCH",   0,  100,    0, 1, "%",  "Cymbal"}, "Voice_Punchiness",  1.0f,  3},
     {{"uc_strike",    "Strike Amt",  "STRKE",   0,  100,  100, 1, "%",  "Cymbal"}, "Mix_Strike",        1.0f,  4},
     {{"uc_strike_br", "Strike Tone", "STONE",   0,  100,   75, 1, "%",  "Cymbal"}, "Strike_Brightness", 1.0f,  5},
     CHOP_ROWS("uc_", 6, 7, 8, 9, 10, 11),
+    MEDIA_ROWS("uc_"),
 };
 
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -137,6 +156,11 @@ struct Voice {
     FAUSTFLOAT    *zone[DR32_ENG_MAX_PARAMS];
     float          value[DR32_ENG_MAX_PARAMS];
     FAUSTFLOAT    *z_tuning, *z_transpose;
+    /* The Media stage: its own DSP and zone map, run after the voice. */
+    UrchinMedia   *media;
+    ZoneMap        mzones;
+    float          mbuf[DR32_FV_BUF];
+    int            m_noise, m_sat, m_rate, m_bits;   /* rows, for the neutral test */
     int            pitch_row;          /* DRUM/SNARE: the Tuning row, else -1 */
     int            closed_row;         /* CYMBAL: the Closed row, else -1 */
 };
@@ -150,8 +174,21 @@ void *create_kind(int kind, dsp *d, const Engine *e, int sr) {
     dr32_fv_setup(&v->fv, d, sr);
     v->pitch_row = -1;
     v->closed_row = -1;
+    v->m_noise = v->m_sat = v->m_rate = v->m_bits = -1;
+    v->media = new (std::nothrow) UrchinMedia();
+    if (!v->media) { delete v->fv.d; delete v; return nullptr; }
+    v->media->init(sr);
+    v->media->buildUserInterface(&v->mzones);
     for (int i = 0; i < e->n; i++) {
-        v->zone[i] = v->fv.zones.find(e->rows[i].zone);
+        const ZoneMap &zm = e->rows[i].stage == STAGE_MEDIA ? v->mzones : v->fv.zones;
+        v->zone[i] = zm.find(e->rows[i].zone);
+        if (e->rows[i].stage == STAGE_MEDIA) {
+            const char *z = e->rows[i].zone;
+            if (!strcmp(z, "Global_Noise"))      v->m_noise = i;
+            if (!strcmp(z, "Global_Saturation")) v->m_sat = i;
+            if (!strcmp(z, "Global_SampleRate")) v->m_rate = i;
+            if (!strcmp(z, "Global_Bits"))       v->m_bits = i;
+        }
         v->value[i] = e->rows[i].p.def;
         dr32_fv_set_zone(v->zone[i], e->rows[i].p.def * e->rows[i].scale);
         if (!strcmp(e->rows[i].zone, "Tuning")) v->pitch_row = i;
@@ -174,6 +211,7 @@ void destroy(void *e) {
     Voice *v = static_cast<Voice *>(e);
     if (!v) return;
     delete v->fv.d;
+    delete v->media;
     delete v;
 }
 
@@ -220,9 +258,28 @@ void choke(void *e) {
     if (v->closed_row >= 0) dr32_fv_set_zone(v->zone[v->closed_row], 1.0f);
 }
 
+/* All five Media rows at their neutral values: the stage would only copy its
+ * input (plus the cost of its filters and noise generators, which run
+ * whatever their mix), so it is skipped. */
+bool media_neutral(const Voice *v) {
+    return v->value[v->m_noise] <= 0.0f && v->value[v->m_sat] <= 0.0f
+        && v->value[v->m_rate] >= 44100.0f && v->value[v->m_bits] >= 16.0f;
+}
+
 int render(void *e, float *out, int n) {
     Voice *v = static_cast<Voice *>(e);
-    return v ? dr32_fv_render(&v->fv, out, n) : 0;
+    if (!v) return 0;
+    int alive = dr32_fv_render(&v->fv, out, n);
+    if (alive && !media_neutral(v)) {
+        for (int at = 0; at < n; at += DR32_FV_BUF) {
+            int m = n - at < DR32_FV_BUF ? n - at : DR32_FV_BUF;
+            FAUSTFLOAT *in[1] = {out + at};
+            FAUSTFLOAT *o[1] = {v->mbuf};
+            v->media->compute(m, in, o);
+            memcpy(out + at, v->mbuf, sizeof(float) * (size_t)m);
+        }
+    }
+    return alive;
 }
 
 /* ---- models: the port's "Init" kit (Punk Labs' own starting point) ------ */
@@ -258,7 +315,9 @@ struct Models {
                             : SRC[i].engine == DR32_ENG_URCHIN_SNARE ? &T.snare : &T.cymbal;
             const float *row = run + run_offset(SRC[i].voice);
             for (int k = 0; k < e->n; k++)
-                values[i][k] = e->rows[k].col >= 0 ? row[e->rows[k].col] : SRC[i].artic;
+                values[i][k] = e->rows[k].col >= 0          ? row[e->rows[k].col]
+                             : e->rows[k].col == COL_ARTIC ? SRC[i].artic
+                             : e->rows[k].p.def;
             int cym = SRC[i].engine == DR32_ENG_URCHIN_CYMBAL;
             m[i].slug = SRC[i].slug;
             m[i].name = SRC[i].name;
@@ -300,6 +359,7 @@ void dr32_urchin_class_init(int sample_rate) {
     UrchinDrum::classInit(sample_rate);
     UrchinSnare::classInit(sample_rate);
     UrchinCymbal::classInit(sample_rate);
+    UrchinMedia::classInit(sample_rate);
     done = 1;
 }
 

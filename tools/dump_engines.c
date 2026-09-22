@@ -34,7 +34,9 @@ int main(void) {
             printf(",\"min\":%g,\"max\":%g,\"def\":%g,\"step\":%g",
                    (double)p->min, (double)p->max, (double)p->def, (double)p->step);
             printf(",\"unit\":"); if (p->unit) str(p->unit); else printf("null");
-            printf(",\"page\":"); str(p->page); printf("}");
+            printf(",\"page\":"); str(p->page);
+            printf(",\"options\":"); if (p->options) str(p->options); else printf("null");
+            printf("}");
         }
         printf("]}");
     }

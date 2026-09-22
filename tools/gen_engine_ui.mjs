@@ -8,11 +8,21 @@
  * page it sits on — is declared once, in its engine's table (dsp/engines/*.cpp).
  * This compiles tools/dump_engines.c against those tables, asks, and writes:
  *
- *   module.json  one level per engine PAGE, gated `visible_if ui_engine == id`
- *                and carrying its params inline; a root entry for each; every
- *                engine key plus `model` in each pad level's child_copy_keys;
- *                the `ui_engine` gate in chain_params.
+ *   engine_ui.json  one level per engine PAGE, gated `visible_if ui_engine
+ *                == id` and carrying its params inline, plus the root nav
+ *                entries for them. dsp/dr32.c MERGES this into the hierarchy
+ *                it serves (after the Shape entry, at the end of `levels`).
+ *   module.json  every engine key plus `model` in each pad level's
+ *                child_copy_keys; the `ui_engine` gate in chain_params.
  *   browser.js   the picker's model list, between its GENERATED markers.
+ *
+ * ⭐ WHY THE ENGINE PAGES ARE NOT IN module.json. The host's C loader
+ * (chain_params.c parse_chain_params) refuses a module.json over 64 KB, and
+ * that loader is where the per-pad send ranges come from — over the line, the
+ * sends go silent. A sound generator's hierarchy is SERVED by its DSP anyway,
+ * so the engine pages live beside it and the file keeps its headroom for the
+ * engines still to come. (Their params are therefore not in the host's C
+ * metadata; nothing reads them there.)
  *
  * Hand-edit neither of those parts: the next run overwrites them, and --check
  * fails the suite until it has.
@@ -31,6 +41,7 @@ const check = process.argv.includes('--check');
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MJ = join(ROOT, 'src/module.json');
 const BR = join(ROOT, 'src/browser.js');
+const EU = join(ROOT, 'src/engine_ui.json');
 
 /* ---- ask the engines ---------------------------------------------------- */
 function dumpEngines() {
@@ -102,6 +113,14 @@ const shape = levels.pad_shape;
 const VIZ_OFF = /_vel_gain$/;
 
 function paramEntry(p) {
+    if (p.options) {
+        /* An enum, the way DR32 declares its own (link, filter_type): the
+         * options by name, the default by name. The DSP reads and writes the
+         * names. */
+        const options = p.options.split('|');
+        return { key: p.key, name: p.name, short_name: p.short_name, type: 'enum',
+                 options, default: options[p.def] };
+    }
     const e = { key: p.key, name: p.name, short_name: p.short_name, type: 'int',
                 min: p.min, max: p.max, default: p.def };
     if (p.unit) e.unit = p.unit;
@@ -130,34 +149,41 @@ for (const e of engines) {
         /* Copy/Clear act on the level you are STANDING on, so every pad
          * level carries the same full list (filled in below). */
         lv.child_copy_keys = [];
+        lv._engine = e;                        /* for the copy list below; not emitted */
         lv.params = pg.params.map(paramEntry);
         lv.knobs = pg.params.map((p) => p.key);
         genLevels.push([key, lv]);
     }
 }
 for (const [k, v] of Object.entries(levels)) {
-    if (k.startsWith(GEN)) continue;
+    if (k.startsWith(GEN)) continue;          /* they live in engine_ui.json now */
     newLevels[k] = v;
-    if (k === 'pad_shape') for (const [gk, gv] of genLevels) newLevels[gk] = gv;
 }
 caps.ui_hierarchy.levels = newLevels;
-
-/* Root navigation: same placement. */
-const rootParams = newLevels.root.params.filter((p) => !(p.level && p.level.startsWith(GEN)));
-const at = rootParams.findIndex((p) => p.level === 'pad_shape');
-rootParams.splice(at + 1, 0, ...genLevels.map(([k, lv]) => ({ level: k, label: lv.name })));
-newLevels.root.params = rootParams;
+newLevels.root.params = newLevels.root.params.filter((p) => !(p.level && p.level.startsWith(GEN)));
+const NAV_AFTER = 'pad_shape';
 
 /* Copy/Clear: a synth pad copies as its model first, then its values. The
  * host writes the list IN ORDER, so `model` goes right after `sample` — a
  * copied model has to exist on the target before its knobs can land. */
+/* ⭑ An engine page only ever shows on a pad RUNNING that engine (it is gated),
+ * so its list needs that engine's keys and no other's: whatever the target
+ * was, the copied `model` makes it this engine. The base banks show on every
+ * pad, so they carry every engine's keys. Keeping the engine pages' lists to
+ * their own is what keeps the served hierarchy inside the 64 KB value channel
+ * as engines are added. */
 const baseCopy = levels.pads.child_copy_keys.filter((k) => !isGenKey(k));
-for (const lv of Object.values(newLevels)) {
-    if (!Array.isArray(lv.child_copy_keys)) continue;
+const withKeys = (keys) => {
     const base = baseCopy.slice();
-    const i = base.indexOf('sample');
-    base.splice(i + 1, 0, 'model', ...engines.flatMap((e) => e.params.map((p) => p.key)));
-    lv.child_copy_keys = base;
+    base.splice(base.indexOf('sample') + 1, 0, 'model', ...keys);
+    return base;
+};
+const allKeys = engines.flatMap((e) => e.params.map((p) => p.key));
+for (const lv of Object.values(newLevels))
+    if (Array.isArray(lv.child_copy_keys)) lv.child_copy_keys = withKeys(allKeys);
+for (const [, lv] of genLevels) {
+    lv.child_copy_keys = withKeys(lv._engine.params.map((p) => p.key));
+    delete lv._engine;
 }
 
 /* The gate, in chain_params: that is the table the grid's condition evaluator
@@ -169,6 +195,14 @@ const gi = caps.chain_params.findIndex((p) => p.key === 'ui_engine');
 if (gi >= 0) caps.chain_params[gi] = gate; else caps.chain_params.push(gate);
 
 const outMj = ser(mj, 0, false) + '\n';
+
+/* MINIFIED and in a fixed key order: dr32.c finds `"nav":[` and `"levels":{`
+ * by exact text, as it finds everything else it splices. */
+const outEu = JSON.stringify({
+    nav_after: NAV_AFTER,
+    nav: genLevels.map(([k, lv]) => ({ level: k, label: lv.name })),
+    levels: Object.fromEntries(genLevels),
+}) + '\n';
 
 /* ---- browser.js model list -------------------------------------------- */
 const fams = [];
@@ -191,6 +225,9 @@ const outBr = br.slice(0, b0) + BEGIN + '\n' + famJs + br.slice(b1);
 
 /* ---- write or check ---------------------------------------------------- */
 const stale = [];
+let euText = '';
+try { euText = readFileSync(EU, 'utf8'); } catch { /* first run */ }
+if (outEu !== euText) stale.push('src/engine_ui.json');
 if (outMj !== text) stale.push('src/module.json');
 if (outBr !== br) stale.push('src/browser.js');
 if (check) {
@@ -202,7 +239,8 @@ if (check) {
 } else {
     writeFileSync(MJ, outMj);
     writeFileSync(BR, outBr);
+    writeFileSync(EU, outEu);
     console.log(`gen_engine_ui: wrote ${stale.length ? stale.join(', ') : 'nothing (up to date)'} — ` +
                 `${engines.length} engines, ${genLevels.length} pages, ${models.length} models, ` +
-                `module.json ${Buffer.byteLength(outMj)} bytes`);
+                `module.json ${Buffer.byteLength(outMj)} bytes, engine_ui.json ${Buffer.byteLength(outEu)} bytes`);
 }

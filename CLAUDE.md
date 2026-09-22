@@ -184,10 +184,23 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
 - **Copy/Clear act on the level you STAND on**, so every pad level carries the SAME
   `child_copy_keys`, with `model` right after `sample` (written in order; the model must exist
   before its knobs land). `check_module_json` pins it.
-- ⚠ **module.json is 53.7 KB of the host's 64 KB file cap.** The next engine family will not fit
-  as more generated levels in this file. Serve its levels from the DSP instead (the served
-  hierarchy is ours: `load_ui_hierarchy`), or compact the per-level copy lists. The SERVED
-  hierarchy is minified for the same reason (33.5 KB with names spliced into 13 pad levels).
+- ⭑ **The engine pages are NOT in module.json; they are `src/engine_ui.json`, and the DSP merges
+  them into the hierarchy it serves** (`merge_engine_ui` in `dsp/dr32.c`: nav entries after
+  Shape, levels at the end). The reason is `chain_params.c parse_chain_params`: it refuses a
+  module.json over 64 KB, and it is where the per-pad send ranges come from. Over the line, the
+  sends go silent. module.json is 18 KB now. The engine params are consequently absent from the
+  host's C metadata; nothing reads them there. `build.sh` must ship the file
+  (`check_build_script` pins it), and `check_module_json` checks the MERGED document.
+- The SERVED hierarchy crosses a 64 KB value channel, so it is minified, and an engine page's
+  `child_copy_keys` carry only ITS engine's keys (it only shows on that engine's pads). Served
+  size with two names spliced into 16 pad levels: 33 KB.
+- ⭑ **URCHIN's Media stage runs PER PAD** (`dsp/engines/urchin/faust/media.dsp`, assembled
+  VERBATIM from URCHIN's `output.dsp`): the Vinyl/Tape noise (which follows the drum's own level),
+  Sat, Rate and Bits, on a "Media" page for all three URCHIN engines. Josh: *"that processing is
+  pretty integral to the sound"*. Left out by decision: the reverb (the sends do that), Low
+  Cut / High Cut (*"let's drop the low/high cut"*), the limiter, and the volume. A pad whose Media
+  is all neutral skips the stage entirely, and that is a true bypass (tested bit-identical).
+  Engine params may be ENUMS (`dr32_eparam.options`, "Vinyl|Tape"), read and written by name.
 - **Both render paths** go through the one `pad_render` dispatch, so a synth pad cannot render on
   one entry point and not the other. `tests/test_synth_pads.c` drives both; removing synth pads
   from the split loop fails 4 checks.

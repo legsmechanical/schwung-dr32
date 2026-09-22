@@ -39,7 +39,7 @@ enum {
     DR32_ENG_COUNT         = 5,
 };
 
-#define DR32_ENG_MAX_PARAMS 24
+#define DR32_ENG_MAX_PARAMS 32
 
 /** One engine parameter, in DISPLAY units — the numbers the knob shows and
  *  the state blob stores. The engine converts to its zone's unit itself. */
@@ -50,6 +50,7 @@ typedef struct {
     float       min, max, def, step;
     const char *unit;       /* "hz", "%", "dB", "st", "ms", "in", or NULL */
     const char *page;       /* the bank this knob sits on: "Tone", "Shell" */
+    const char *options;    /* an ENUM: "Vinyl|Tape", value = the index. NULL otherwise */
 } dr32_eparam;
 
 typedef struct {

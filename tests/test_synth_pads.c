@@ -215,6 +215,47 @@ int main(void) {
         dr32_kit_free(&k);
     }
 
+    /* ---- URCHIN's Media stage: neutral is a true bypass; each knob acts --- */
+    {
+        static dr32_kit a, b;
+        static float oa[2 * FR], ob[2 * FR];
+        #define HIT_DIFF(setup) ({ \
+            dr32_kit_init(&a); dr32_kit_init(&b); \
+            set(&a, "pad1_model", "urchin/kick"); set(&b, "pad1_model", "urchin/kick"); \
+            setup; \
+            dr32_kit_note_on(&a, 36, 110); dr32_kit_note_on(&b, 36, 110); \
+            double d = 0; \
+            for (int blk = 0; blk < 40; blk++) { \
+                dr32_kit_render(&a, oa, FR); dr32_kit_render(&b, ob, FR); \
+                for (int i = 0; i < 2 * FR; i++) d += fabs(oa[i] - ob[i]); \
+            } \
+            dr32_kit_free(&a); dr32_kit_free(&b); d; })
+        CHECK(HIT_DIFF((void)0) == 0.0, "two neutral URCHIN kicks render identically");
+        /* Writing the neutral values explicitly still bypasses. */
+        CHECK(HIT_DIFF((set(&b, "pad1_ud_noise", "0"), set(&b, "pad1_ud_bits", "16"),
+                        set(&b, "pad1_ud_rate", "44100"), set(&b, "pad1_ud_sat", "0"))) == 0.0,
+              "neutral Media is a bypass");
+        CHECK(HIT_DIFF(set(&b, "pad1_ud_bits", "4")) > 1.0, "Bits crushes");
+        CHECK(HIT_DIFF(set(&b, "pad1_ud_rate", "11025")) > 1.0, "Rate downsamples");
+        CHECK(HIT_DIFF(set(&b, "pad1_ud_sat", "100")) > 1.0, "Sat saturates");
+        CHECK(HIT_DIFF(set(&b, "pad1_ud_noise", "100")) > 1.0, "Noise adds the record");
+        CHECK(HIT_DIFF((set(&a, "pad1_ud_noise", "100"), set(&b, "pad1_ud_noise", "100"),
+                        set(&b, "pad1_ud_noise_type", "Tape"))) > 1.0, "Vinyl and Tape differ");
+
+        /* The noise type is an enum: it reads and writes by NAME. */
+        dr32_kit_init(&k);
+        set(&k, "pad2_model", "urchin/hat_open");
+        CHECK(!strcmp(get(&k, "pad2_uc_noise_type"), "Vinyl"), "reads Vinyl (%s)", get(&k, "pad2_uc_noise_type"));
+        set(&k, "pad2_uc_noise_type", "Tape");
+        CHECK(!strcmp(get(&k, "pad2_uc_noise_type"), "Tape"), "Tape by name (%s)", get(&k, "pad2_uc_noise_type"));
+        set(&k, "pad2_uc_noise_type", "0");
+        CHECK(!strcmp(get(&k, "pad2_uc_noise_type"), "Vinyl"), "and by index");
+        set(&k, "pad2_uc_noise_type", "Tape");
+        set(&k, "pad2_uc_noise_type", "Cassette");
+        CHECK(!strcmp(get(&k, "pad2_uc_noise_type"), "Tape"), "an unknown name changes nothing");
+        dr32_kit_free(&k);
+    }
+
     /* ---- panic mutes a synth pad at once, and the next hit is whole ----- */
     {
         dr32_kit_init(&k);
