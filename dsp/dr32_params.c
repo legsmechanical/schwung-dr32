@@ -444,10 +444,11 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
          * blob restores, but `send_a`/`send_b` are the names now. */
         else if (!strcmp(sub, "send_a") || !strcmp(sub, "send1")) p->send_db[0] = f;
         else if (!strcmp(sub, "send_b") || !strcmp(sub, "send2")) p->send_db[1] = f;
-        /* Wide (DR32's own widener; dr32_kit.c wide_run), 0..100 %. */
+        /* Wide (DR32's own widener; dr32_kit.c wide_run), -100..+100 %: the
+         * sign mirrors the image, in both modes. */
         else if (!strcmp(sub, "wide"))
-            p->wide_pct = f > 100.0f ? 100.0f : (f < 0.0f ? 0.0f : f);
-        else if (!strcmp(sub, "wide_mode"))     /* A/B build: "Comb" | "Haas" */
+            p->wide_pct = f > 100.0f ? 100.0f : (f < -100.0f ? -100.0f : f);
+        else if (!strcmp(sub, "wide_mode"))     /* WMODE: "Comb" | "Haas" */
             p->wide_mode = (!strcmp(val, "Haas") || atoi(val) == 1) ? 1 : 0;
         else if (!strcmp(sub, "wide_freq"))
             p->wide_hz = f < 20.0f ? 20.0f : (f > DR32_WIDE_HZ_MAX ? DR32_WIDE_HZ_MAX : f);

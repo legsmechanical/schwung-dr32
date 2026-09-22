@@ -3,8 +3,8 @@
 #define _GNU_SOURCE
 
 /*
- * Wide — the per-pad complementary-comb widener (dr32_kit.c wide_run), on the
- * Mix page with its crossover, Wide Freq:
+ * Wide — the per-pad widener (dr32_kit.c), on the Stereo page with WMODE and
+ * its crossover, Wide Freq. WMODE Comb, a complementary-comb widener:
  *     side = g * HP(mid)(t - 8 ms),  L += side,  R -= side,  g = Wide / 100
  * What it promises, measured on the kit's output:
  *   - Wide 0 is a TRUE bypass, bit for bit, whatever Wide Freq says
@@ -16,6 +16,10 @@
  *   - above a crossover only: a kick's body stays centred
  *   - nothing is cut off: the delayed copy plays out after the pad stops
  *     sounding, on BOTH render paths
+ *   - a NEGATIVE Wide mirrors: the comb's side flips sign; Haas delays the
+ *     LEFT side instead of the right
+ *   - WMODE Haas is the Haas delay, exactly: one side 15 ms x (Wide/100)^2
+ *     late, the other untouched
  *   - the knobs clamp, read back, and survive a state round trip
  */
 #include "../dsp/dr32_kit.h"
@@ -120,6 +124,16 @@ int main(void) {
             if (e > worst) worst = e;
         }
         CHECK(worst < 1e-6f, "the side is not 0.5 x the mid 8 ms late (worst %g)", worst);
+
+        /* A NEGATIVE Wide mirrors it: the same side, sign flipped. */
+        hit(&k, "fm/snare", "-50", "20", b);
+        worst = 0;
+        for (int i = 0; i < LEN; i++) {
+            const float want = i >= D ? -0.5f * a[2 * (i - D)] : 0.0f;
+            const float e = fabsf(0.5f * (b[2 * i] - b[2 * i + 1]) - want);
+            if (e > worst) worst = e;
+        }
+        CHECK(worst < 1e-6f, "Wide -50%% is not the mirrored side (worst %g)", worst);
     }
 
     /* ---- linear amount -------------------------------------------------- */
@@ -206,10 +220,10 @@ int main(void) {
         printf("  kick side/mid: full band %.3f, crossover 400 Hz %.4f\n", side[0], side[1]);
     }
 
-    /* ---- A/B build: Haas mode is the Haas delay, exactly ----------------- */
+    /* ---- WMODE Haas: the Haas delay, exactly, on the sign's side ---------- */
     {
-        const int pcts[] = {50, 100};
-        for (int t = 0; t < 2; t++) {
+        const int pcts[] = {50, 100, -50, -100};
+        for (int t = 0; t < 4; t++) {
             dr32_kit_init(&k);
             set(&k, "pad1_model", "fm/snare");
             set(&k, "pad1_pan", "0");
@@ -221,13 +235,15 @@ int main(void) {
             for (int at = 0; at < LEN; at += FR) dr32_kit_render(&k, b + 2 * at, FR);
             const float aa = pcts[t] * 0.01f;
             const int d = (int) (15.0f * aa * aa * 0.001f * SR + 0.5f);
-            int ok_l = 1, ok_r = 1;
+            const int dch = pcts[t] > 0 ? 1 : 0;
+            int ok_other = 1, ok_delayed = 1;
             for (int i = 0; i < LEN; i++) {
-                if (b[2 * i] != a[2 * i]) ok_l = 0;
-                if (b[2 * i + 1] != (i >= d ? a[2 * (i - d) + 1] : 0.0f)) ok_r = 0;
+                if (b[2 * i + 1 - dch] != a[2 * i + 1 - dch]) ok_other = 0;
+                if (b[2 * i + dch] != (i >= d ? a[2 * (i - d) + dch] : 0.0f)) ok_delayed = 0;
             }
-            CHECK(ok_l, "Haas %d%% changed the left side", pcts[t]);
-            CHECK(ok_r, "Haas %d%% is not the right side delayed by %d frames", pcts[t], d);
+            CHECK(ok_other, "Haas %d%% changed the %s side", pcts[t], dch ? "left" : "right");
+            CHECK(ok_delayed, "Haas %d%% is not the %s side delayed by %d frames", pcts[t],
+                  dch ? "right" : "left", d);
         }
         dr32_kit_init(&k);
         CHECK(!strcmp(get(&k, "pad1_wide_mode"), "Comb"), "Wide Mode defaults to %s, want Comb", get(&k, "pad1_wide_mode"));
@@ -269,8 +285,8 @@ int main(void) {
         CHECK(!strcmp(get(&k, "pad1_wide"), "37"), "wide reads %s", get(&k, "pad1_wide"));
         set(&k, "pad1_wide", "150");
         CHECK(!strcmp(get(&k, "pad1_wide"), "100"), "wide clamps to 100: %s", get(&k, "pad1_wide"));
-        set(&k, "pad1_wide", "-50");
-        CHECK(!strcmp(get(&k, "pad1_wide"), "0"), "wide clamps to 0: %s", get(&k, "pad1_wide"));
+        set(&k, "pad1_wide", "-150");
+        CHECK(!strcmp(get(&k, "pad1_wide"), "-100"), "wide clamps to -100: %s", get(&k, "pad1_wide"));
         set(&k, "pad1_wide_freq", "5");
         CHECK(!strcmp(get(&k, "pad1_wide_freq"), "20"), "wide_freq clamps to 20: %s", get(&k, "pad1_wide_freq"));
         set(&k, "pad1_wide_freq", "9000");

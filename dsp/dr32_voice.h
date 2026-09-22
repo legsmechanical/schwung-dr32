@@ -98,14 +98,15 @@ typedef struct {
     /* Wide: a complementary-comb widener on the pad's stereo output
      * (dr32_kit.c, wide_run). DR32's own, not the Move's: never in an
      * .ablpreset, only the state blob.
-     * wide: 0..100 %, the side's level against the mid (linear), 0 = off (a
-     *       true bypass). No sign: this widener does not lean, so there is no
-     *       side to choose.
+     * wide: -100..+100 %, 0 = off (a true bypass). Comb: |wide| is the side's
+     *       level against the mid (linear), the sign mirrors the comb teeth.
+     *       Haas: 15 ms x (wide/100)^2, + delays the RIGHT side, - the LEFT.
      * wide_hz: the crossover below which nothing widens (20 = full band). */
     float wide_pct;
     float wide_hz;
-    /* A/B BUILD ONLY (branch wide-ab): 0 = the comb widener, 1 = the Haas
-     * delay it replaced, so the two can be heard side by side. */
+    /* WMODE: 0 = Comb (no lean, mono-safe), 1 = Haas (leans, more
+     * character). Josh kept both: "I like both, and can see the use in each
+     * depending on context". */
     int   wide_mode;
 } dr32_pad;
 

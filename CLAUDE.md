@@ -18,32 +18,40 @@ Category <items>   Init · Acoustic · Electronic · Hybrid · My Kits   <- firs
 Pad      PAD   ENGN  STRT  END   TRSP  DETN  CHOKE VOL    <- level `pads` (STRT/END: samples)
 Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (samples only)
 <engine> the synth voice's pages, gated on ui_engine      <- levels `eng_*` (generated)
-Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  WIDE  WFREQ  <- level `pad_mix`
-Punch    PUNCH PTIME                                    <- level `pad_punch` (samples only)
+Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  PUNCH PTIME  <- level `pad_mix`
+Stereo   WMODE WIDE  WFREQ                              <- level `pad_stereo`
 Master   MASTR
 ```
 
-- ⭑ **WIDE / WFREQ** (Josh, 2026-09-22: *"a haas stereo spread to each drum's mix page ... and a
-  knob to set a crossover below which the sound is not spread"*; names his). It STARTED as a Haas
-  delay and is now a **complementary-comb (Lauridsen) widener**: `side = g·HP(mid)(t−8 ms)`,
-  `L += side`, `R −= side`, `g = wide/100` (`wide_run`, `dr32_kit.c`). Why it changed: a one-sided
-  delay LEANS toward the leading side at every setting (the precedence effect; Josh: *"the lean
-  ... seems more intense now"*, after a curve put more knob travel under ~1 ms, where it mostly
-  moves the image). This one does not lean and its MONO SUM IS THE DRY PAD exactly. So `wide` is
-  0..100 %, no sign; `wide_freq` 20..4000 Hz (default 150; 20 = full band); the 8 ms delay is
-  internal (short enough not to flam a drum, comb teeth ~125 Hz apart). Linear in g: side is
-  20·log10(g) dB under the mid. Cost +0.02 µs/pad full band, +0.16 with the crossover (Mac).
-  - ⚠ **Wide 0 is a TRUE bypass**, proven: a hash probe over sample pads matched the pre-Wide build
-    bit for bit. (Forcing the stage on at 0 is an EQUIVALENT mutation: +0·x changes nothing.)
-  - ⚠ At 100% a SIDE can peak at twice the dry level (the mono sum cannot). Loud pads can clip on
-    the split path's int16 — which in a test reads as a "lost tail". Keep test tones quiet.
-  - ⚠ **A pad renders while `pad_live`, not only while sounding** — the delayed copy's last 8 ms
-    outlive the source. BOTH render loops ask `pad_live`. It only shows on a SAMPLE pad (a sample
-    stops dead; a synth has 100 ms of near-silence before its gate), so `test_wide.c` checks the
-    tail with an abruptly-ending WAV on both paths.
+- ⭑ **The Stereo page: WMODE · WIDE · WFREQ** (Josh, 2026-09-22: *"a haas stereo spread to each
+  drum's mix page ... and a knob to set a crossover below which the sound is not spread"*; then,
+  having heard both, *"I like both, and can see the use in each depending on context"* — so both
+  modes stay, on their own page, `pad_stereo`, after Mix; names his). Per pad, after everything
+  the pad does, in the one `pad_render` both render paths share.
+  - **WMODE Comb** (`wide_run`): a complementary-comb (Lauridsen) widener,
+    `side = g·HP(mid)(t−8 ms)`, `L += side`, `R −= side`, `g = wide/100`. No lean, and the MONO
+    SUM IS THE DRY PAD exactly. Linear: the side is 20·log10(|g|) dB under the mid.
+  - **WMODE Haas** (`haas_run`): one side's high band delayed 15 ms × (wide/100)², each channel
+    split LR4 so the lows stay in phase. It LEANS toward the leading side (precedence effect) —
+    that is its character; Josh called it "a lot more character". Curved because width comes on
+    under ~3 ms; capped at 15 ms because past that a drum flams.
+  - **WIDE is −100..+100 in both modes; the SIGN MIRRORS.** Haas: + delays the right, − the left
+    (how a kit's leans are balanced). Comb: − flips the side's sign (the comb teeth mirror).
+  - WMODE is a two-option enum, so the grid FLIPS it on click (`flipsOnClick`, any 2-option enum)
+    — the one-click A/B at the same WIDE. A mode change clears the shared buffer.
+  - `wide_freq` 20..4000 Hz (default 150; 20 = full band). Cost on the Mac: comb +0.02 µs/pad full
+    band, +0.16 with the crossover; Haas +0.05 / +0.18.
+  - ⚠ **Wide 0 is a TRUE bypass**, proven by a hash probe over sample pads against the pre-Wide
+    build. (Forcing the stage on at 0 in Comb is an EQUIVALENT mutation: +0·x changes nothing.)
+  - ⚠ Comb at |100%| can peak a SIDE at twice the dry level (the mono sum cannot). Loud pads can
+    clip the split path's int16 — which in a test reads as a "lost tail". Keep test tones quiet.
+  - ⚠ **A pad renders while `pad_live`, not only while sounding** — the delayed signal outlives
+    the source. BOTH render loops ask `pad_live`. It only shows on a SAMPLE pad (a sample stops
+    dead; a synth has 100 ms of near-silence before its gate), so `test_wide.c` checks the tail
+    with an abruptly-ending WAV on both paths.
   - It is "where the pad sits", like the sends: kept across sample <-> synth, in the state blob,
-    never in the `.ablpreset`. Punch moved to its own bank (`pad_punch`, gated `ui_engine == 0`) to
-    make room; `check_module_json` now partitions FOUR banks.
+    never in the `.ablpreset`. `check_module_json` partitions FOUR banks: pads, Shape, Mix, Stereo.
+    (Punch went to its own page to make room for Wide on Mix, and came back when Stereo took it.)
 - ⭐ **Choosing a category LOADS what the kit list lands on** (Josh, 2026-09-22: *"to get a kit to
   load, have to first scroll to it"*). The host's preset page writes `kit_index` ONLY when the jog
   moves — an arrival writes nothing and a click inside it leaves without writing

@@ -315,6 +315,9 @@ static void source_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames)
  * WIDE — a complementary-comb widener (Lauridsen's), one pad, in place.
  *
  *     side = g * HP(mid)(t - 8 ms)        mid = (L + R) / 2,  g = Wide / 100
+ *
+ * (WMODE Comb. The other mode, Haas, is haas_run below. A negative Wide
+ * flips the side's sign: the same width, the comb teeth mirrored.)
  *     L += side        R -= side
  *
  * Why this and not the Haas delay it replaced (Josh, 2026-09-22, hearing the
@@ -344,7 +347,7 @@ static inline float svf_hp(const dr32_wide *d, float st[2], float v0) {
 static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames);
 
 static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
-    /* A/B: a mode change starts the stage clean — the two share `buf`. */
+    /* A mode change starts the stage clean — the two modes share `buf`. */
     if (d->mode != p->wide_mode) {
         memset(d->buf, 0, sizeof(d->buf));
         memset(d->s, 0, sizeof(d->s));
@@ -353,9 +356,9 @@ static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     }
     if (p->wide_mode == 1) { haas_run(d, p, x, frames); return; }
     float pct = p->wide_pct;
-    if (pct < 0.0f) pct = 0.0f;
+    if (pct < -100.0f) pct = -100.0f;
     if (pct > 100.0f) pct = 100.0f;
-    const float g = pct * 0.01f;
+    const float g = pct * 0.01f;   /* signed: - mirrors which side gets which comb teeth */
     const int dly = (int)(DR32_WIDE_MS * 0.001f * DR32_SR + 0.5f);   /* 353 */
     const int hp = p->wide_hz > 20.5f;
     if (hp && d->hz != p->wide_hz) {
@@ -378,12 +381,14 @@ static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
 }
 
 /*
- * A/B BUILD ONLY — the Haas delay Wide started as, restored so it can be
- * heard beside the comb (Josh: "haas seems to have a lot more character").
- * The RIGHT side's high band is delayed by 15 ms x (Wide/100)^2; above Wide
- * Freq only, each channel split LR4 so the two low bands stay in phase.
- * The image leans LEFT (the precedence effect) — that is the point of the
- * comparison, not a bug.
+ * HAAS — the other Wide mode (WMODE; Josh: "I like both, and can see the use
+ * in each depending on context"). One side's high band is delayed by
+ * 15 ms x (Wide/100)^2 — + the RIGHT side, - the LEFT — so the image LEANS
+ * toward the side that arrives first (the precedence effect): that lean is
+ * this mode's character, and the sign is how a kit's leans are balanced.
+ * Above Wide Freq only, each channel split LR4 so the two low bands stay in
+ * phase. The curve: width comes on between 0 and ~3 ms; the 15 ms cap is
+ * where a drum transient stops fusing and reads as a flam.
  */
 static inline void svf_split(const dr32_wide *d, float st[2], float v0, float *lp, float *hp) {
     float v3 = v0 - st[1];
@@ -397,10 +402,15 @@ static inline void svf_split(const dr32_wide *d, float st[2], float v0, float *l
 
 static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     float pct = p->wide_pct;
-    if (pct < 0.0f) pct = 0.0f;
+    if (pct < -100.0f) pct = -100.0f;
     if (pct > 100.0f) pct = 100.0f;
     const float a = pct * 0.01f;
     const float ms = DR32_WIDE_HAAS_MS_MAX * a * a;
+    const int dch = a < 0.0f ? 0 : 1;          /* + delays the RIGHT side, - the LEFT */
+    if (dch != d->haas_side) {                 /* the other side now: start clean */
+        memset(d->buf, 0, sizeof(d->buf));
+        d->haas_side = dch;
+    }
     const int dly = (int)(ms * 0.001f * DR32_SR + 0.5f);          /* <= 662 */
     const int split = p->wide_hz > 20.5f;
     if (split && d->hz != p->wide_hz) {
@@ -423,7 +433,7 @@ static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
                 svf_split(d, d->hs[c][2], h1, &dump, &h2);
                 lo = l2; hi = h2;
             }
-            if (c == 1) {
+            if (c == dch) {
                 d->buf[d->w] = hi;
                 hi = d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
                 d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
