@@ -52,9 +52,14 @@
  * `ui_current_pad` / `ui_auto_select_pad` are editor focus, not sound;
  * restoring them would move the user's cursor on load.
  *
- * `sample` is first so a pad's audio is in place before anything shapes it. */
+ * `sample` is first so a pad's audio is in place before anything shapes it,
+ * and `model` right behind it for the same reason: choosing a model starts the
+ * pad from that model's values and level, and the pad's own edits below must
+ * land on top of that, not under it. A synth pad writes `model` and no
+ * `sample`; a sample pad the reverse. Its engine's own parameters follow the
+ * table — see dr32_state_write. */
 static const char *const PAD_FIELDS[] = {
-    "sample",
+    "sample", "model",
     "note", "choke", "sending_note", "speaker_on",
     "transpose", "detune", "pitch_env",
     "gain", "volume", "cell_volume", "pan", "vel_vol",
@@ -200,9 +205,13 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
         /* Skip pads with nothing loaded. A silent pad carries no sound the user
          * could have shaped, and skipping them keeps a typical 16-pad kit well
          * under half the blob a full 32 would produce. */
-        if (!kit->pads[pad].sample && !kit->pads[pad].path[0]) continue;
+        const dr32_pad_slot *slot = &kit->pads[pad];
+        if (!slot->sample && !slot->path[0] && !slot->engine) continue;
         for (int f = 0; PAD_FIELDS[f]; f++) {
             char key[64];
+            /* A synth pad's `sample` reads as its model's NAME (the engine
+             * cell shows it), which is not a path and must not be saved as one. */
+            if (slot->engine && f == 0) continue;
             /* ⚠⚠ `pad + 1`, NOT `pad`. PR #3 branched before the surface went
              * 1-based on 2026-09-09, so taking its line wholesale would have
              * silently reintroduced the off-by-one — every persisted pad key
@@ -211,6 +220,15 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
             snprintf(key, sizeof(key), "pad%d_%s", pad + 1, PAD_FIELDS[f]);   /* wire is 1-based */
             n = emit_param(kit, key, base_params, &base_cursor, buf, buf_len, n, &first);
             if (n >= buf_len - 8) { dr32_json_free(base_root); return 0; }   /* truncated — better none than half */
+        }
+        /* The engine's own parameters, in its table's order. Read through
+         * dr32_read_param like everything above, so what is saved is exactly
+         * what a knob shows; restored after `model` has started the pad. */
+        for (int i = 0; slot->engine && slot->eops && i < slot->eops->nparams; i++) {
+            char key[64];
+            snprintf(key, sizeof(key), "pad%d_%s", pad + 1, slot->eops->params[i].key);
+            n = emit_param(kit, key, base_params, &base_cursor, buf, buf_len, n, &first);
+            if (n >= buf_len - 8) { dr32_json_free(base_root); return 0; }
         }
     }
 

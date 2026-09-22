@@ -1,6 +1,7 @@
 #include "dr32_kit.h"
 
 #include <dirent.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,7 @@ void dr32_kit_init(dr32_kit *k) {
     for (int i = 0; i < 128; i++) k->note_to_pad[i] = -1;
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_pad_defaults(&k->pads[i].params);
+        k->pads[i].model = -1;
         k->pads[i].note = DR32_FIRST_NOTE + i;
         k->note_to_pad[DR32_FIRST_NOTE + i] = (signed char)i;
     }
@@ -152,7 +154,148 @@ void dr32_kit_free(dr32_kit *k) {
         free(k->pads[i].retired);
         k->pads[i].sample = k->pads[i].retired = NULL;
         k->pads[i].frames = 0;
+        dr32_pad_slot *s = &k->pads[i];
+        if (s->eops && s->eng) s->eops->destroy(s->eng);
+        if (s->eops_retired && s->eng_retired) s->eops_retired->destroy(s->eng_retired);
+        s->eng = s->eng_retired = NULL;
+        s->eops = s->eops_retired = NULL;
+        s->engine = 0;
+        s->model = -1;
     }
+}
+
+/* ---------- synth engines ------------------------------------------------ */
+
+/* Same retire discipline as a sample buffer: the audio thread checks
+ * `synth.active` before touching `eng`, so stop the voice first, and destroy
+ * the DISPLACED instance only on the next switch. */
+static void retire_engine(dr32_pad_slot *s) {
+    s->synth.active = 0;
+    if (s->eops_retired && s->eng_retired) s->eops_retired->destroy(s->eng_retired);
+    s->eng_retired = s->eng;
+    s->eops_retired = s->eops;
+    s->eng = NULL;
+    s->eops = NULL;
+    s->engine = 0;
+    s->model = -1;
+}
+
+void dr32_kit_drop_engine(dr32_kit *k, int pad) {
+    if (!k || pad < 0 || pad >= DR32_PADS) return;
+    if (k->pads[pad].engine) retire_engine(&k->pads[pad]);
+}
+
+int dr32_pad_sounding(const dr32_pad_slot *s) {
+    return s->engine ? s->synth.active : s->voice.active;
+}
+
+const char *dr32_pad_model_name(const dr32_pad_slot *s) {
+    const dr32_model *m = s->engine ? dr32_model_at(s->model) : NULL;
+    return m ? m->name : "";
+}
+
+int dr32_kit_set_model(dr32_kit *k, int pad, const char *slug) {
+    if (!k || pad < 0 || pad >= DR32_PADS) return 0;
+    int mi = dr32_model_find(slug);
+    const dr32_model *m = dr32_model_at(mi);
+    const dr32_engine_ops *e = m ? dr32_engine_get(m->engine) : NULL;
+    if (!e) return 0;
+
+    /* The shared tables (URCHIN's sine tables, SIMIAN's cymbal) are filled on
+     * the FIRST model anyone picks, not at create_instance: that is on the SPI
+     * callback too, and an instance that never plays a synth never pays it. */
+    dr32_engines_init((int)DR32_SR);
+    void *inst = e->create((int)DR32_SR);
+    if (!inst) return 0;
+
+    /* One kind of voice per pad: the sample goes. load_sample(NULL) also
+     * retires any previous engine, which is what makes the swap below safe. */
+    dr32_kit_load_sample(k, pad, NULL);
+    dr32_pad_slot *s = &k->pads[pad];
+    s->eops = e;
+    s->eng = inst;
+    s->engine = m->engine;
+    s->model = mi;
+    memset(&s->synth, 0, sizeof(s->synth));
+    for (int i = 0; i < e->nparams; i++) {
+        s->eparam[i] = m->values[i];
+        e->set(inst, i, m->values[i]);
+    }
+
+    /* The model's own level and position become the pad's. Velocity is the
+     * ENGINE's — SIMIAN's Vel Gain, URCHIN's strike energy — so DR32's Vel Vol
+     * starts at 0 rather than stacking a second law on top; it is still there
+     * to turn. The pad's note, choke group, sends and tune are left alone:
+     * they are where the pad sits in the kit, not what it sounds like. */
+    s->params.volume_db = m->volume_db;
+    s->params.pan = m->pan;
+    s->params.vel_to_volume = 0.0f;
+    return 1;
+}
+
+/* Note-on for a synth pad: DR32's stage, laid down exactly as
+ * dr32_voice_start lays down a sample's (dB volume, the dB velocity law,
+ * speaker, equal-power pan), then the engine's own hit. */
+static void synth_start(dr32_pad_slot *s, int velocity) {
+    const dr32_pad *p = &s->params;
+    dr32_synth *v = &s->synth;
+    v->amp = powf(10.0f, p->volume_db / 20.0f) * dr32_velocity_gain(velocity, p->vel_to_volume);
+    if (!p->speaker_on) v->amp = 0.0f;
+    dr32_pan_gains(p->pan, &v->panl, &v->panr);
+    v->choke_gain = 1.0f;
+    v->choke_mul = 1.0f;
+    float vel01 = (float)velocity / 127.0f;
+    s->eops->note_on(s->eng, vel01 < 0 ? 0 : (vel01 > 1 ? 1 : vel01),
+                     p->transpose + p->detune / 100.0f);
+    v->active = 1;
+}
+
+/* The sample voice's choke, applied to a synth pad: the same 3 ms exponential
+ * (dr32_voice.c CHOKE_SECONDS, DR32_DECAY_DB_PER_TIME), so a choke group cuts
+ * a synth hat exactly as sharply as a sampled one. */
+#define SYNTH_CHOKE_SECONDS 0.003f
+#define SYNTH_CHOKE_FLOOR   1e-5f
+static void synth_choke(dr32_pad_slot *s) {
+    if (!s->synth.active) return;
+    s->eops->choke(s->eng);
+    s->synth.choke_mul = powf(10.0f, -DR32_DECAY_DB_PER_TIME / (20.0f * SYNTH_CHOKE_SECONDS * DR32_SR));
+}
+
+/* Engine -> mono -> DR32's stage -> ACCUMULATED into `out`, like
+ * dr32_voice_render. A choked pad keeps computing, muted, until the engine's
+ * own silence gate stops it: freezing it instead would leave a ringing model
+ * to resume under the next hit. */
+static void synth_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
+    float *m = k->eng_mono;
+    dr32_synth *v = &s->synth;
+    int alive = s->eops->render(s->eng, m, frames);
+
+    /* ⭑ FILTER HOOK POINT — see dr32_synth in dr32_kit.h. Nothing runs here
+     * today, by decision, not omission. */
+
+    float gl = v->amp * v->panl, gr = v->amp * v->panr;
+    if (v->choke_mul < 1.0f) {
+        for (int i = 0; i < frames; i++) {
+            float x = m[i] * v->choke_gain;
+            out[2 * i]     += x * gl;
+            out[2 * i + 1] += x * gr;
+            v->choke_gain *= v->choke_mul;
+        }
+        if (v->choke_gain < SYNTH_CHOKE_FLOOR) { v->choke_gain = 0.0f; gl = gr = 0.0f; }
+    } else if (v->amp > 0.0f) {
+        for (int i = 0; i < frames; i++) {
+            out[2 * i]     += m[i] * gl;
+            out[2 * i + 1] += m[i] * gr;
+        }
+    }
+    if (!alive) v->active = 0;
+}
+
+/* One pad into `out`, whichever kind it is. The single dispatch both render
+ * paths go through, so they cannot disagree about what a pad is. */
+static void pad_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
+    if (s->engine) synth_render(k, s, out, frames);
+    else dr32_voice_render(&s->voice, out, frames);
 }
 
 void dr32_kit_set_note(dr32_kit *k, int pad, int note) {
@@ -214,6 +357,9 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     // `sample`, so stopping the voice before the swap means it cannot be mid-read
     // on the buffer we're about to replace.
     s->voice.active = 0;
+    // A pad is a sample pad OR a synth pad. Anything that loads (or clears) a
+    // sample makes it a sample pad again.
+    if (s->engine) retire_engine(s);
 
     // One-deep retire. The buffer we displace now is freed on the NEXT load of
     // this pad — by which time many audio blocks have passed. Freeing it here
@@ -297,15 +443,24 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
         for (int i = 0; i < DR32_PADS; i++) {
             if (i == pad) continue;
             dr32_pad_slot *o = &k->pads[i];
-            if (o->params.choke_group != grp || !o->voice.active) continue;
-            if (o->voice.block == k->block && o->voice.note > note) {
+            if (o->params.choke_group != grp || !dr32_pad_sounding(o)) continue;
+            unsigned ob = o->engine ? o->synth.block : o->voice.block;
+            int      on = o->engine ? o->synth.note  : o->voice.note;
+            if (ob == k->block && on > note) {
                 // A higher note already won this block: the incoming note loses.
                 return;
             }
-            dr32_voice_choke(&o->voice);
+            if (o->engine) synth_choke(o);
+            else dr32_voice_choke(&o->voice);
         }
     }
 
+    if (s->engine) {
+        synth_start(s, velocity);
+        s->synth.note = note;          // arbitration uses the INCOMING note
+        s->synth.block = k->block;
+        return;
+    }
     dr32_voice_start(&s->voice, &s->params, s->sample, s->frames, s->channels,
                      s->sample_rate, velocity);
     s->voice.note = note;              // arbitration uses the INCOMING note
@@ -316,11 +471,27 @@ void dr32_kit_note_off(dr32_kit *k, int note) {
     if (note < 0 || note > 127) return;
     int pad = k->note_to_pad[note];
     if (pad < 0) return;
+    /* A synth pad ignores note-off: every engine here is percussive, and its
+     * hit runs to the end of its own envelope. */
+    if (k->pads[pad].engine) return;
     dr32_voice_release(&k->pads[pad].voice, &k->pads[pad].params);
 }
 
 void dr32_kit_all_off(dr32_kit *k) {
-    for (int i = 0; i < DR32_PADS; i++) k->pads[i].voice.active = 0;
+    for (int i = 0; i < DR32_PADS; i++) {
+        dr32_pad_slot *s = &k->pads[i];
+        s->voice.active = 0;
+        /* ⚠ A synth pad is MUTED, not stopped. Stopping it would freeze a
+         * ringing model mid-tail, and that frozen state would resume under the
+         * next hit — measured as a quieter, wrong second hit on an URCHIN tom
+         * (its energy tracker still full). Muted, it rings out unheard and the
+         * engine's own silence gate ends it. */
+        if (s->engine && s->synth.active) {
+            s->eops->choke(s->eng);
+            s->synth.choke_gain = 0.0f;
+            s->synth.choke_mul = 0.0f;
+        }
+    }
 }
 
 void dr32_kit_render(dr32_kit *k, float *out, int frames) {
@@ -333,8 +504,8 @@ void dr32_kit_render(dr32_kit *k, float *out, int frames) {
      * applied on its side into its own return buses, so nothing here has to
      * render a pad twice. */
     for (int i = 0; i < DR32_PADS; i++) {
-        dr32_voice *v = &k->pads[i].voice;
-        if (v->active) dr32_voice_render(v, out, frames);
+        dr32_pad_slot *s = &k->pads[i];
+        if (dr32_pad_sounding(s)) pad_render(k, s, out, frames);
     }
 
     if (k->master_gain != 1.0f) {
@@ -370,8 +541,8 @@ void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
     memset(k->split_dry, 0, sizeof(float) * 2 * (size_t)frames);
 
     for (int i = 0; i < DR32_PADS; i++) {
-        dr32_voice *v = &k->pads[i].voice;
-        if (!v->active) continue;
+        dr32_pad_slot *s = &k->pads[i];
+        if (!dr32_pad_sounding(s)) continue;
 
         int16_t *dst = (i < n_voices && voice_out[i]) ? voice_out[i] : NULL;
         if (dst && dst != main_out) {
@@ -383,14 +554,14 @@ void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
              * summing below.
              */
             memset(k->scratch, 0, sizeof(float) * 2 * (size_t)frames);
-            dr32_voice_render(v, k->scratch, frames);
+            pad_render(k, s, k->scratch, frames);
             for (int n = 0; n < 2 * frames; n++) k->scratch[n] *= k->master_gain;
             mix_f32_to_i16(dst, k->scratch, 2 * frames);
         } else {
             /* Stays in the kit: straight into the mix, exactly as
              * dr32_kit_render does it — dr32_voice_render accumulates, and
              * `split_dry` was zeroed once above just like that path's `out`. */
-            dr32_voice_render(v, k->split_dry, frames);
+            pad_render(k, s, k->split_dry, frames);
         }
     }
 
@@ -404,6 +575,6 @@ void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
 
 int dr32_kit_active_voices(const dr32_kit *k) {
     int n = 0;
-    for (int i = 0; i < DR32_PADS; i++) if (k->pads[i].voice.active) n++;
+    for (int i = 0; i < DR32_PADS; i++) if (dr32_pad_sounding(&k->pads[i])) n++;
     return n;
 }

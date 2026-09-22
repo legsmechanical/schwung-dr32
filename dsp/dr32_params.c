@@ -163,8 +163,28 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * the Move/User pair collapsed into ONE browser cell rooted at /data.
          * The two old spellings stay accepted because they cost a strcmp and
          * anything still holding them keeps working. */
+        /* ⭑ ON A SYNTH PAD, `sample` READS AS THE MODEL'S NAME. The Sample
+         * cell is the ENGINE picker now (Josh, 2026-09-21: "the sample knob
+         * becomes an engine knob"), and the host draws a canvas cell as the
+         * BASENAME of this value — so a synth pad's cell reads "Kick", and a
+         * sample pad's reads its file, from the one key davebox and the wave
+         * editor already resolve through `filepath_param`. The state blob does
+         * not persist it for a synth pad (dr32_state.c) and a write of the
+         * same name is ignored below, so the name is never taken for a path. */
         if (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
-            || !strcmp(sub, "sample_user"))  return snprintf(buf, buf_len, "%s", s->path);
+            || !strcmp(sub, "sample_user"))
+            return snprintf(buf, buf_len, "%s", s->engine ? dr32_pad_model_name(s) : s->path);
+        if (!strcmp(sub, "model")) {
+            const dr32_model *m = s->engine ? dr32_model_at(s->model) : NULL;
+            return snprintf(buf, buf_len, "%s", m ? m->slug : "");
+        }
+        /* An engine parameter answers only on a pad running that engine. On
+         * any other pad the key is simply not this pad's, and reads as unknown
+         * rather than as a default that would look like a real value. */
+        if (s->engine) {
+            int ix = dr32_engine_param_index(s->eops, sub);
+            if (ix >= 0) return snprintf(buf, buf_len, "%g", (double)s->eparam[ix]);
+        }
         if (!strcmp(sub, "loaded"))      return snprintf(buf, buf_len, "%d", s->sample ? 1 : 0);
         /* Folder browse. The cast is deliberate: the browse cache is a lazily
          * filled mirror of the filesystem, not part of the kit's value, and
@@ -278,6 +298,15 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
 
     if (!strcmp(key, "ui_current_pad"))          /* 1-based on the wire */
         return snprintf(buf, buf_len, "%d", kit->ui_current_pad + 1);
+    /* THE GATE: which engine the FOCUSED pad runs (DR32_ENG_*, 0 = sample).
+     * Every engine's page set is a level carrying `visible_if` against this,
+     * so it is what makes the pages follow the pad (docs/MODULES.md, "The gate
+     * does not need a cell"). Derived, never stored, and writes are refused. */
+    if (!strcmp(key, "ui_engine")) {
+        int cur = kit->ui_current_pad;
+        int e = (cur >= 0 && cur < DR32_PADS) ? kit->pads[cur].engine : 0;
+        return snprintf(buf, buf_len, "%d", e);
+    }
     if (!strcmp(key, "ui_auto_select_pad"))
         return snprintf(buf, buf_len, "%s", kit->ui_auto_select_pad ? "on" : "off");
     if (!strcmp(key, "link"))
@@ -321,7 +350,26 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         // "Sample" is a PICKER of two roots (Move / User); the filepath type
         // takes one root each, so they are two keys meaning the same thing.
         if      (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
-                 || !strcmp(sub, "sample_user"))  dr32_kit_load_sample(kit, pad, val);
+                 || !strcmp(sub, "sample_user")) {
+            /* A synth pad READS its model's name here (see dr32_read_param),
+             * so that name coming back is not a path to load. */
+            if (s->engine && !strcmp(val, dr32_pad_model_name(s))) return 1;
+            /* A synth pad becoming a sample pad starts from a sample pad's
+             * defaults, not from the model's Vel Vol of 0 and whatever level it
+             * was given — but it keeps where it sits in the kit: its note,
+             * choke group and sends. (A KIT load drops engines itself, before
+             * it sets any values, and never reaches this.) */
+            if (s->engine && val[0]) {
+                int choke = p->choke_group;
+                float sa = p->send_db[0], sb = p->send_db[1];
+                dr32_pad_defaults(p);
+                p->choke_group = choke;
+                p->send_db[0] = sa;
+                p->send_db[1] = sb;
+            }
+            dr32_kit_load_sample(kit, pad, val);
+        }
+        else if (!strcmp(sub, "model"))           { if (val[0]) dr32_kit_set_model(kit, pad, val); }
         else if (!strcmp(sub, "browse"))          dr32_kit_browse_step(kit, pad, atoi(val));
         else if (!strcmp(sub, "note"))          dr32_kit_set_note(kit, pad, atoi(val));
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
@@ -378,6 +426,20 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         else if (!strcmp(sub, "fx_p1"))         p->fx_p1 = f;
         else if (!strcmp(sub, "fx_p2"))         p->fx_p2 = f;
         else if (!strcmp(sub, "play"))          dr32_kit_note_on(kit, s->note, atoi(val));
+        else if (s->engine) {
+            /* An engine parameter, live on the running voice. A key belonging
+             * to another engine is not this pad's — which is also what keeps
+             * LINK to the pads running the SAME engine: fanned out to a kick
+             * sample, `sm_pitch` simply lands nowhere. */
+            int ix = dr32_engine_param_index(s->eops, sub);
+            if (ix >= 0) {
+                const dr32_eparam *ep = &s->eops->params[ix];
+                if (f < ep->min) f = ep->min;
+                if (f > ep->max) f = ep->max;
+                s->eparam[ix] = f;
+                s->eops->set(s->eng, ix, f);
+            }
+        }
         return 1;
     }
 }
@@ -386,7 +448,7 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
  *  make a pad a distinct pad: its sample, its note, its browse position. */
 static int link_fans_out(const char *sub) {
     static const char *const never[] = {
-        "sample", "sample_move", "sample_user", "note", "sending_note",
+        "sample", "sample_move", "sample_user", "model", "note", "sending_note",
         "browse", "play", NULL
     };
     for (int i = 0; never[i]; i++) if (!strcmp(sub, never[i])) return 0;
@@ -463,6 +525,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         kit->link_sub[0] = '\0';      /* arming always starts unlatched */
         return 1;
     }
+    if (!strcmp(key, "ui_engine")) return 1;   /* derived — see the read path */
     if (!strcmp(key, "ui_current_pad")) {
         int v = atoi(val) - 1;                   /* 1-based on the wire */
         kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);

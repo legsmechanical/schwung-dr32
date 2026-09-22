@@ -101,10 +101,18 @@ static void dr32_capture_baseline(dr32_instance *in) {
  *  fit — the caller then serves the hierarchy without names, which is the
  *  same page with worse labels rather than no page. */
 static int append_pad_name(const dr32_pad_slot *s, char *out, int cap) {
-    const char *base = s->path[0] ? strrchr(s->path, '/') : NULL;
-    base = base ? base + 1 : s->path;
-    const char *dot = strrchr(base, '.');
-    int len = (dot && dot != base) ? (int)(dot - base) : (int)strlen(base);
+    /* A synth pad is named by its model ("Kick"); a sample pad by its file. */
+    const char *base, *dot;
+    int len;
+    if (s->engine) {
+        base = dr32_pad_model_name(s);
+        len = (int)strlen(base);
+    } else {
+        base = s->path[0] ? strrchr(s->path, '/') : NULL;
+        base = base ? base + 1 : s->path;
+        dot = strrchr(base, '.');
+        len = (dot && dot != base) ? (int)(dot - base) : (int)strlen(base);
+    }
     int n = 0;
     if (n + 1 >= cap) return 0;
     out[n++] = '"';
@@ -453,6 +461,11 @@ static void set_param(void *instance, const char *key, const char *val) {
         // dr32_preset_load() cannot be short-circuited any lower down: it CLEARS
         // every pad before loading, which wipes the paths that guard compares.
         if (same_kit) {
+            // A synth pad is not in any kit file, so the baseline cannot
+            // revert it — a pad the kit leaves empty would keep its engine
+            // through a recall. Drop them all first; the replay then rebuilds
+            // exactly the kit, and the blob being restored re-adds its own.
+            for (int i = 0; i < DR32_PADS; i++) dr32_kit_drop_engine(&in->kit, i);
             // NULL load_kit: the kit is already the right one, and passing the
             // real callback would recurse straight back into this branch.
             dr32_state_read(&in->kit, in->state_baseline, NULL, NULL);
@@ -526,7 +539,8 @@ static void set_param(void *instance, const char *key, const char *val) {
      * the contract on a settle, so this is never per-frame work. */
     size_t kl = strlen(key);
     if ((kl >= 7 && !strcmp(key + kl - 7, "_sample")) ||
-        (kl >= 7 && !strcmp(key + kl - 7, "_browse"))) {
+        (kl >= 7 && !strcmp(key + kl - 7, "_browse")) ||
+        (kl >= 6 && !strcmp(key + kl - 6, "_model"))) {
         dr32_refresh_hierarchy(in);
         /* Re-serving is only half of it: the host has to come back and READ.
          * Arm the is_loading pulse, and re-arm on every step so a sweep of the
@@ -635,7 +649,7 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
             w = snprintf(buf + n, buf_len - n, "{\"id\":\"pad%d\",\"label\":", i + 1);
             if (w <= 0 || n + w >= buf_len) return 0;
             n += w;
-            int m = in->kit.pads[i].path[0]
+            int m = (in->kit.pads[i].path[0] || in->kit.pads[i].engine)
                   ? append_pad_name(&in->kit.pads[i], buf + n, buf_len - n)
                   : snprintf(buf + n, buf_len - n, "\"Pad %d\"", i + 1);
             if (m <= 0 || n + m >= buf_len) return 0;

@@ -138,6 +138,7 @@ struct Voice {
     float          value[DR32_ENG_MAX_PARAMS];
     FAUSTFLOAT    *z_tuning, *z_transpose;
     int            pitch_row;          /* DRUM/SNARE: the Tuning row, else -1 */
+    int            closed_row;         /* CYMBAL: the Closed row, else -1 */
 };
 
 void *create_kind(int kind, dsp *d, const Engine *e, int sr) {
@@ -148,11 +149,13 @@ void *create_kind(int kind, dsp *d, const Engine *e, int sr) {
     v->kind = kind;
     dr32_fv_setup(&v->fv, d, sr);
     v->pitch_row = -1;
+    v->closed_row = -1;
     for (int i = 0; i < e->n; i++) {
         v->zone[i] = v->fv.zones.find(e->rows[i].zone);
         v->value[i] = e->rows[i].p.def;
         dr32_fv_set_zone(v->zone[i], e->rows[i].p.def * e->rows[i].scale);
         if (!strcmp(e->rows[i].zone, "Tuning")) v->pitch_row = i;
+        if (!strcmp(e->rows[i].zone, "Closed")) v->closed_row = i;
     }
     v->z_tuning = v->fv.zones.find("Tuning");
     v->z_transpose = v->fv.zones.find("Transpose");
@@ -186,6 +189,12 @@ void set(void *e, int idx, float display) {
 void note_on(void *e, float vel01, float tune_st) {
     Voice *v = static_cast<Voice *>(e);
     if (!v) return;
+    /* A choke may have borrowed a zone (a cymbal's Closed); every hit starts
+     * from the pad's own values. */
+    if (v->closed_row >= 0) {
+        const Row &r = v->eng->rows[v->closed_row];
+        dr32_fv_set_zone(v->zone[v->closed_row], v->value[v->closed_row] * r.scale);
+    }
     if (v->pitch_row >= 0 && v->z_tuning) {
         /* Deliberately wider than the slider's 40..240: that is where the
          * model is a drum, and an offset may walk outside it. 20..480 is a
@@ -198,14 +207,17 @@ void note_on(void *e, float vel01, float tune_st) {
     dr32_fv_note_on(&v->fv, vel01);
 }
 
-/* No Choke zone survives in any URCHIN build (Faust prunes it), so a choke
- * only drops the trigger; DR32's own ramp does the audible cut, and the voice
- * stops being computed when its tail falls under the silence gate. */
+/* No Choke zone survives in any URCHIN build (Faust prunes it). DR32's own
+ * ramp does the audible cut; this only shortens what keeps computing, muted,
+ * underneath it. A cymbal has the perfect lever — Closed, the hat pedal,
+ * decay x0.05 — so a choked open hat dies the way a real one does when the
+ * pedal comes down. A drum has none and simply rings out under the gate. */
 void choke(void *e) {
     Voice *v = static_cast<Voice *>(e);
     if (!v) return;
     if (v->fv.z_trigger) *v->fv.z_trigger = 0.0f;
     v->fv.pending = -1.0f;
+    if (v->closed_row >= 0) dr32_fv_set_zone(v->zone[v->closed_row], 1.0f);
 }
 
 int render(void *e, float *out, int n) {

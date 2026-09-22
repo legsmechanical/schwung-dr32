@@ -9,6 +9,7 @@
 #define DR32_KIT_H
 
 #include <stdint.h>
+#include "dr32_engine.h"
 #include "dr32_voice.h"
 #include "wav.h"
 
@@ -16,6 +17,26 @@
 #define DR32_FIRST_NOTE 36          // pad 0; pads run 36..67
 #define DR32_MAX_PATH 512
 #define DR32_KIT_MAX_BLOCK 1024
+
+/* What DR32 wraps around a synth engine's mono output: the SAME mix stage a
+ * sample pad gets — volume, velocity-to-volume, pan, speaker, choke — computed
+ * at note-on exactly as dr32_voice_start computes it, so a synth pad sits in
+ * the kit at the level and position its knobs say.
+ *
+ * ⭑ THE FILTER HOOK. Josh (2026-09-21): synth pads get no DR32 Shape stage for
+ * now, "but i want to keep the option open to having filter turned on for
+ * everything". The engine renders MONO into the kit's `eng_mono` and this
+ * stage reads it back, so a post-engine filter is one call between the two in
+ * synth_render (dr32_kit.c) — the SVF laws are already exported from
+ * dr32_voice.h. */
+typedef struct {
+    int      active;
+    int      note;           // incoming note (choke priority), as dr32_voice
+    unsigned block;          // render block it started in (simultaneity)
+    float    amp, panl, panr;
+    float    choke_gain;     // 1 until choked, then ramps to 0
+    float    choke_mul;      // per-sample multiplier; 1 = not choking
+} dr32_synth;
 
 typedef struct {
     dr32_pad  params;
@@ -37,6 +58,25 @@ typedef struct {
 
     int     note;            // receivingNote from drumZoneSettings
     int     choke_group;     // 0 = none
+
+    /* ---- the synth engine, when this pad plays one instead of a sample ----
+     *
+     * `engine` is DR32_ENG_* and 0 means the sample voice above, which is then
+     * the whole story and none of these fields are read. A synth pad holds no
+     * sample: choosing a model unloads it, and loading a sample drops the
+     * engine, so a pad is always exactly one of the two.
+     *
+     * The instance is created on the host thread when a model is chosen and
+     * retired one-deep exactly like `retired` above: the displaced instance is
+     * destroyed on the NEXT switch, never inside a render. */
+    int     engine;
+    int     model;           // dr32_model index; -1 on a sample pad
+    const dr32_engine_ops *eops;
+    void   *eng;
+    const dr32_engine_ops *eops_retired;
+    void   *eng_retired;
+    float   eparam[DR32_ENG_MAX_PARAMS];   // display units, the knobs' values
+    dr32_synth synth;        // DR32's stage around the engine
 } dr32_pad_slot;
 
 typedef struct {
@@ -54,6 +94,9 @@ typedef struct {
     /* The KIT MIX under a per-voice render: every pad NOT routed out to a host
      * bus, summed. Same buffer role `out` has in dr32_kit_render. */
     float         split_dry[2 * DR32_KIT_MAX_BLOCK];
+    /* One synth pad's MONO render, before DR32's stage pans it into a mix.
+     * Per-instance for the same reason as `scratch`. */
+    float         eng_mono[DR32_KIT_MAX_BLOCK];
     // Which pad the UI is editing, and whether playing a pad moves that focus.
     int           ui_current_pad;
     int           ui_auto_select_pad;
@@ -202,6 +245,24 @@ int dr32_kit_browse_select(dr32_kit *k, int pad, int idx);
  * reporting the true index keeps the two converging whenever the host does
  * read. */
 int dr32_kit_browse_step(dr32_kit *k, int pad, int wire);
+
+/** Make `pad` play a synth MODEL (a slug from dr32_engine.h, "simian/kick").
+ *  Host thread only — it allocates the engine. Unloads the pad's sample,
+ *  starts the model's values, and sets the pad's Volume/Pan from the model;
+ *  the pad's note, choke group, sends and tune stay the pad's. Returns 0 on an
+ *  unknown slug or a failed allocation, leaving the pad as it was. */
+int dr32_kit_set_model(dr32_kit *k, int pad, const char *slug);
+
+/** Back to a sample pad: silence and retire the engine. The sound params are
+ *  left alone — a kit load sets its own right after. Host thread only. */
+void dr32_kit_drop_engine(dr32_kit *k, int pad);
+
+/** Is this pad making sound right now — either kind of voice. */
+int dr32_pad_sounding(const dr32_pad_slot *s);
+
+/** The pad's display name: the model's name on a synth pad, "" otherwise
+ *  (a sample pad's name is its file, which callers already derive). */
+const char *dr32_pad_model_name(const dr32_pad_slot *s);
 
 void dr32_kit_note_on(dr32_kit *k, int note, int velocity);
 void dr32_kit_note_off(dr32_kit *k, int note);

@@ -126,6 +126,10 @@ int dr32_preset_load(dr32_kit *kit, const char *path, dr32_preset_report *rep) {
     // defines every pad" still holds exactly.
     dr32_kit_all_off(kit);
     for (int i = 0; i < DR32_PADS; i++) {
+        /* A Move kit is samples only, so every synth pad becomes a sample pad
+         * again. HERE, before the params below are read in: dropping it later,
+         * inside load_sample, would be after this pad's values were set. */
+        dr32_kit_drop_engine(kit, i);
         dr32_pad_defaults(&kit->pads[i].params);
         dr32_kit_set_note(kit, i, DR32_FIRST_NOTE + i);
     }
