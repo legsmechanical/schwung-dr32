@@ -38,6 +38,24 @@ typedef struct {
     float    choke_mul;      // per-sample multiplier; 1 = not choking
 } dr32_synth;
 
+/* Wide (Josh, 2026-09-22: "a haas stereo spread ... and a knob to set a
+ * crossover below which the sound is not spread"). Per PAD, after everything
+ * else the pad does, so it spreads a sample pad and a synth pad alike.
+ * `buf` holds the delayed side's (high band of the) signal; 2048 frames is
+ * 46 ms, over the 30 ms the knob reaches. `tail` keeps a pad rendering after
+ * it stops sounding, so the delayed side's last 30 ms are not cut off. */
+#define DR32_WIDE_BUF   2048
+#define DR32_WIDE_MS_MAX 30.0f
+typedef struct {
+    float buf[DR32_WIDE_BUF];
+    int   w;             // write index
+    int   side;          // which side buf holds: 1 right, -1 left, 0 none yet
+    int   tail;          // frames still to render once the pad is silent
+    float hz;            // the crossover the coefficients below are for (0 = none)
+    float g, k, a1, a2, a3;
+    float s[2][3][2];    // SVF state [channel][stage: split, low 2nd, high 2nd][ic1, ic2]
+} dr32_wide;
+
 typedef struct {
     dr32_pad  params;
     dr32_voice voice;
@@ -77,6 +95,7 @@ typedef struct {
     void   *eng_retired;
     float   eparam[DR32_ENG_MAX_PARAMS];   // display units, the knobs' values
     dr32_synth synth;        // DR32's stage around the engine
+    dr32_wide  wide;         // the Wide stage's state (dr32_kit.c)
 } dr32_pad_slot;
 
 typedef struct {
@@ -97,6 +116,8 @@ typedef struct {
     /* One synth pad's MONO render, before DR32's stage pans it into a mix.
      * Per-instance for the same reason as `scratch`. */
     float         eng_mono[DR32_KIT_MAX_BLOCK];
+    /* One pad's stereo render, before the Wide stage adds it to a mix. */
+    float         wide_tmp[2 * DR32_KIT_MAX_BLOCK];
     // Which pad the UI is editing, and whether playing a pad moves that focus.
     int           ui_current_pad;
     int           ui_auto_select_pad;

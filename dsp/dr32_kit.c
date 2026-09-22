@@ -226,7 +226,7 @@ int dr32_kit_set_model(dr32_kit *k, int pad, const char *slug) {
      * ENGINE's — SIMIAN's Vel Gain, URCHIN's strike energy — so DR32's Vel Vol
      * starts at 0 rather than stacking a second law on top; it is still there
      * to turn. The pad's note, choke group, sends and tune are left alone:
-     * they are where the pad sits in the kit, not what it sounds like. */
+     * they are where the pad sits in the kit, not what it sounds like. So is Wide. */
     s->params.volume_db = m->volume_db;
     s->params.pan = m->pan;
     s->params.vel_to_volume = 0.0f;
@@ -291,11 +291,113 @@ static void synth_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) 
     if (!alive) v->active = 0;
 }
 
-/* One pad into `out`, whichever kind it is. The single dispatch both render
- * paths go through, so they cannot disagree about what a pad is. */
-static void pad_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
+/* The pad's own source, sample or synth, ACCUMULATED into `out`. */
+static void source_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
     if (s->engine) synth_render(k, s, out, frames);
     else dr32_voice_render(&s->voice, out, frames);
+}
+
+/*
+ * WIDE — a Haas spread of one pad's stereo output, in place.
+ *
+ * One side is delayed by |wide_ms| (+ the right, - the left). Above a
+ * crossover only: each channel is split Linkwitz-Riley 24 dB (two Butterworth
+ * 2nd-order sections per band, from one SVF split), the low band passes on
+ * both sides as it was, and only the delayed side's HIGH band goes through the
+ * delay. Both channels are split, so they keep the same phase below the
+ * crossover (LR4 sums to an allpass; a channel left unsplit would not match).
+ * At 20 Hz there is no split: the whole delayed side is delayed.
+ *
+ * Andy Simper's trapezoidal SVF, Q = 1/sqrt(2).
+ */
+static inline void svf_step(const dr32_wide *d, float st[2], float v0, float *lp, float *hp) {
+    float v3 = v0 - st[1];
+    float v1 = d->a1 * st[0] + d->a2 * v3;
+    float v2 = st[1] + d->a2 * st[0] + d->a3 * v3;
+    st[0] = 2.0f * v1 - st[0];
+    st[1] = 2.0f * v2 - st[1];
+    *lp = v2;
+    *hp = v0 - d->k * v1 - v2;
+}
+
+static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
+    float ms = p->wide_ms;
+    if (ms > DR32_WIDE_MS_MAX) ms = DR32_WIDE_MS_MAX;
+    if (ms < -DR32_WIDE_MS_MAX) ms = -DR32_WIDE_MS_MAX;
+    int side = ms > 0.0f ? 1 : (ms < 0.0f ? -1 : d->side);
+    if (side != d->side) {                 /* the other side now: start clean */
+        memset(d->buf, 0, sizeof(d->buf));
+        d->side = side;
+    }
+    const int dly = (int)(fabsf(ms) * 0.001f * DR32_SR + 0.5f);
+    const int split = p->wide_hz > 20.5f;
+    if (split && d->hz != p->wide_hz) {
+        float fc = p->wide_hz;
+        d->g = tanf(3.14159265f * fc / DR32_SR);
+        d->k = 1.41421356f;
+        d->a1 = 1.0f / (1.0f + d->g * (d->g + d->k));
+        d->a2 = d->g * d->a1;
+        d->a3 = d->g * d->a2;
+        d->hz = fc;
+    }
+    const int dch = side < 0 ? 0 : 1;      /* the delayed channel */
+    for (int i = 0; i < frames; i++) {
+        float y[2];
+        for (int c = 0; c < 2; c++) {
+            float v = x[2 * i + c];
+            float lo = v, hi = 0.0f;
+            if (split) {
+                float l1, h1, l2, h2, dump;
+                svf_step(d, d->s[c][0], v, &l1, &h1);
+                svf_step(d, d->s[c][1], l1, &l2, &dump);
+                svf_step(d, d->s[c][2], h1, &dump, &h2);
+                lo = l2; hi = h2;
+            } else {
+                lo = 0.0f; hi = v;
+            }
+            if (c == dch && side != 0) {
+                d->buf[d->w] = hi;
+                hi = d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
+                d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
+            }
+            y[c] = lo + hi;
+        }
+        x[2 * i] = y[0];
+        x[2 * i + 1] = y[1];
+    }
+}
+
+/* One pad into `out`, whichever kind it is. The single dispatch both render
+ * paths go through, so they cannot disagree about what a pad is.
+ *
+ * ⚠ Wide at 0 with no tail left takes the ORIGINAL path, untouched: a pad
+ * that does not use Wide renders bit for bit as it did before Wide existed. */
+static void pad_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
+    dr32_wide *d = &s->wide;
+    const int sounding = dr32_pad_sounding(s);
+    if (s->params.wide_ms == 0.0f && d->tail <= 0) {
+        if (sounding) source_render(k, s, out, frames);
+        return;
+    }
+    float *t = k->wide_tmp;
+    memset(t, 0, sizeof(float) * 2 * (size_t)frames);
+    if (sounding) {
+        source_render(k, s, t, frames);
+        d->tail = DR32_WIDE_BUF;           /* delay + the filters' settling */
+    } else {
+        d->tail -= frames;
+    }
+    wide_run(d, &s->params, t, frames);
+    for (int i = 0; i < 2 * frames; i++) out[i] += t[i];
+    if (d->tail <= 0) {                    /* flushed: the next hit starts clean */
+        memset(d, 0, sizeof(*d));
+    }
+}
+
+/* Does this pad need rendering this block? Sounding, or Wide still has the
+ * delayed side's last few ms to play out. BOTH render paths ask this. */
+static int pad_live(const dr32_pad_slot *s) {
+    return dr32_pad_sounding(s) || s->wide.tail > 0;
 }
 
 void dr32_kit_set_note(dr32_kit *k, int pad, int note) {
@@ -505,7 +607,7 @@ void dr32_kit_render(dr32_kit *k, float *out, int frames) {
      * render a pad twice. */
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_pad_slot *s = &k->pads[i];
-        if (dr32_pad_sounding(s)) pad_render(k, s, out, frames);
+        if (pad_live(s)) pad_render(k, s, out, frames);
     }
 
     if (k->master_gain != 1.0f) {
@@ -542,7 +644,7 @@ void dr32_kit_render_split(dr32_kit *k, int16_t *const *voice_out, int n_voices,
 
     for (int i = 0; i < DR32_PADS; i++) {
         dr32_pad_slot *s = &k->pads[i];
-        if (!dr32_pad_sounding(s)) continue;
+        if (!pad_live(s)) continue;
 
         int16_t *dst = (i < n_voices && voice_out[i]) ? voice_out[i] : NULL;
         if (dst && dst != main_out) {

@@ -18,10 +18,27 @@ Category <items>   Acoustic · Electronic · Hybrid · My Kits   <- first bank
 Pad      PAD   ENGN  STRT  END   TRSP  DETN  CHOKE VOL    <- level `pads` (STRT/END: samples)
 Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (samples only)
 <engine> the synth voice's pages, gated on ui_engine      <- levels `eng_*` (generated)
-Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  PUNCH PTIME  <- level `pad_mix`
+Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  WIDE  WFREQ  <- level `pad_mix`
+Punch    PUNCH PTIME                                    <- level `pad_punch` (samples only)
 Master   MASTR
 ```
 
+- ⭑ **WIDE / WFREQ** (Josh, 2026-09-22: *"a haas stereo spread to each drum's mix page ... and a
+  knob to set a crossover below which the sound is not spread"*; names his). `wide` −30..+30 ms
+  (+ delays the RIGHT side), `wide_freq` 20..1000 Hz (20 = full band, default 150). The stage is
+  `wide_run` in `dr32_kit.c`, per PAD after the source, inside the one `pad_render` both render
+  paths share. LR4 split from one SVF per channel, BOTH channels split so their low bands stay in
+  phase; only the delayed side's high band is delayed.
+  - ⚠ **Wide 0 is a TRUE bypass**, and it is proven: a hash probe over sample pads (filters,
+    Peak, Punch, choke, pan, a synth pad, both render paths) matched the pre-Wide build bit for
+    bit, and a 1 Hz cutoff change moved it.
+  - ⚠ **A pad renders while `pad_live`, not only while sounding** — the delayed side's last
+    30 ms outlive the source. BOTH render loops ask `pad_live`. It only shows on a SAMPLE pad (a
+    sample stops dead; a synth has 100 ms of near-silence before its gate), so `test_wide.c` checks
+    the tail with an abruptly-ending WAV on both paths.
+  - It is "where the pad sits", like the sends: kept across sample <-> synth, in the state blob,
+    never in the `.ablpreset`. Punch moved to its own bank (`pad_punch`, gated `ui_engine == 0`) to
+    make room; `check_module_json` now partitions FOUR banks.
 - ⭑⭑ **THE PAD KNOBS ARE THREE SIBLING CHILD LEVELS, ONE PER BANK** (Josh, 2026-09-09: *"put each
   pad page on its own bank so the list is easy to navigate"*). They were one 24-knob level that the
   planner chunked into "Pads / Pads 2 / Pads 3" — pages with no names, reachable only by jogging

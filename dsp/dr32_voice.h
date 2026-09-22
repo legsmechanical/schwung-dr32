@@ -95,6 +95,12 @@ typedef struct {
     int   sending_note;    // note the rack feeds the cell (factory kits: 60)
     int   speaker_on;      // mixer speakerOn; 0 = sample-exact silence
     float send_db[2];      // post-fader send amounts, dB (-70 = off), like native
+    /* Wide: a Haas spread of the pad's stereo output (dr32_kit.c, wide_run).
+     * DR32's own, not the Move's: never in an .ablpreset, only the state blob.
+     * wide_ms: + delays the RIGHT side, - the LEFT, 0 = off (a true bypass).
+     * wide_hz: the crossover below which nothing is delayed (20 = full band). */
+    float wide_ms;
+    float wide_hz;
 } dr32_pad;
 
 /** One TPT SVF stage's integrator state. */

@@ -341,10 +341,10 @@ int main(void) {
                       "pad names wrong at splice %d: %.80s", spliced, q);
             }
             CHECK(anchors >= 3, "only %d child_index_param anchors — the three pad banks are gone", anchors);
-            /* Three base banks plus the synth engines' pages (41 today). An
+            /* Four base banks plus the synth engines' pages (41 today). An
              * engine page that loses its names reads "Pad 7" over a pad the
              * Pad bank calls "Kick". */
-            CHECK(anchors == 44, "%d pad levels; expected 44 (3 banks + 41 engine pages, merged from engine_ui.json)", anchors);
+            CHECK(anchors == 45, "%d pad levels; expected 45 (4 banks + 41 engine pages, merged from engine_ui.json)", anchors);
             CHECK(spliced == anchors,
                   "child_names spliced %d times for %d anchors — every pad bank needs its own names",
                   spliced, anchors);
