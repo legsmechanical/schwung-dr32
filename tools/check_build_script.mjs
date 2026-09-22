@@ -292,6 +292,22 @@ if (isBuild && !/cp\s+-R\s+src\/samples\s/.test(src)) {
                 'PCM from <module dir>/samples/9w9/ and those lanes go silent without it.');
 }
 
+/* The PAD cell's big number needs BOTH files, and each is silent if missing:
+ * dsp.so serves src/chain_params.json as chain_params, and a `custom:` viz
+ * kind in it is what makes the host load canvas.js from the module root.
+ * Without either, the cell falls back to the host's plain number. */
+if (isBuild) {
+    let served = [];
+    try { served = JSON.parse(fs.readFileSync('src/chain_params.json', 'utf8')); } catch { /* none */ }
+    const custom = served.some((p) => p && p.viz && typeof p.viz.kind === 'string' && p.viz.kind.startsWith('custom:'));
+    if (custom && !/cp\s+src\/chain_params\.json\s/.test(src))
+        errors.push('build.sh never copies src/chain_params.json — dsp.so serves it by name, and without it ' +
+                    'the host never hears of the custom widget and draws the plain number.');
+    if (custom && !/cp\s+src\/canvas\.js\s/.test(src))
+        errors.push('src/chain_params.json declares a custom: viz kind but build.sh never copies src/canvas.js — ' +
+                    'the host finds no widget and the cell silently falls back to a built-in.');
+}
+
 /* The binary carries MIT-licensed code, whose notice must accompany every
  * copy, so the package carries LICENSE and NOTICES.md. */
 if (isBuild && !/cp\s+LICENSE\s+NOTICES\.md\s/.test(src)) {
@@ -310,6 +326,10 @@ if (isInstall) {
         errors.push('install.sh never copies directories (`scp -r`) — dist/<id>/samples/ holds 9W9\'s ' +
                     'cymbal WAVs, and a files-only loop leaves those four lanes silent on the device.');
     }
+    /* Nothing packaged may be deleted from the device afterwards: this file
+     * once removed canvas.js (a Pad Editor leftover) right after shipping it. */
+    const rm = code.find((l) => /\brm\b[^\n]*\b(canvas|browser|ui|module|engine_ui|chain_params|help)\.(js|json)\b/.test(l.text));
+    if (rm) errors.push(`line ${rm.n} deletes a file the package ships: \`${rm.text}\``);
     const names = code.find((l) => /^for f in (module\.json|ui\.js)/.test(l.text));
     if (names) {
         errors.push(

@@ -59,6 +59,17 @@ node tools/check_build_script.mjs scripts/install.sh || fail=1
 # against 20 characters. Skips (loudly) without SCHWUNG_SRC.
 node tools/check_help.mjs src/help.json || fail=1
 
+# The PAD cell's big number (src/canvas.js), drawn for all 32 pads through the
+# host's own framebuffer: none blank, none clipped, none alike. Skips (loudly)
+# without a Schwung checkout.
+node tools/check_pad_cell.mjs || fail=1
+
+# The chain_params dsp.so serves must be the host's own fallback plus the PAD
+# cell's viz and NOTHING else: the modulation refresh re-parses it and REPLACES
+# the slot's metadata (per-pad send ranges included). Proven with the host's
+# own parser, compiled from SCHWUNG_SRC; skips (loudly) without a checkout.
+node tools/check_chain_params.mjs || fail=1
+
 # JSON layer
 node tests/roundtrip.mjs tests/fixtures || fail=1
 

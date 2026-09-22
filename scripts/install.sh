@@ -38,9 +38,10 @@ for f in "$HERE/dist/${MODULE_ID}"/*; do
     [ "$(basename "$f")" = "dsp.so" ] && continue
     scp -r "$f" "ableton@${HOST}:${DEST}/"
 done
-# The canvas Pad Editor is gone (0.2.0); a stale canvas.js left on the device
-# is harmless to the host but misleading to anyone reading the module dir.
-ssh "ableton@${HOST}" "rm -f '${DEST}/canvas.js'"
+# ⚠ canvas.js is SHIPPED again (the PAD cell's big number, 2026-09-22). This
+# line used to delete it, left over from the Pad Editor removed in 0.2.0: kept,
+# it would have removed the new widget right after copying it, and the cell
+# would silently fall back to the small number.
 ssh "ableton@${HOST}" "chmod -R a+rw '${DEST}'"
 echo "==> installed"
 

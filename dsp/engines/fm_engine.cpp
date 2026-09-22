@@ -19,8 +19,17 @@
  *   output    tone + noise -> Drive (soft clip) -> Low Cut (12 dB HP)
  *
  * Every "decay" is the time to fall 60 dB, so a knob's number is the length
- * you hear. Velocity scales the level (Velocity) and the FM depth (Vel>Mod);
- * DR32's own Vel Vol starts at 0 for synth pads, as for every engine.
+ * you hear.
+ *
+ * ⭐ VELOCITY (its own page; Josh: "so velocity changes tone in a meaningful
+ * way"). One law for every target: a FULL-velocity hit is exactly the knobs
+ * as set, and a softer one moves away from them by the amount's share of
+ * (1 - velocity). So an amount of 0 is "velocity does not touch this", and
+ * turning an amount up never changes a hard hit. Targets: Level, FM depth,
+ * Sweep depth, Pitch (soft hits flatter), Decay (bipolar: + soft hits
+ * shorter, - soft hits longer), Noise level and Noise Freq (soft hits
+ * darker). DR32's own Vel Vol starts at 0 for synth pads, as for every
+ * engine.
  *
  * ⭐ COST. Per sounding sample: two table sines, one noise draw, one or two
  * SVFs. Once the tone and noise envelopes are both below -120 dB and no
@@ -43,9 +52,10 @@ constexpr float kLn100  = 4.605170186f;      /* -40 dB */
 
 /* ⚠ ORDER IS THE PAGE ORDER AND THE STATE ORDER. Append; never insert. */
 enum {
-    P_PITCH, P_DECAY, P_SWEEP, P_SWDEC, P_TONE, P_DRIVE, P_LOWCUT, P_VEL,
-    P_RATIO, P_MOD, P_MDEC, P_FB, P_TRACK, P_VMOD,
+    P_PITCH, P_DECAY, P_SWEEP, P_SWDEC, P_TONE, P_DRIVE, P_LOWCUT,
+    P_RATIO, P_MOD, P_MDEC, P_FB, P_TRACK,
     P_NOISE, P_NDEC, P_NFREQ, P_NRES, P_NMODE, P_CLAPS, P_GAP,
+    P_VEL, P_VMOD, P_VSWEEP, P_VPITCH, P_VDECAY, P_VNOISE, P_VNFREQ,
     NP
 };
 
@@ -57,13 +67,11 @@ const dr32_eparam PARAMS[NP] = {
     {"fm_tone",    "Tone Level",  "TONE",  0.0f,   100.0f,   100.0f, 1.0f,  "%",  "Tone",  nullptr},
     {"fm_drive",   "Drive",       "DRIVE", 0.0f,   100.0f,   0.0f,   1.0f,  "%",  "Tone",  nullptr},
     {"fm_lowcut",  "Low Cut",     "LOCUT", 20.0f,  8000.0f,  20.0f,  1.0f,  "hz", "Tone",  nullptr},
-    {"fm_vel",     "Velocity",    "VEL",   0.0f,   100.0f,   60.0f,  1.0f,  "%",  "Tone",  nullptr},
     {"fm_ratio",   "Ratio",       "RATIO", 0.25f,  16.0f,    2.0f,   0.01f, nullptr, "FM", nullptr},
     {"fm_mod",     "Mod",         "MOD",   0.0f,   100.0f,   20.0f,  1.0f,  "%",  "FM",    nullptr},
     {"fm_mdec",    "Mod Decay",   "MDEC",  1.0f,   2000.0f,  60.0f,  1.0f,  "ms", "FM",    nullptr},
     {"fm_fb",      "Feedback",    "FB",    0.0f,   100.0f,   0.0f,   1.0f,  "%",  "FM",    nullptr},
     {"fm_track",   "Mod Track",   "TRACK", 0.0f,   1.0f,     1.0f,   1.0f,  nullptr, "FM", "Off|On"},
-    {"fm_vmod",    "Vel>Mod",     "VMOD",  0.0f,   100.0f,   50.0f,  1.0f,  "%",  "FM",    nullptr},
     {"fm_noise",   "Noise",       "NOISE", 0.0f,   100.0f,   0.0f,   1.0f,  "%",  "Noise", nullptr},
     {"fm_ndec",    "Noise Decay", "NDEC",  1.0f,   2000.0f,  100.0f, 1.0f,  "ms", "Noise", nullptr},
     {"fm_nfreq",   "Noise Freq",  "NFREQ", 100.0f, 16000.0f, 5000.0f, 10.0f, "hz", "Noise", nullptr},
@@ -71,6 +79,13 @@ const dr32_eparam PARAMS[NP] = {
     {"fm_nmode",   "Noise Filter","NFILT", 0.0f,   2.0f,     2.0f,   1.0f,  nullptr, "Noise", "LP|BP|HP"},
     {"fm_claps",   "Claps",       "CLAPS", 1.0f,   6.0f,     1.0f,   1.0f,  nullptr, "Noise", nullptr},
     {"fm_gap",     "Clap Gap",    "GAP",   2.0f,   40.0f,    10.0f,  1.0f,  "ms", "Noise", nullptr},
+    {"fm_vel",     "Vel>Level",   "VLVL",  0.0f,   100.0f,   60.0f,  1.0f,  "%",  "Velocity", nullptr},
+    {"fm_vmod",    "Vel>Mod",     "VMOD",  0.0f,   100.0f,   50.0f,  1.0f,  "%",  "Velocity", nullptr},
+    {"fm_vsweep",  "Vel>Sweep",   "VSWP",  0.0f,   100.0f,   0.0f,   1.0f,  "%",  "Velocity", nullptr},
+    {"fm_vpitch",  "Vel>Pitch",   "VPTCH", 0.0f,   12.0f,    0.0f,   0.1f,  "st", "Velocity", nullptr},
+    {"fm_vdecay",  "Vel>Decay",   "VDEC",  -100.0f, 100.0f,  0.0f,   1.0f,  "%",  "Velocity", nullptr},
+    {"fm_vnoise",  "Vel>Noise",   "VNSE",  0.0f,   100.0f,   0.0f,   1.0f,  "%",  "Velocity", nullptr},
+    {"fm_vnfreq",  "Vel>NFreq",   "VNFRQ", 0.0f,   100.0f,   0.0f,   1.0f,  "%",  "Velocity", nullptr},
 };
 
 /* ---- the sine table: 1024 points + a guard, linear interpolation --------- */
@@ -143,7 +158,8 @@ struct Voice {
     Svf   nf, lc;
 
     /* per hit */
-    float base_hz = 0, sweep_hz = 0, vel_gain = 1, vel_mod = 1;
+    float base_hz = 0, sweep_hz = 0, vel_gain = 1, vel_mod = 1, vel_noise = 1;
+    float decay_mul = 1, nfreq_mul = 1;      /* velocity's, set per hit, used by derive() */
     float env_amp = 0, env_sw = 0, env_mod = 0, env_noise = 0;
     int   bursts_left = 0, burst_count = 0;
     uint32_t ph_c = 0, ph_m = 0;
@@ -159,7 +175,7 @@ struct Voice {
 
     void derive() {
         dirty = 0;
-        c_amp = decay_coef(p[P_DECAY], sr, kLn1000);
+        c_amp = decay_coef(p[P_DECAY] * decay_mul, sr, kLn1000);
         c_sw  = decay_coef(p[P_SWDEC], sr, kLn1000);
         c_mod = decay_coef(p[P_MDEC], sr, kLn1000);
         c_noise = decay_coef(p[P_NDEC], sr, kLn1000);
@@ -180,16 +196,27 @@ struct Voice {
         noise_lvl = n * n;
         nmode = (int) p[P_NMODE];
         /* Res 0..100% = Q 0.5..20, exponentially. */
-        nf.set(p[P_NFREQ], 0.5f * std::pow(40.0f, p[P_NRES] * 0.01f), sr);
+        nf.set(p[P_NFREQ] * nfreq_mul, 0.5f * std::pow(40.0f, p[P_NRES] * 0.01f), sr);
         lowcut_on = p[P_LOWCUT] > 20.5f;
         lc.set(p[P_LOWCUT], 0.7071f, sr);
     }
 
     void hit(float vel01, float tune_st) {
-        base_hz = p[P_PITCH] * std::pow(2.0f, tune_st / 12.0f);
-        sweep_hz = base_hz * (std::pow(2.0f, p[P_SWEEP] / 12.0f) - 1.0f);
-        vel_gain = 1.0f - p[P_VEL] * 0.01f * (1.0f - vel01);
-        vel_mod  = 1.0f - p[P_VMOD] * 0.01f * (1.0f - vel01);
+        /* d: how far below a full-velocity hit this one is. Every target
+         * moves by amount x d, so d = 0 is always the knobs as set. */
+        const float d = 1.0f - vel01;
+        base_hz = p[P_PITCH] * std::pow(2.0f, (tune_st - p[P_VPITCH] * d) / 12.0f);
+        sweep_hz = base_hz * (std::pow(2.0f, p[P_SWEEP] * (1.0f - p[P_VSWEEP] * 0.01f * d) / 12.0f) - 1.0f);
+        vel_gain  = 1.0f - p[P_VEL] * 0.01f * d;
+        vel_mod   = 1.0f - p[P_VMOD] * 0.01f * d;
+        vel_noise = 1.0f - p[P_VNOISE] * 0.01f * d;
+        /* Decay: +100% makes a silent-velocity hit a quarter as long, -100%
+         * four times as long (two octaves of time either way). */
+        decay_mul = std::pow(2.0f, -2.0f * p[P_VDECAY] * 0.01f * d);
+        /* Noise Freq: 100% puts a silent-velocity hit's filter 4 octaves down. */
+        nfreq_mul = std::pow(2.0f, -4.0f * p[P_VNFREQ] * 0.01f * d);
+        c_amp = decay_coef(p[P_DECAY] * decay_mul, sr, kLn1000);
+        nf.set(p[P_NFREQ] * nfreq_mul, 0.5f * std::pow(40.0f, p[P_NRES] * 0.01f), sr);
         env_amp = env_sw = env_mod = env_noise = 1.0f;
         bursts_left = (int) p[P_CLAPS] - 1;
         burst_count = gap_n;
@@ -226,7 +253,7 @@ struct Voice {
             env_amp *= c_amp; env_sw *= c_sw; env_mod *= c_mod;
 
             /* noise, with the clap's bursts ahead of its tail */
-            if (noise_lvl > 0.0f) x += nf.run(noise(), nmode) * env_noise * noise_lvl;
+            if (noise_lvl > 0.0f) x += nf.run(noise(), nmode) * env_noise * noise_lvl * vel_noise;
             if (bursts_left > 0) {
                 env_noise *= c_burst;
                 if (--burst_count <= 0) { env_noise = 1.0f; bursts_left--; burst_count = gap_n; }
@@ -282,17 +309,19 @@ int render(void *e, float *out, int n) {
 /* ---- models: DR32's own starting points --------------------------------- */
 
 struct Preset { const char *slug, *name; float v[NP]; };
-/*                        pitch decay swp swdec tone drv lowcut vel | ratio mod mdec fb trk vmod | noise ndec nfreq nres nmode claps gap */
+/* The hard hit is the first 19 columns; the velocity page says how softer
+ * hits depart from it.
+ *                        pitch decay swp swdec tone drv lowcut | ratio mod mdec fb trk | noise ndec nfreq nres nmode claps gap | vlvl vmod vswp vptch vdec vnse vnfrq */
 const Preset PRESETS[] = {
-    {"fm/kick",    "Kick",       {50,  450,  30, 60,  100, 20, 20,   60,  2.0f,  25, 40,   0,  1, 50,   8,   10,  4000,  0, 0, 1, 10}},
-    {"fm/snare",   "Snare",      {185, 180,  12, 20,  70,  10, 120,  60,  1.47f, 40, 60,   10, 1, 50,   70,  200, 1800,  10, 2, 1, 10}},
-    {"fm/tom",     "Tom",        {110, 400,  7,  80,  100, 0,  40,   60,  1.0f,  15, 80,   0,  1, 50,   5,   30,  3000,  0, 0, 1, 10}},
-    {"fm/clap",    "Clap",       {800, 20,   0,  1,   0,   15, 300,  60,  1.0f,  0,  1,    0,  1, 0,    100, 250, 1200,  30, 1, 4, 11}},
-    {"fm/rim",     "Rim",        {480, 40,   5,  5,   100, 0,  200,  60,  3.21f, 50, 15,   20, 1, 50,   20,  8,   6000,  0, 2, 1, 10}},
-    {"fm/cowbell", "Cowbell",    {540, 350,  0,  1,   100, 30, 250,  60,  1.48f, 35, 300,  0,  0, 30,   0,   10,  5000,  0, 2, 1, 10}},
-    {"fm/chat",    "Closed Hat", {1200, 60,  0,  1,   60,  0,  6000, 60,  3.37f, 80, 100,  70, 0, 30,   60,  50,  8000,  0, 2, 1, 10}},
-    {"fm/ohat",    "Open Hat",   {1200, 500, 0,  1,   60,  0,  6000, 60,  3.37f, 80, 400,  70, 0, 30,   60,  450, 8000,  0, 2, 1, 10}},
-    {"fm/cymbal",  "Cymbal",     {900, 1500, 0,  1,   70,  0,  3000, 60,  2.76f, 90, 1200, 60, 0, 30,   50,  1200, 7000, 0, 2, 1, 10}},
+    {"fm/kick",    "Kick",       {50,  450,  30, 60,  100, 20, 20,    2.0f,  25, 40,   0,  1,   8,   10,   4000, 0,  0, 1, 10,   60, 50, 50, 0, 20, 50, 50}},
+    {"fm/snare",   "Snare",      {185, 180,  12, 20,  70,  10, 120,   1.47f, 40, 60,   10, 1,   70,  200,  1800, 10, 2, 1, 10,   60, 50, 40, 2, 30, 60, 60}},
+    {"fm/tom",     "Tom",        {110, 400,  7,  80,  100, 0,  40,    1.0f,  15, 80,   0,  1,   5,   30,   3000, 0,  0, 1, 10,   60, 40, 50, 2, 30, 30, 30}},
+    {"fm/clap",    "Clap",       {800, 20,   0,  1,   0,   15, 300,   1.0f,  0,  1,    0,  1,   100, 250,  1200, 30, 1, 4, 11,   60, 0,  0,  0, 20, 0,  60}},
+    {"fm/rim",     "Rim",        {480, 40,   5,  5,   100, 0,  200,   3.21f, 50, 15,   20, 1,   20,  8,    6000, 0,  2, 1, 10,   60, 50, 0,  1, 0,  30, 40}},
+    {"fm/cowbell", "Cowbell",    {540, 350,  0,  1,   100, 30, 250,   1.48f, 35, 300,  0,  0,   0,   10,   5000, 0,  2, 1, 10,   60, 30, 0,  0, 20, 0,  0}},
+    {"fm/chat",    "Closed Hat", {1200, 60,  0,  1,   60,  0,  6000,  3.37f, 80, 100,  70, 0,   60,  50,   8000, 0,  2, 1, 10,   60, 30, 0,  0, 30, 40, 50}},
+    {"fm/ohat",    "Open Hat",   {1200, 500, 0,  1,   60,  0,  6000,  3.37f, 80, 400,  70, 0,   60,  450,  8000, 0,  2, 1, 10,   60, 30, 0,  0, 30, 40, 50}},
+    {"fm/cymbal",  "Cymbal",     {900, 1500, 0,  1,   70,  0,  3000,  2.76f, 90, 1200, 60, 0,   50,  1200, 7000, 0,  2, 1, 10,   60, 40, 0,  0, 40, 40, 50}},
 };
 const int NM = (int) (sizeof(PRESETS) / sizeof(PRESETS[0]));
 

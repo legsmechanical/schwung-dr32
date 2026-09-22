@@ -341,15 +341,33 @@ int main(void) {
                       "pad names wrong at splice %d: %.80s", spliced, q);
             }
             CHECK(anchors >= 3, "only %d child_index_param anchors — the three pad banks are gone", anchors);
-            /* Three base banks plus the synth engines' pages (23 today). An
+            /* Three base banks plus the synth engines' pages (24 today). An
              * engine page that loses its names reads "Pad 7" over a pad the
              * Pad bank calls "Kick". */
-            CHECK(anchors == 26, "%d pad levels; expected 26 (3 banks + 23 engine pages, merged from engine_ui.json)", anchors);
+            CHECK(anchors == 27, "%d pad levels; expected 27 (3 banks + 24 engine pages, merged from engine_ui.json)", anchors);
             CHECK(spliced == anchors,
                   "child_names spliced %d times for %d anchors — every pad bank needs its own names",
                   spliced, anchors);
             FILE *f = fopen("dist/tests/served_hierarchy.json", "w");
             if (f) { fputs(h, f); fclose(f); }
+
+            /* chain_params: served verbatim from src/chain_params.json (the
+             * host's fallback plus the PAD cell's viz — its equivalence to the
+             * fallback is tools/check_chain_params.mjs's job). This pins that
+             * the DSP serves the FILE, whole, and that the viz is in it. */
+            static char cp[65536], file[65536];
+            int cn = api->get_param(inst, "chain_params", cp, (int)sizeof(cp));
+            FILE *cf = fopen("src/chain_params.json", "rb");
+            size_t fl = cf ? fread(file, 1, sizeof(file) - 1, cf) : 0;
+            if (cf) fclose(cf);
+            while (fl > 0 && (file[fl - 1] == '\n' || file[fl - 1] == '\r')) fl--;
+            file[fl] = '\0';
+            CHECK(cn > 2 && (size_t)cn == fl && !strcmp(cp, file),
+                  "chain_params not served as src/chain_params.json (%d bytes vs %zu)", cn, fl);
+            CHECK(strstr(cp, "\"key\":\"ui_current_pad\"") && strstr(cp, "\"custom:padnum\""),
+                  "served chain_params lacks the PAD cell's custom:padnum viz");
+            /* Too small a buffer: no answer (-1), never a truncated array. */
+            CHECK(api->get_param(inst, "chain_params", cp, 16) == -1, "chain_params truncated into a short buffer");
             api->destroy_instance(inst);
             remove(wa);
             remove(wb);

@@ -43,6 +43,14 @@ typedef struct {
     char    *ui_hierarchy_src;
     char    *ui_hierarchy;
     int      ui_hierarchy_len;
+    // src/chain_params.json, served as `chain_params` so the PAD cell's
+    // `custom:padnum` viz reaches the host (which is what makes it load
+    // canvas.js). It is the host's OWN fallback list plus that viz and
+    // nothing else — see tools/gen_engine_ui.mjs for why it must be, and
+    // tools/check_chain_params.mjs for the proof. NULL = serve nothing, and
+    // the host builds its fallback exactly as it did before this existed.
+    char    *chain_params;
+    int      chain_params_len;
     // Snapshot taken when the kit browser opens, so cancelling can put the
     // previous kit back. The host's own live_preview restore writes
     // `previewOriginalValue || ""`, and for this param that value is routinely
@@ -439,6 +447,18 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     in->kits = dr32_kits_create();
     in->kit_pending = -1;
     in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
+    {
+        char path[DR32_MAX_PATH];
+        snprintf(path, sizeof(path), "%s/chain_params.json", module_dir);
+        long cl = 0;
+        in->chain_params = read_small_file(path, &cl);
+        /* Trailing whitespace is harmless to the host; trimmed so the length
+         * served is the array's. */
+        while (in->chain_params && cl > 0 && (in->chain_params[cl - 1] == '\n' || in->chain_params[cl - 1] == '\r'))
+            in->chain_params[--cl] = '\0';
+        in->chain_params_len = (int)cl;
+        if (!in->chain_params) logmsg("dr32: no chain_params.json — the PAD cell shows the plain number");
+    }
     dr32_refresh_hierarchy(in);
     if (in->ui_hierarchy) {
         char msg[128];
@@ -475,6 +495,7 @@ static void destroy_instance(void *instance) {
     dr32_kits_destroy(in->kits);
     free(in->ui_hierarchy_src);
     free(in->ui_hierarchy);
+    free(in->chain_params);
     free(in->state_baseline);
     free(in);
 }
@@ -724,6 +745,13 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
         return snprintf(buf, buf_len, "0");
     }
 
+    if (!strcmp(key, "chain_params")) {
+        /* ⚠ -1, not 0, when there is nothing to serve: the host then builds
+         * its own fallback, exactly as before DR32 served this. */
+        if (!in->chain_params || in->chain_params_len >= buf_len) return -1;
+        memcpy(buf, in->chain_params, (size_t)in->chain_params_len + 1);
+        return in->chain_params_len;
+    }
     if (!strcmp(key, "ui_hierarchy")) {
         if (!in->ui_hierarchy || in->ui_hierarchy_len >= buf_len) return 0;
         memcpy(buf, in->ui_hierarchy, (size_t)in->ui_hierarchy_len + 1);

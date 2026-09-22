@@ -333,6 +333,66 @@ const famJs = 'const FAMILIES = [\n' + fams.map((f) =>
     '\n    ] },').join('\n') + '\n];\n';
 const outBr = br.slice(0, b0) + BEGIN + '\n' + famJs + br.slice(b1);
 
+/* ---- chain_params.json: the table the host already builds, plus a viz ----
+ *
+ * ⭐ WHY DR32 SERVES chain_params AT ALL. The PAD cell's big number is a
+ * custom widget (src/canvas.js), and the host loads canvas.js only when the
+ * `chain_params` it READS FROM THE PLUGIN declares a `custom:` viz kind. With
+ * no plugin answer the host serves a fallback it builds from module.json —
+ * and that fallback has no viz field, so the kind could never reach it.
+ *
+ * 🔴 SO THIS IS THE FALLBACK, REPRODUCED, AND NOTHING ELSE CHANGES. The same
+ * answer has two readers:
+ *   - the modulation refresh (chain_mod.c) PARSES it and REPLACES the slot's
+ *     param metadata with the result. That metadata is where the per-pad
+ *     send ranges live; lose them and the sends go silent (2026-09-19).
+ *   - the page (param_meta.mjs) merges each entry OVER the inline
+ *     declaration, so every field here overrides the hierarchy's own.
+ * Hence each entry is exactly what the host's fallback emits (chain_host.c:
+ * key, name, type int|enum|float, min, max, options, unit, display_format),
+ * plus `default` / `step` / `max_param` ONLY where the inline declaration
+ * already has them (so the re-parse lands on the same values and the page
+ * sees what it saw), plus the one viz. Which params: the host's own rule
+ * (parse_param_object) — inline hierarchy params of type float/int/enum, in
+ * document order; anything else it drops, and so do we.
+ *
+ * tools/check_chain_params.mjs PROVES both halves with the host's real
+ * parser: the re-parse is identical, struct for struct, to the host's parse
+ * of module.json, and the fields the page sees are the fallback's.
+ */
+const CUSTOM_VIZ = { ui_current_pad: { kind: 'custom:padnum' } };
+const cpOut = [];
+{
+    const doc = JSON.parse(outMj);
+    const h = doc.capabilities.ui_hierarchy;
+    const objs = [...(h.shared_params || []).filter((p) => p && typeof p === 'object')];
+    for (const lv of Object.values(h.levels)) for (const p of lv.params || []) objs.push(p);
+    for (const p of objs) {
+        if (!p || typeof p !== 'object' || typeof p.key !== 'string') continue;
+        const t = typeof p.type === 'string' ? p.type : '';
+        const type = t.startsWith('float') ? 'float' : t.startsWith('int') ? 'int' : t.startsWith('enum') ? 'enum' : null;
+        if (!type) continue;
+        const e = { key: p.key, name: p.label ?? p.name ?? p.key, type };
+        const opts = type === 'enum' && Array.isArray(p.options) ? p.options : null;
+        e.min = typeof p.min === 'number' ? p.min : 0;
+        e.max = opts && opts.length ? opts.length - 1
+              : typeof p.max === 'number' ? p.max
+              : p.max_param ? (type === 'float' ? 1 : 9999) : 0;
+        if (opts && opts.length) e.options = opts;
+        if (p.unit) e.unit = p.unit;
+        if (p.display_format) e.display_format = p.display_format;
+        if ('default' in p) e.default = p.default;
+        if ('step' in p) e.step = p.step;
+        if (p.max_param) e.max_param = p.max_param;
+        if (CUSTOM_VIZ[p.key]) e.viz = CUSTOM_VIZ[p.key];
+        cpOut.push(e);
+    }
+    for (const k of Object.keys(CUSTOM_VIZ))
+        if (!cpOut.some((e) => e.key === k)) throw new Error(`chain_params: ${k} is not an inline float/int/enum param`);
+}
+const CP = join(ROOT, 'src/chain_params.json');
+const outCp = JSON.stringify(cpOut) + '\n';
+
 /* ---- write or check ---------------------------------------------------- */
 const stale = [];
 let euText = '';
@@ -340,6 +400,9 @@ try { euText = readFileSync(EU, 'utf8'); } catch { /* first run */ }
 if (outEu !== euText) stale.push('src/engine_ui.json');
 if (outMj !== text) stale.push('src/module.json');
 if (outBr !== br) stale.push('src/browser.js');
+let cpText = '';
+try { cpText = readFileSync(CP, 'utf8'); } catch { /* first run */ }
+if (outCp !== cpText) stale.push('src/chain_params.json');
 if (check) {
     if (stale.length) {
         console.log(`gen_engine_ui: STALE — ${stale.join(', ')}. Run: node tools/gen_engine_ui.mjs`);
@@ -350,6 +413,7 @@ if (check) {
     writeFileSync(MJ, outMj);
     writeFileSync(BR, outBr);
     writeFileSync(EU, outEu);
+    writeFileSync(CP, outCp);
     console.log(`gen_engine_ui: wrote ${stale.length ? stale.join(', ') : 'nothing (up to date)'} — ` +
                 `${engines.length} engines, ${genLevels.length} pages, ${models.length} models, ` +
                 `module.json ${Buffer.byteLength(outMj)} bytes, engine_ui.json ${Buffer.byteLength(outEu)} bytes`);

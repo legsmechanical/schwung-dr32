@@ -48,7 +48,7 @@ Link, Copy and Delete, and the per-pad buses all treat a synth pad the same as a
 | **8W8** | [8W8](https://github.com/athousanddetails/schwung-8W8)'s TR-808 style circuit models, congas, claves, maracas and cowbell included. 16 drums | Voice |
 | **CW-78** | [CW-78](https://github.com/athousanddetails/schwung-cw-78)'s CR-78 style voices, modelled from the service notes: bongos, guiro, tambourine and metal beat among them. 14 drums | Voice |
 | **ChowKick** | [ChowKick](https://github.com/Chowdhury-DSP/ChowKick), Chowdhury DSP's kick synth: a pulse shaped by a modelled diode circuit, rung through a nonlinear resonant filter. Its five factory presets are the models | Pulse · Body · Noise |
-| **FM** | DR32's own two-operator FM drum, after the idea of the Machinedrum's EFM machines: a swept sine carrier, a modulator with feedback, and a filtered noise layer that can fire clap bursts. 9 drums | Tone · FM · Noise |
+| **FM** | DR32's own two-operator FM drum, after the idea of the Machinedrum's EFM machines: a swept sine carrier, a modulator with feedback, and a filtered noise layer that can fire clap bursts, and a Velocity page that moves pitch, sweep, decay, FM depth and noise with how hard you hit. 9 drums | Tone · FM · Noise · Velocity |
 
 Each drum starts from the engine's own factory values and is yours to change from there. The pages
 follow the pad: hit a Simian pad and you get its Tone and Noise pages, hit a sample pad and you get
@@ -112,7 +112,7 @@ Jog moves between them.
 | **Tone · Noise** | the Simian voice *(Simian pads)* |
 | **Drum · Shell · Chop · Media / Cymbal · Chop · Media** | the Urchin voice, and its record: Vinyl/Tape noise, Sat, Rate, Bits *(Urchin pads)* |
 | **Voice** | Tune · Decay · the drum's own knob · Drive · Distortion · Velocity *(9W9, 6W6, 8W8, CW-78 pads)* |
-| **Tone · FM · Noise** | FM: the carrier (Pitch, Decay, Sweep, Sweep Decay, Tone Level, Drive, Low Cut, Velocity), the modulator (Ratio, Mod, Mod Decay, Feedback, Mod Track, Vel>Mod) and the noise (Noise, Noise Decay, Noise Freq, Noise Res, Noise Filter, Claps, Clap Gap) *(FM pads)* |
+| **Tone · FM · Noise · Velocity** | FM: the carrier (Pitch, Decay, Sweep, Sweep Decay, Tone Level, Drive, Low Cut), the modulator (Ratio, Mod, Mod Decay, Feedback, Mod Track), the noise (Noise, Noise Decay, Noise Freq, Noise Res, Noise Filter, Claps, Clap Gap) and what velocity moves (Level, Mod, Sweep, Pitch, Decay, Noise, Noise Freq; a full-velocity hit is always the knobs as set) *(FM pads)* |
 | **Pulse · Body · Noise** | ChowKick: the pulse (Width, Amp, Decay, Sustain, Vel Sense, Tone), the resonant body (Frequency, Q, Damping, Tight, Bounce, Mode, Portamento) and envelope-following noise *(ChowKick pads)* |
 | **Mix** | Vel Vol · Volume · Pan · Link · Send A · Send B · Punch · Punch Time |
 | **Master** | level for the whole kit |

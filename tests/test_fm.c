@@ -8,6 +8,10 @@
 //   - Sweep starts the hit that many semitones up, and falls back to Pitch
 //   - Claps fires that many noise bursts, Clap Gap apart
 //   - Velocity: at 100% a half-velocity hit is 6 dB down; at 0% it is not
+//   - the Velocity page's law: a FULL-velocity hit is the knobs as set, bit
+//     for bit, whatever the velocity amounts; softer hits move each target
+//     by the promised amount (pitch, decay both ways, sweep, noise level,
+//     noise freq)
 //   - a knob moved while the voice rings takes effect on the ringing voice
 //   - once the envelopes are gone the voice writes exact zeros and stops
 #include <math.h>
@@ -138,6 +142,110 @@ static void test_velocity(void) {
     }
 }
 
+static void *bare_noise(void) {
+    void *v = E->create(SR);
+    set(v, "fm_tone", 0); set(v, "fm_noise", 100); set(v, "fm_ndec", 2000);
+    set(v, "fm_lowcut", 20); set(v, "fm_drive", 0); set(v, "fm_vel", 0);
+    return v;
+}
+
+static const char *const VKEYS[] = {"fm_vel", "fm_vmod", "fm_vsweep", "fm_vpitch", "fm_vdecay", "fm_vnoise", "fm_vnfreq"};
+
+static void test_vel_hard_hit_is_the_knobs(void) {
+    static float a[SR], b[SR];
+    for (int i = 0; i < dr32_model_count(); i++) {
+        const dr32_model *m = dr32_model_at(i);
+        if (m->engine != DR32_ENG_FM) continue;
+        for (int pass = 0; pass < 2; pass++) {
+            void *v = E->create(SR);
+            for (int k = 0; k < E->nparams; k++) E->set(v, k, m->values[k]);
+            for (int k = 0; k < 7; k++) {
+                const int ix = dr32_engine_param_index(E, VKEYS[k]);
+                E->set(v, ix, pass ? E->params[ix].max : 0.0f);
+            }
+            E->note_on(v, 1.0f, 0.0f);
+            run(v, pass ? b : a, SR);
+            E->destroy(v);
+        }
+        CHECK(!memcmp(a, b, sizeof a), "%s: velocity amounts changed a full-velocity hit", m->slug);
+    }
+}
+
+/* -60 dB time of a bare tone, in ms: the first 5 ms window 60 dB below the start. */
+static float t60(void *v) {
+    run(v, buf, SR * 4);
+    const float p0 = peak(buf, SR / 200);
+    for (int i = 0; i + SR / 200 <= SR * 4; i += SR / 1000)
+        if (peak(buf + i, SR / 200) < p0 * 0.001f) return (i + SR / 400) * 1000.0f / SR;
+    return 1e9f;
+}
+
+static void test_vel_targets(void) {
+    /* Pitch: 12 st at zero velocity is an octave down; half velocity half that. */
+    for (int k = 0; k < 2; k++) {
+        void *v = bare(200, 4000);
+        set(v, "fm_vpitch", 12);
+        E->note_on(v, k ? 0.5f : 0.0f, 0.0f);
+        run(v, buf, SR / 2);
+        const float want = k ? 200.0f / sqrtf(2.0f) : 100.0f, got = freq(buf, SR / 2);
+        CHECK(fabsf(got / want - 1.0f) < 0.01f, "Vel>Pitch 12 st at vel %g: %g Hz, want %g", k ? 0.5 : 0.0, got, want);
+        E->destroy(v);
+    }
+    /* Decay: +100% quarters a zero-velocity hit, -100% quadruples it. */
+    const float amt[] = {100, -100}, mul[] = {0.25f, 4.0f};
+    for (int k = 0; k < 2; k++) {
+        void *v = bare(200, 400);
+        /* Level off velocity: a quieter hit would meet DR32's silence gate
+         * (-60 dBFS absolute) before its own -60 dB point. */
+        set(v, "fm_vel", 0);
+        set(v, "fm_vdecay", amt[k]);
+        E->note_on(v, 0.0f, 0.0f);
+        const float got = t60(v), want = 400 * mul[k];
+        CHECK(fabsf(got / want - 1.0f) < 0.05f, "Vel>Decay %g%%: %g ms, want %g", amt[k], got, want);
+        E->destroy(v);
+    }
+    /* Sweep: 100% removes the sweep from a zero-velocity hit. */
+    {
+        void *v = bare(100, 4000);
+        set(v, "fm_sweep", 24); set(v, "fm_swdec", 1000); set(v, "fm_vsweep", 100);
+        E->note_on(v, 0.0f, 0.0f);
+        run(v, buf, SR / 10);
+        const float got = freq(buf, SR / 10);
+        CHECK(fabsf(got - 100.0f) < 1.0f, "Vel>Sweep 100%%: a soft hit starts at %g Hz, want 100", got);
+        E->destroy(v);
+    }
+    /* Noise: 100% makes a half-velocity hit's noise 6 dB down. */
+    {
+        float pk[2];
+        for (int k = 0; k < 2; k++) {
+            void *v = bare_noise();
+            set(v, "fm_vnoise", 100);
+            E->note_on(v, k ? 0.5f : 1.0f, 0.0f);
+            run(v, buf, SR / 20);
+            pk[k] = peak(buf, SR / 20);
+            E->destroy(v);
+        }
+        const float db = 20.0f * log10f(pk[1] / pk[0]);
+        CHECK(fabsf(db + 6.02f) < 0.5f, "Vel>Noise 100%%: half velocity is %.2f dB, want -6", db);
+    }
+    /* Noise Freq: 100% puts a zero-velocity lowpass 4 octaves down. Lowpassed
+     * white noise crosses zero in proportion to its cutoff. */
+    {
+        int zc[2];
+        for (int k = 0; k < 2; k++) {
+            void *v = bare_noise();
+            set(v, "fm_nmode", 0); set(v, "fm_nfreq", 3200); set(v, "fm_vnfreq", 100);
+            E->note_on(v, k ? 0.0f : 1.0f, 0.0f);
+            run(v, buf, SR / 2);
+            zc[k] = 0;
+            for (int i = 1; i < SR / 2; i++) if ((buf[i - 1] < 0) != (buf[i] < 0)) zc[k]++;
+            E->destroy(v);
+        }
+        const float r = (float) zc[0] / (float) zc[1];
+        CHECK(r > 12.0f && r < 20.0f, "Vel>NFreq 100%%: cutoff ratio ~%.1f, want ~16", r);
+    }
+}
+
 static void test_live_knob(void) {
     /* Decay shortened mid-ring must shorten THIS ring. */
     void *v = bare(200, 4000);
@@ -195,6 +303,8 @@ int main(void) {
     test_sweep();
     test_claps();
     test_velocity();
+    test_vel_hard_hit_is_the_knobs();
+    test_vel_targets();
     test_live_knob();
     test_stops();
     bench();

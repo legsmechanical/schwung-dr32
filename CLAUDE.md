@@ -289,7 +289,7 @@ chowdsp_wdf, tuning-library).
 
 Josh: *"from scratch"*, after looking at ctag-fh-kiel/md-drum-synth (an EFM-style FM drum test app,
 AI-written, with **NO LICENCE**, so it can't be vendored or ported). `fm_engine.cpp` is DR32's own:
-one engine (`DR32_ENG_FM`, prefix `fm_`, pages Tone · FM · Noise), nine models of our own values.
+one engine (`DR32_ENG_FM`, prefix `fm_`, pages Tone · FM · Noise · Velocity), nine models of our own values.
 ⚠ Keep it clean-room: take nothing from that repo.
 
 - 2-op FM (sine table, uint32 phases), a Hz-offset pitch sweep, a modulator with feedback and
@@ -297,6 +297,10 @@ one engine (`DR32_ENG_FM`, prefix `fm_`, pages Tone · FM · Noise), nine models
 - There is NO ORIGINAL to A/B, so `tests/test_fm.c` pins what each knob promises, measured on the
   audio (pitch within 1%, decay −60 dB ± 2 dB at the knob's ms, sweep start/end, clap burst count,
   velocity law, a live knob change, the stop). Every mutation tried was caught.
+- ⭐ **Velocity page** (Josh: *"so velocity changes tone in a meaningful way"*): Level, Mod, Sweep,
+  Pitch, Decay (bipolar), Noise, Noise Freq. ONE law: a FULL-velocity hit is the knobs as set, bit
+  for bit (tested for every model with every amount at max), and softer hits move each target by
+  amount x (1 - velocity). So turning an amount up never changes a hard hit.
 - Cost: 0.8–3.7 µs/block sounding on the workstation, the cheapest engine here; zeros without
   compute once both envelopes are under −120 dB.
 
@@ -316,8 +320,26 @@ DR32 targets **upstream Schwung ≥ 1.2.0** (and needs **≥ 1.3.0** for its per
 the host's return buses at all). Every page — the 32 pads, the kit browser — is planned by the
 host from the hierarchy the DSP serves, using upstream's
 built-in pictures (envelope, filter curve, fader, switch, sample waveform + wave editor) and the
-1.2.0 drum-surface contract. The canvaskit Pad Editor (`canvas.js`) and the fork-only host keys
-it needed (`host_canvas_ui`, `canvas_takes_click`) are **gone**; do not bring them back.
+1.2.0 drum-surface contract. The canvaskit Pad Editor (the OLD `canvas.js`) and the fork-only
+host keys it needed (`host_canvas_ui`, `canvas_takes_click`) are **gone**; do not bring them back.
+⭑ **`src/canvas.js` exists again, and it is something else**: the PAD cell's big number (Josh,
+2026-09-22), a per-cell `custom:padnum` widget. Old hosts draw the plain number.
+🔴 **How it reaches the host is the trap.** The host loads `canvas.js` only if the `chain_params`
+it reads FROM THE PLUGIN declares a `custom:` kind, and **its fallback for a plugin that serves
+none carries no `viz`**, so the kind cannot live in module.json. And DR32's metadata comes from
+the INLINE hierarchy params (the host ignores module.json's own `chain_params` list when any
+exist), so moving `ui_current_pad` out of its level would have left the PAD knob undeclared.
+So `dsp.so` serves `src/chain_params.json` (written by `gen_engine_ui.mjs`), which is **the host's
+own fallback plus that one viz**. It must be nothing more: the modulation refresh (`chain_mod.c`)
+re-parses whatever the plugin serves and REPLACES the slot's metadata with it, and that metadata
+holds the per-pad send ranges (the 09-19 silent-sends failure). `tools/check_chain_params.mjs`
+proves it with the host's own `chain_params.c`, compiled from `SCHWUNG_SRC`: the re-parse matches
+the host's parse of module.json struct for struct, and the page sees the fallback's fields plus
+the viz (checked against v1.4.0, #533 and dbxhost; five mutations caught).
+`tools/check_pad_cell.mjs` renders all 32 through the host's framebuffer (none blank, none
+clipped, none alike; sheet at `build/pad_cell.png`). `build.sh` ships both files;
+`check_build_script` fails if it doesn't, or if `install.sh` deletes a shipped file (it used to
+`rm` canvas.js after copying, a Pad Editor leftover).
 
 Key facts for this module specifically:
 
