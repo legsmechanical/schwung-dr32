@@ -486,7 +486,7 @@ int main(void) {
               "create_instance hands the engines its module dir (%s)",
               dr32_engines_module_dir() ? dr32_engines_module_dir() : "NULL");
         if (inst) {
-            static char buf[65536];
+            static char buf[131072];    /* the host's value channel, 1.3.0+ */
             api->set_param(inst, "pad7_model", "urchin/hat_open");
             buf[0] = 0; api->get_param(inst, "is_loading", buf, sizeof buf);
             CHECK(!strcmp(buf, "1"), "a model change pulses is_loading (%s)", buf);

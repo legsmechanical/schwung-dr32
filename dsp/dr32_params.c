@@ -126,8 +126,9 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * "waveform:<start>,<end>" and gets min/max pairs back — the canvas has
          * no way to read audio, so the DSP has to publish it. CSV rather than
          * that tool's JSON: it is a third the size and split(",") is cheaper
-         * than JSON.parse in QuickJS. The value channel is 64 KB
-         * (SHADOW_PARAM_VALUE_LEN), so 128 pairs is nowhere near the limit.
+         * than JSON.parse in QuickJS. The value channel is
+         * SHADOW_PARAM_VALUE_LEN (128 KB since host 1.3.0), so 128 pairs is
+         * nowhere near the limit.
          *
          * An empty pad returns nothing, which the canvas draws as a flat line. */
         if (!strcmp(sub, "waveform")) {
@@ -221,7 +222,7 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * such a name in half. Extensions are stripped: they are all audio and
          * the suffix only eats width in a 128 px list. Truncated rather than
          * failed if the value channel would overflow — a short list beats a
-         * dropped one, and 512 names is far below the 64 KB limit anyway. */
+         * dropped one, and 512 names is far below the channel's 128 KB anyway. */
         if (!strcmp(sub, "browse_names")) {
             dr32_kit *mk = (dr32_kit *)kit;
             int n = dr32_kit_browse_count(mk, pad);

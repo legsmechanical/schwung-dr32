@@ -175,9 +175,10 @@ static void dr32_refresh_hierarchy(dr32_instance *in) {
     size_t src_len = strlen(src);
     /* 32 names x up to DR32_MAX_PATH is the pathological bound, times one copy
      * per pad level; real kits are ~20 bytes a name. The value channel is
-     * 64 KB, so cap the whole thing there and fall back to the plain document
-     * if the names would not fit. */
-    const size_t cap = 65536;
+     * SHADOW_PARAM_VALUE_LEN, 128 KB since host 1.3.0 (upstream #444; 64 KB
+     * before) and 1.3.0 is DR32's min_host_version, so cap the whole thing
+     * there and fall back to the plain document if the names would not fit. */
+    const size_t cap = 131072;
     char *out = malloc(cap);
     if (!out) return;
 
@@ -351,12 +352,13 @@ static char *load_ui_hierarchy(const char *module_dir, int *out_len) {
 
     /* Copy it MINIFIED: whitespace outside strings dropped.
      *
-     * ⚠ SIZE, NOT TIDINESS. The served hierarchy crosses a 64 KB value
-     * channel, and dr32_refresh_hierarchy then splices 32 pad names into EVERY
-     * pad level — thirteen of them since the synth engines each got their own
-     * pages. module.json is pretty-printed for people (and itself sits under
-     * the host's 64 KB file cap); indented, it would leave no room for the
-     * names, and the refresh falls back to serving no names at all. Minified,
+     * ⚠ SIZE, NOT TIDINESS. The served hierarchy crosses the host's value
+     * channel (SHADOW_PARAM_VALUE_LEN: 128 KB since host 1.3.0, 64 KB before),
+     * and dr32_refresh_hierarchy then splices 32 pad names into EVERY pad
+     * level — twenty of them with the engine pages. module.json is
+     * pretty-printed for people (and itself sits under the host's SEPARATE
+     * 64 KB cap on the module.json FILE); indented, the served copy would
+     * spend the channel on whitespace the names need. Minified,
      * it is about 60% of the file. JSON is unchanged by this: whitespace
      * outside a string is not part of any value. */
     int len = (int)(end - start);

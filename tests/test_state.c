@@ -317,11 +317,11 @@ int main(void) {
             make_wav(wb);
             api->set_param(inst, "pad1_sample", wa);
             api->set_param(inst, "pad2_sample", wb);
-            static char h[65536];
+            static char h[131072];      /* the host's value channel, 1.3.0+ */
             int n = api->get_param(inst, "ui_hierarchy", h, (int)sizeof(h));
             CHECK(n > 2, "ui_hierarchy not served (%d bytes)", n);
-            /* SERVED MINIFIED (dr32.c load_ui_hierarchy): thirteen pad levels
-             * of names have to fit the 64 KB value channel beside it. */
+            /* SERVED MINIFIED (dr32.c load_ui_hierarchy): every pad level's
+             * names have to fit the host's 128 KB value channel beside it. */
             CHECK(strstr(h, "\"pad_layout\":\"drums\"") != NULL, "pad_layout missing");
             CHECK(strstr(h, "\"child_index_param\":\"ui_current_pad\"") != NULL,
                   "child_index_param missing — the splice anchor is gone");

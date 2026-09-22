@@ -191,7 +191,8 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
   sends go silent. module.json is 18 KB now. The engine params are consequently absent from the
   host's C metadata; nothing reads them there. `build.sh` must ship the file
   (`check_build_script` pins it), and `check_module_json` checks the MERGED document.
-- The SERVED hierarchy crosses a 64 KB value channel, so it is minified, and an engine page's
+- The SERVED hierarchy crosses the host's value channel (SHADOW_PARAM_VALUE_LEN: **128 KB** since
+  host 1.3.0, upstream #444; 64 KB before), so it is minified, and an engine page's
   `child_copy_keys` carry only ITS engine's keys (it only shows on that engine's pads). Served
   size with two names spliced into 16 pad levels: 33 KB.
 - ⭑ **URCHIN's Media stage runs PER PAD** (`dsp/engines/urchin/faust/media.dsp`, assembled
@@ -234,8 +235,10 @@ machines' reverb, delay, master distortion, glue and CW-78's rhythm player are N
   so the pad gate is DR32's (`kit_port.h`, 100 ms below 0.001), AND a lane the machine says is
   finished (`active()` false, choke gain 0) ends the pad at once. Liveness is checked PER SAMPLE,
   as the machines do; a dead lane's sample is an exact 0 and its drive stage is not run.
-- **One page per MACHINE, not per lane** (a page set per lane would be ~50 levels and blow the
-  served hierarchy's 64 KB). Lanes share keys (`n9_`, `s6_`, `e8_`, `c7_` + tune/decay/drive/dist/
+- **One page per MACHINE, not per lane** — Josh's call (2026-09-22: "let's keep what you've got").
+  A page per lane (~50 more levels) WOULD fit the 128 KB channel, at an estimated ~100 KB; one per
+  machine keeps the room for more engines. ⚠ Two different limits: the module.json FILE is capped
+  at 64 KB by the host's loader; the SERVED hierarchy at 128 KB. Lanes share keys (`n9_`, `s6_`, `e8_`, `c7_` + tune/decay/drive/dist/
   vel); the page is gated on the second derived gate **`ui_family`** (DR32_FAM_*, in chain_params,
   on no level, read-only like `ui_engine`), and a lane's own knob on `ui_engine` inside it. A
   condition names ONE value, so a key must be on every lane, one lane (`equals`) or all but one

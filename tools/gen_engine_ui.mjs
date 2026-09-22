@@ -141,8 +141,10 @@ function paramEntry(p) {
  * (9W9, 6W6, 8W8, CW-78), one engine per lane of the machine. Their lanes have
  * the same panel (Tune, Decay, Drive, ...), so they share ONE page set, gated
  * on `ui_family`; a knob only some lanes have is gated on `ui_engine` inside
- * it. A page set per lane would be ~50 levels, and the served hierarchy has
- * to cross a 64 KB value channel (dr32.c load_ui_hierarchy).
+ * it. A page set per lane would be ~50 more levels, most of the served
+ * hierarchy's 128 KB value channel (SHADOW_PARAM_VALUE_LEN, host 1.3.0+) for
+ * one knob label per lane; one set per machine keeps the room for engines
+ * still to come. (Josh, 2026-09-22: keep one page per machine.)
  *
  * ⚠ A condition tests ONE value. So a knob must be on every lane of its
  * instrument, on exactly one (`equals`), or on all but one (`not_equals`);
@@ -261,7 +263,7 @@ const NAV_AFTER = 'pad_shape';
  * so its list needs that engine's keys and no other's: whatever the target
  * was, the copied `model` makes it this engine. The base banks show on every
  * pad, so they carry every engine's keys. Keeping the engine pages' lists to
- * their own is what keeps the served hierarchy inside the 64 KB value channel
+ * their own is what keeps the served hierarchy well inside the 128 KB value channel
  * as engines are added. */
 const baseCopy = levels.pads.child_copy_keys.filter((k) => !isGenKey(k));
 const withKeys = (keys) => {
