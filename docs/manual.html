@@ -126,12 +126,16 @@
   <p class="eyebrow">Schwung module</p>
   <h1>DR32 &mdash; Drum Rack 32</h1>
   <p class="standfirst">Ableton Move's Drum Rack, extended to 32 pads. Loads Move's own kits and
-  plays them through a reconstruction of the same Drum Sampler voice.</p>
+  plays them through a reconstruction of the same Drum Sampler voice &mdash; and any pad can play a
+  synthesised drum instead.</p>
 </header>
 
 <div class="note">
   <p><strong>Requires Schwung 1.3.0 or later.</strong> That is the version where the module-bus
-  contract arrived, and the per-pad sends reach nothing without it. Version 0.3.2.</p>
+  contract arrived, and the per-pad sends reach nothing without it. For a synth pad's pages to
+  follow the pad, Schwung also needs page gating
+  (<a href="https://github.com/charlesvestal/schwung/pull/533">#533</a>); on an older host every
+  engine's pages show at once, which is cluttered but still works.</p>
 </div>
 
 <h2>What it is</h2>
@@ -148,15 +152,16 @@ has no interface of its own. Every page below is Schwung's own knob grid.</p>
 <div class="screen">
 <span class="pg">Category</span>Acoustic &middot; Electronic &middot; Hybrid &middot; My Kits<br>
 <span class="pg dim">&nbsp;&nbsp;Kit</span><span class="dim">the kits in that category</span><br>
-<span class="pg">Sample</span>PAD&nbsp;&nbsp;&nbsp;&nbsp;SMPL&nbsp;&nbsp;&nbsp;STRT&nbsp;&nbsp;&nbsp;END&nbsp;&nbsp;&nbsp;&nbsp;TRSP&nbsp;&nbsp;DETN&nbsp;&nbsp;CHOKE&nbsp;&nbsp;BRWS<br>
-<span class="pg">Shape</span>ATK&nbsp;&nbsp;&nbsp;&nbsp;DCY&nbsp;&nbsp;&nbsp;&nbsp;HOLD&nbsp;&nbsp;ENV&nbsp;&nbsp;&nbsp;&nbsp;CUT&nbsp;&nbsp;&nbsp;RES&nbsp;&nbsp;&nbsp;TYPE&nbsp;&nbsp;&nbsp;FILT<br>
+<span class="pg">Pad</span>PAD&nbsp;&nbsp;&nbsp;&nbsp;ENGN&nbsp;&nbsp;&nbsp;STRT&nbsp;&nbsp;&nbsp;END&nbsp;&nbsp;&nbsp;&nbsp;TRSP&nbsp;&nbsp;DETN&nbsp;&nbsp;CHOKE&nbsp;&nbsp;VOL<br>
+<span class="pg">Shape</span>ATK&nbsp;&nbsp;&nbsp;&nbsp;DCY&nbsp;&nbsp;&nbsp;&nbsp;HOLD&nbsp;&nbsp;ENV&nbsp;&nbsp;&nbsp;&nbsp;CUT&nbsp;&nbsp;&nbsp;RES&nbsp;&nbsp;&nbsp;TYPE&nbsp;&nbsp;&nbsp;FILT&nbsp;&nbsp;<span class="dim">(sample pads)</span><br>
+<span class="pg dim">&nbsp;&nbsp;Engine</span><span class="dim">Tone &middot; Noise / Drum &middot; Shell &middot; Chop &middot; Media / Voice &nbsp;(synth pads)</span><br>
 <span class="pg">Mix</span>VVOL&nbsp;&nbsp;&nbsp;VOL&nbsp;&nbsp;&nbsp;&nbsp;PAN&nbsp;&nbsp;&nbsp;LINK&nbsp;&nbsp;&nbsp;SNDA&nbsp;&nbsp;SNDB&nbsp;&nbsp;PUNCH&nbsp;&nbsp;PTIME<br>
 <span class="pg">Master</span>MASTER
 </div>
 
-<p>Jog moves between pages. The three pad banks &mdash; <strong>Sample</strong>,
-<strong>Shape</strong> and <strong>Mix</strong> &mdash; all edit the same pad, so the pad you pick
-on one is the pad you are editing on all three. On <strong>Category</strong>, click to go in, then
+<p>Jog moves between pages. The pad banks &mdash; <strong>Pad</strong>, <strong>Shape</strong>
+(or a synth pad's own pages) and <strong>Mix</strong> &mdash; all edit the same pad, so the pad you
+pick on one is the pad you are editing on all of them. On <strong>Category</strong>, click to go in, then
 click a row to open that category's kits.</p>
 
 <h2>Loading kits</h2>
@@ -181,31 +186,89 @@ you a great many things that cannot load.</p>
 stopped; with a pattern running, the editor follows only on a host that reports live presses. The
 <strong>PAD</strong> knob selects a pad by hand, numbered 1&ndash;32.</p>
 
-<p><strong>Sample</strong>, <strong>Shape</strong> and <strong>Mix</strong> are three views of the
-same pad &mdash; pick it on any one of them and it is picked on all three. Each pad's name in the
-header follows its sample, and updates as soon as you change it.</p>
+<p><strong>Pad</strong>, <strong>Shape</strong> and <strong>Mix</strong> are views of the same pad
+&mdash; pick it on any one of them and it is picked on all of them. Each pad's name in the header
+follows what it plays, a sample's name or a synth drum's, and updates as soon as you change it.</p>
 
-<h3>Sample</h3>
+<h3>Engine</h3>
 
-<p><strong>SMPL</strong> opens a browser starting in the folder that pad's current sample came
-from. <strong>BRWS</strong> steps through the neighbouring samples in that same folder, one per
-detent, so you can try alternatives without opening anything.</p>
+<p><strong>ENGN</strong> chooses what the pad plays. It opens a picker with a section per engine:
+<strong>Sample</strong> leads to Move's library and your own, and each synth engine lists its drums
+(see <a href="#synth">Synth drums</a>). Scroll to put a drum on the pad and hear it; click to keep
+it and close.</p>
 
 <h3>Shaping</h3>
 
 <table>
-  <tr><td>START · END</td><td>Playback region, drawn over the waveform.</td></tr>
+  <tr><td>START · END</td><td>Playback region, drawn over the waveform. Sample pads only.</td></tr>
   <tr><td>TRSP · DETN</td><td>Transpose in semitones, detune in cents.</td></tr>
   <tr><td>CHOKE</td><td>Choke group. Pads sharing a group cut each other off.</td></tr>
-  <tr><td>ATTACK · DECAY · HOLD</td><td>The amp envelope.</td></tr>
+  <tr><td>ATTACK · DECAY · HOLD</td><td>The amp envelope (the Shape page, sample pads only).</td></tr>
   <tr><td>ENV</td><td>A-H-D or A-S-R.</td></tr>
   <tr><td>CUT · RES · TYPE</td><td>Filter, four types, with FILT as its on/off switch.</td></tr>
   <tr><td>VELVOL</td><td>How much velocity affects level.</td></tr>
   <tr><td>VOL · PAN</td><td>Per-pad level and position.</td></tr>
-  <tr><td>PUNCH · PTIME</td><td>Move's transient shaper. Above zero it turns itself on.</td></tr>
+  <tr><td>PUNCH · PTIME</td><td>Move's transient shaper. Above zero it turns itself on. Sample
+      pads only.</td></tr>
   <tr><td>MASTER</td><td>Level for the whole kit &mdash; on its own page, because it is not a pad
       control.</td></tr>
 </table>
+
+<h2 id="synth">Synth drums</h2>
+
+<p>Any pad can play a synthesised drum instead of a sample. Pick one from <strong>ENGN</strong>
+and the pad stops being a sampler and plays that engine's voice. Mix them freely: a sampled kick,
+an 8W8 cowbell and an Urchin ride can sit in one kit. Everything around the voice stays DR32's
+&mdash; volume, pan, choke groups, the sends, the buses, Copy and Link treat a synth pad exactly as
+a sample pad.</p>
+
+<table>
+  <tr><td>Simian</td><td>OneTrick SIMIAN 2's voice: a tuned oscillator that morphs from triangle to
+      cymbal, filtered noise and a click, swept by one envelope. Pages <em>Tone</em> and
+      <em>Noise</em>.</td></tr>
+  <tr><td>Urchin</td><td>OneTrick URCHIN's physically modelled drums &mdash; a struck shell with a
+      resonant head, or a bank of partials for hats and cymbals &mdash; with its <em>Media</em>
+      page: vinyl or tape noise, saturation, sample rate and bits. Pages <em>Drum &middot; Shell
+      &middot; Chop &middot; Media</em>, or <em>Cymbal &middot; Chop &middot; Media</em>.</td></tr>
+  <tr><td>9W9</td><td>TR-909 style: circuit-modelled kick, snare, toms, rim and clap, and sampled
+      hats, ride and crash as on the real machine. 11 drums.</td></tr>
+  <tr><td>6W6</td><td>TR-606 style, on AudioKit's 606-Inspired-Synth-Drums. 8 drums.</td></tr>
+  <tr><td>8W8</td><td>TR-808 style circuit models, congas, claves, maracas and cowbell included.
+      16 drums.</td></tr>
+  <tr><td>CW-78</td><td>CR-78 style, modelled from the service notes: bongos, guiro, tambourine and
+      metal beat among them. 14 drums.</td></tr>
+</table>
+
+<p>Every drum starts from its engine's own factory values and is yours to change. A synth pad has
+no Start/End, Shape page or Punch, because those belong to the sampler.</p>
+
+<h3>The drum machines</h3>
+
+<p>9W9, 6W6, 8W8 and CW-78 each give a pad <strong>one drum of the machine</strong>, played
+exactly as the machine plays it. Their page is <strong>Voice</strong>, the machine's own panel for
+that drum:</p>
+
+<table>
+  <tr><td>TUNE · DECAY</td><td>On every drum (the 9W9 rim has no decay; the 9W9 snare's is its
+      Tone, the length of the snappy noise).</td></tr>
+  <tr><td>its own knob</td><td>Where the drum has one: Attack, Snappy, Tone, Noise, Rate, or the
+      9W9 kick's P.Depth and Pitch.</td></tr>
+  <tr><td>DRIVE · DIST</td><td>The drum's own drive, and its character: diode, clip, saturation,
+      fuzz, crunch, fold or crush.</td></tr>
+  <tr><td>VEL</td><td>How far a soft hit falls below a hard one. On most drums it changes the
+      sound as well as the level, as it does on the machines.</td></tr>
+</table>
+
+<p>The knobs run 0&ndash;127, like the machines' own. What the machines have around their drums
+&mdash; reverb, delay, master drive, the CW-78's rhythm player &mdash; is not here: DR32's Mix page
+and the sends do that job.</p>
+
+<div class="note">
+  <p><strong>Velocity and pitch on a synth pad.</strong> The engine already answers velocity, so a
+  synth pad's <strong>VVOL</strong> starts at 0; turn it up to add DR32's velocity-to-volume on top.
+  <strong>TRSP</strong> and <strong>DETN</strong> retune the drum &mdash; except the 9W9 kick,
+  whose Tune is the time of its pitch sweep rather than a pitch, as on a 909.</p>
+</div>
 
 <h2>Copying pads</h2>
 
@@ -217,7 +280,8 @@ clear them back to defaults, and <strong>Undo</strong> puts back the last pad yo
 menu, so building a kit out of one good snare takes a couple of seconds.</p>
 
 <p>What travels is the <em>whole</em> pad, not just what happens to be on the page you are looking
-at: the sample first, then tuning, envelope, filter, level, pan, sends and Punch. What does not
+at: the sample (or the synth drum and all its knobs) first, then tuning, envelope, filter, level,
+pan, sends and Punch. What does not
 travel is what makes a pad <em>that</em> pad &mdash; its note, and where it sits in its own sample
 folder.</p>
 
@@ -228,8 +292,9 @@ every pad takes that value. It releases as soon as you change <em>anything</em> 
 knob, a sample, a browse step, the master level &mdash; so the next thing you touch is the focused
 pad's alone. Playing a pad does not end it, so you can audition while you sweep.</p>
 
-<p>It never spreads the things that make a pad a distinct pad: its sample, its note, or the
-sample-browse position. It is off whenever DR32 loads.</p>
+<p>A synth knob spreads to the pads that have that knob &mdash; the Decay of an 8W8 drum reaches
+every 8W8 pad and no other. It never spreads the things that make a pad a distinct pad: its sample,
+its synth drum, its note, or the sample-browse position. It is off whenever DR32 loads.</p>
 
 <h2>Buses and sends</h2>
 
@@ -259,6 +324,10 @@ A kit imported from Move brings its own send amounts with it.</p>
 records which kit you used and what you changed about it. Kits themselves are Move's files and are
 never modified.</p>
 
+<p><strong>Synth pads live in the set only.</strong> A Move kit holds samples, so a kit that mixes
+samples and synth drums is kept in your set, and loading a Move kit turns every pad back into a
+sample pad.</p>
+
 <h2>Known limits</h2>
 
 <ul>
@@ -268,10 +337,16 @@ never modified.</p>
       lossless and reopen correctly on Move &mdash; but they are not played back.</li>
   <li>Return-chain effects saved inside a Move kit are preserved, but not set up for you.</li>
   <li>Browsing kits has no undo, as above.</li>
+  <li>Each drum-machine pad is a whole machine of its own, so two 8W8 hat pads do not share their
+      oscillators the way the machine's own hats do.</li>
 </ul>
 
 <footer>
-  <p>DR32 is free software under the MIT licence.</p>
+  <p>DR32 is free software under the GPL, version 3 or later (MIT before the synth engines). The
+     synth engines are Punk Labs' OneTrick SIMIAN 2 and URCHIN &mdash; free as in rights, not as in
+     beer: if you play them, <a href="https://punklabs.com">buy them</a> &mdash; and
+     athousanddetails' 9W9, 6W6, 8W8 and CW-78. Full credits are in
+     <a href="https://github.com/legsmechanical/schwung-dr32/blob/master/NOTICES.md">NOTICES.md</a>.</p>
   <p>Source and issues:
      <a href="https://github.com/legsmechanical/schwung-dr32">github.com/legsmechanical/schwung-dr32</a></p>
   <p>Not affiliated with Ableton.</p>

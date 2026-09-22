@@ -210,6 +210,10 @@ cp src/engine_ui.json "dist/${MODULE_ID}/"
 # 9W9's hats and cymbals are SAMPLES (as on a real 909), read at class init
 # from <module dir>/samples/9w9/. Without them those four lanes are silent.
 cp -R src/samples "dist/${MODULE_ID}/"
+# The licence and the notices travel WITH the binary: dsp.so contains MIT code
+# (606-Inspired-Synth-Drums, Sonic Pi's sc808, DR32's own earlier releases)
+# whose notices must accompany every copy, and it is a GPL combined work.
+cp LICENSE NOTICES.md "dist/${MODULE_ID}/"
 # On-device help. The host discovers help.json by scanning module directories,
 # so shipping it is the whole wiring — and a module without one gets no
 # "Module Help" row at all, which is why it is copied rather than optional in

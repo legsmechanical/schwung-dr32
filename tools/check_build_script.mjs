@@ -292,6 +292,13 @@ if (isBuild && !/cp\s+-R\s+src\/samples\s/.test(src)) {
                 'PCM from <module dir>/samples/9w9/ and those lanes go silent without it.');
 }
 
+/* The binary carries MIT-licensed code, whose notice must accompany every
+ * copy, so the package carries LICENSE and NOTICES.md. */
+if (isBuild && !/cp\s+LICENSE\s+NOTICES\.md\s/.test(src)) {
+    errors.push('build.sh never copies LICENSE and NOTICES.md into dist/<id>/ — dsp.so contains MIT code ' +
+                '(the 606 voices, sc808) whose notices must ship with it.');
+}
+
 /* ---- 5. install.sh must ship what build.sh packaged, not a second list ----
  *
  * Checked in install.sh rather than build.sh, so it is passed that path
