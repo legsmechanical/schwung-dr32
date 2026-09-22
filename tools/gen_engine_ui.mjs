@@ -314,7 +314,7 @@ const outEu = JSON.stringify({
 
 /* ---- browser.js model list -------------------------------------------- */
 /* A section's label, where capitalising its slug prefix is not the name. */
-const FAMILY_LABEL = { '9w9': '9W9', '6w6': '6W6', '8w8': '8W8', cw78: 'CW-78', chowkick: 'ChowKick' };
+const FAMILY_LABEL = { '9w9': '9W9', '6w6': '6W6', '8w8': '8W8', cw78: 'CW-78', chowkick: 'ChowKick', fm: 'FM' };
 const fams = [];
 for (const m of models) {
     const id = m.slug.split('/')[0];

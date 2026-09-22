@@ -157,8 +157,8 @@ int main(void) {
 
     int n = dr32_model_count();
     /* SIMIAN 10, URCHIN 9, then one per lane: 9W9 11, 6W6 8, 8W8 16, CW-78 14;
-     * ChowKick's five factory presets. */
-    CHECK(n == 73, "model count %d", n);
+     * ChowKick's five factory presets; FM's nine. */
+    CHECK(n == 82, "model count %d", n);
 
     /* Engines: keys prefixed, and a key is ONE knob wherever it appears (one
      * hierarchy holds them all, and a repeated key kills the host's metadata
@@ -212,6 +212,7 @@ int main(void) {
 
     test_tune("simian/low_tom");
     test_tune("urchin/low_tom");
+    test_tune("fm/tom");
 
     printf("%s (%d checks, %d failures)\n", failures ? "FAILED" : "PASSED", checks, failures);
     return failures ? 1 : 0;

@@ -135,7 +135,7 @@ function cursorTo(label) {
 params = { ui_current_pad: '3' };
 ov.onOpen(ctx);
 check('empty pad opens at the top menu', sect(), '');
-check('the top menu is the sections', rows().join(','), 'Sample,Simian,Urchin,9W9,6W6,8W8,CW-78,ChowKick');
+check('the top menu is the sections', rows().join(','), 'Sample,Simian,Urchin,9W9,6W6,8W8,CW-78,ChowKick,FM');
 cursorTo('Sample'); navRight();
 check('Sample opens the libraries', sect(), 'sample');
 check('the menu is the two libraries', rows().join(','), 'Move Library,User Library');

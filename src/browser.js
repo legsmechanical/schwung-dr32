@@ -138,6 +138,17 @@ const FAMILIES = [
         { slug: "chowkick/bouncy", name: "Bouncy" },
         { slug: "chowkick/wonky", name: "Wonky Synth" },
     ] },
+    { id: "fm", label: "FM", models: [
+        { slug: "fm/kick", name: "Kick" },
+        { slug: "fm/snare", name: "Snare" },
+        { slug: "fm/tom", name: "Tom" },
+        { slug: "fm/clap", name: "Clap" },
+        { slug: "fm/rim", name: "Rim" },
+        { slug: "fm/cowbell", name: "Cowbell" },
+        { slug: "fm/chat", name: "Closed Hat" },
+        { slug: "fm/ohat", name: "Open Hat" },
+        { slug: "fm/cymbal", name: "Cymbal" },
+    ] },
 ];
 /* END GENERATED MODELS */
 

@@ -285,6 +285,21 @@ chowdsp_wdf, tuning-library).
   its saved 80 Hz, and its golden is rendered unlinked to match. It rings ~30 s by design.
 - Engine params may now be FLOATS (`step` < 1): `gen_engine_ui` emits `type: float` with a step.
 
+### 🎛 FM (2026-09-22)
+
+Josh: *"from scratch"*, after looking at ctag-fh-kiel/md-drum-synth (an EFM-style FM drum test app,
+AI-written, with **NO LICENCE**, so it can't be vendored or ported). `fm_engine.cpp` is DR32's own:
+one engine (`DR32_ENG_FM`, prefix `fm_`, pages Tone · FM · Noise), nine models of our own values.
+⚠ Keep it clean-room: take nothing from that repo.
+
+- 2-op FM (sine table, uint32 phases), a Hz-offset pitch sweep, a modulator with feedback and
+  Mod Track, white noise through an SVF (LP/BP/HP), clap bursts. Every decay is time-to-−60 dB.
+- There is NO ORIGINAL to A/B, so `tests/test_fm.c` pins what each knob promises, measured on the
+  audio (pitch within 1%, decay −60 dB ± 2 dB at the knob's ms, sweep start/end, clap burst count,
+  velocity law, a live knob change, the stop). Every mutation tried was caught.
+- Cost: 0.8–3.7 µs/block sounding on the workstation, the cheapest engine here; zeros without
+  compute once both envelopes are under −120 dB.
+
 - **Licence:** GPL-3.0-or-later since the engines (they are GPL; the combined `dsp.so` is too).
   `NOTICES.md` carries the MIT notice for the earlier code, including Charles's two PRs.
 
