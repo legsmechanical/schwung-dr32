@@ -26,6 +26,20 @@ void dr32_kit_init(dr32_kit *k) {
     k->last_hit_block = 0;
 }
 
+void dr32_kit_reset(dr32_kit *k) {
+    dr32_kit_all_off(k);
+    for (int i = 0; i < DR32_PADS; i++) {
+        dr32_kit_load_sample(k, i, NULL);          /* retires a sample or an engine */
+        dr32_pad_defaults(&k->pads[i].params);
+        dr32_kit_set_note(k, i, DR32_FIRST_NOTE + i);
+        memset(&k->pads[i].wide, 0, sizeof(k->pads[i].wide));
+    }
+    k->master_gain = 1.0f;
+    k->link_all = 0;
+    k->link_sub[0] = '\0';
+    k->ui_current_pad = 0;
+}
+
 /* ---------- folder browse ------------------------------------------------
  *
  * The file browser hands DR32 a finished path and nothing else, so walking the

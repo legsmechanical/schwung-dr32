@@ -38,6 +38,14 @@ extern "C" {
 #define DR32_KIT_CATS      8
 #define DR32_KIT_NAME_LEN  64
 #define DR32_KITS_WALK_MAX 12    /* directory depth; the user tree reaches 8 */
+/* The Init kit (Josh, 2026-09-22: "an 'Init' category that has one preset --
+ * 'Init' basically puts the module in the state it's in when you first load
+ * it"). Not a file: this PATH is a marker the "kit" param recognises
+ * (dr32.c, load_kit_any), so a saved set that holds it, a cancelled preview
+ * that returns to it, and the browser all load it like any kit. */
+#define DR32_KIT_INIT_PATH "dr32:init"
+#define DR32_KIT_INIT_CAT  "Init"
+#define DR32_KIT_INIT_NAME "Init"
 
 typedef struct dr32_kits dr32_kits;
 

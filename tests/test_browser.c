@@ -77,6 +77,21 @@ static int copy_file(const char *from, const char *to) {
 
 /* A same-extension preset that is NOT a drum rack, with its marker-free window
  * where a real one's marker would be (bytes 452-581). */
+/* A short 16-bit mono WAV, so a pad can hold a real sample. */
+static void write_wav(const char *path) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    const unsigned n = 441, data = n * 2;
+    const unsigned char hdr[44] = {
+        'R','I','F','F', (unsigned char)(36 + data), (unsigned char)((36 + data) >> 8), 0, 0,
+        'W','A','V','E','f','m','t',' ', 16,0,0,0, 1,0, 1,0,
+        0x44,0xAC,0,0, 0x88,0x58,0x01,0, 2,0, 16,0,
+        'd','a','t','a', (unsigned char)data, (unsigned char)(data >> 8), 0, 0 };
+    fwrite(hdr, 1, sizeof hdr, f);
+    for (unsigned i = 0; i < n; i++) { short v = (short)(i * 50); fwrite(&v, 2, 1, f); }
+    fclose(f);
+}
+
 static void write_non_drum(const char *path) {
     FILE *f = fopen(path, "wb");
     if (!f) return;
@@ -133,8 +148,9 @@ int main(void) {
         CHECK(strstr(GET("kit_cat_items"), "\"label\":\"Hybrid\"") != NULL,
               "category list has no Hybrid: %.200s", v);
 
-        /* 2. Choose the category. Two kits, and the decoy is NOT one of them. */
-        api->set_param(inst, "kit_cat", "0");
+        /* 2. Choose the category. Two kits, and the decoy is NOT one of them.
+         *    (Category 0 is Init — see 7.) */
+        api->set_param(inst, "kit_cat", "1");
         CHECK(atoi(GET("kit_count")) == 2,
               "kit_count is %s, want 2 (the non-drum preset must be filtered out)", v);
         CHECK(!strcmp(GET("kit_name"), "Alpha Kit"), "kit_name at index 0 is '%s'", v);
@@ -186,6 +202,107 @@ int main(void) {
         CHECK(!strcmp(GET("kit"), kit_a),
               "on the SPLIT render path the kit is still '%s' — the deferred load "
               "is not serviced there, so a pad on a bus stops the browser dead", v);
+
+        /*
+         * 7. INIT (Josh, 2026-09-22: "an 'Init' category that has one preset —
+         *    'Init' basically puts the module in the state it's in when you
+         *    first load it"). FIRST in the list, one kit, and loading it leaves
+         *    the instance as create_instance left it: every pad empty at its
+         *    defaults and its own note, master at unity.
+         */
+        GET("kit_cat_items");
+        {
+            const char *first = strstr(v, "\"label\":");
+            CHECK(first && !strncmp(first, "\"label\":\"Init\"", 14),
+                  "Init is not the first category: %.120s", v);
+        }
+        api->set_param(inst, "kit_cat", "0");
+        CHECK(atoi(GET("kit_count")) == 1, "the Init category holds %s kits, want 1", v);
+        CHECK(!strcmp(GET("kit_name"), "Init"), "the Init kit is called '%s'", v);
+
+        /* Dirty the instance first, on everything Init must put back: a
+         * synth pad, a sample pad's edits, Wide, the master, the note map. */
+        api->set_param(inst, "pad2_model", "fm/kick");
+        api->set_param(inst, "pad3_volume", "-12");
+        api->set_param(inst, "pad3_wide", "40");
+        api->set_param(inst, "pad4_note", "80");
+        api->set_param(inst, "master", "0.5");
+        api->set_param(inst, "kit_index", "0");
+        for (int i = 0; i < 90; i++) api->render_block(inst, sink, 128);
+        CHECK(!strcmp(GET("kit"), "dr32:init"), "after Init the kit is '%s'", v);
+        CHECK(!strcmp(GET("pad2_model"), ""), "Init left pad 2's engine: '%s'", v);
+        CHECK(!strcmp(GET("pad1_loaded"), "0"), "Init left pad 1 loaded");
+        CHECK(!strcmp(GET("pad3_volume"), "0"), "Init left pad 3's volume at %s", v);
+        CHECK(!strcmp(GET("pad3_wide"), "0"), "Init left pad 3's Wide at %s", v);
+        CHECK(!strcmp(GET("pad4_note"), "39"), "Init left pad 4 on note %s, want 39", v);
+        CHECK(atof(GET("master")) == 1.0, "Init left the master at %s", v);
+
+        /* Init AGAIN, while Init is loaded, still empties a pad filled since:
+         * the same-kit shortcut replays a baseline, and a baseline cannot
+         * empty a pad (an empty pad writes no `sample` into it). */
+        {
+            char wav[600];
+            snprintf(wav, sizeof wav, "%s/one.wav", dir);
+            write_wav(wav);
+            api->set_param(inst, "pad6_sample", wav);
+            CHECK(!strcmp(GET("pad6_loaded"), "1"), "the test sample did not load on pad 6");
+            api->set_param(inst, "kit", "dr32:init");
+            CHECK(!strcmp(GET("pad6_loaded"), "0"), "Init over Init kept pad 6's sample");
+        }
+
+        /* A cancelled preview returns to Init: open the browser on it, audition
+         * a real kit, back out. */
+        api->set_param(inst, "kit_mark", "1");
+        api->set_param(inst, "kit", kit_a);
+        CHECK(!strcmp(GET("kit"), kit_a), "the preview did not load kit A: '%s'", v);
+        api->set_param(inst, "kit_restore", "1");
+        CHECK(!strcmp(GET("kit"), "dr32:init"), "a cancelled preview returned to '%s', not Init", v);
+        CHECK(!strcmp(GET("pad1_loaded"), "0"), "a cancelled preview left kit A's pad 1");
+
+        /* A fresh instance, compared key for key over every pad: Init IS the
+         * state a new instance starts in, not an approximation of it. */
+        {
+            void *fresh = api->create_instance("src", NULL);
+            static const char *const KEYS[] = {"loaded", "model", "note", "choke", "volume", "pan",
+                "vel_vol", "transpose", "detune", "attack", "decay", "hold", "cutoff", "resonance",
+                "filter_type", "punch", "send_a", "send_b", "wide", "wide_freq", NULL};
+            char w[256];
+            int same = 1;
+            for (int pad = 1; pad <= 32 && same; pad++)
+                for (int k = 0; KEYS[k]; k++) {
+                    char key[64];
+                    snprintf(key, sizeof key, "pad%d_%s", pad, KEYS[k]);
+                    api->get_param(fresh, key, w, (int)sizeof w);
+                    GET(key);
+                    if (strcmp(v, w)) {
+                        CHECK(0, "after Init %s is '%s', a new instance has '%s'", key, v, w);
+                        same = 0;
+                        break;
+                    }
+                }
+            api->destroy_instance(fresh);
+        }
+
+        /* Saved and restored: a set that holds Init restores to Init, over
+         * whatever kit the slot had. */
+        {
+            static char blob[65536];
+            /* On a pad with something on it: the blob skips empty pads. */
+            api->set_param(inst, "pad5_model", "fm/snare");
+            api->set_param(inst, "pad5_volume", "-6");
+            api->get_param(inst, "state", blob, (int)sizeof blob);
+            void *other = api->create_instance("src", NULL);
+            api->set_param(other, "kit", kit_a);
+            api->set_param(other, "state", blob);
+            char w[256];
+            api->get_param(other, "kit", w, (int)sizeof w);
+            CHECK(!strcmp(w, "dr32:init"), "a restored Init set reads kit '%s'", w);
+            api->get_param(other, "pad1_loaded", w, (int)sizeof w);
+            CHECK(!strcmp(w, "0"), "a restored Init set kept kit A's pad 1");
+            api->get_param(other, "pad5_volume", w, (int)sizeof w);
+            CHECK(!strcmp(w, "-6"), "a restored Init set lost its edit: pad5_volume %s", w);
+            api->destroy_instance(other);
+        }
 
         #undef GET
         api->destroy_instance(inst);

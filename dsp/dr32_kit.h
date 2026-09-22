@@ -219,6 +219,11 @@ typedef struct {
 #define DR32_LIVE_MATCH_BLOCKS 20u
 
 void dr32_kit_init(dr32_kit *k);
+/** Back to the state a new instance starts in — every pad empty at its
+ *  defaults and its own note, master at unity, Link off, focus on pad 1 — but
+ *  SAFELY on a live kit: samples and engines are retired one-deep (freed on
+ *  the next load, never inside a render), not dropped. The Init kit. */
+void dr32_kit_reset(dr32_kit *k);
 void dr32_kit_free(dr32_kit *k);
 
 /** Assign a pad's receiving note, rebuilding the note map. A note may map to

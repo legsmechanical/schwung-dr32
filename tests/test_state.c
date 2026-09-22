@@ -570,6 +570,9 @@ int main(void) {
             for (int i = 0; i < 200; i++) {
                 char c[64]; api->get_param(inst, "kit_count", c, (int)sizeof c);
             }
+            /* Category 0 is the Init kit (one entry, no file): the fixture's
+             * kits are in the first REAL category. */
+            api->set_param(inst, "kit_cat", "1");
             char cnt[16] = {0};
             api->get_param(inst, "kit_count", cnt, (int)sizeof cnt);
             CHECK(atoi(cnt) == 4, "fixture catalogue has %s kits, want 4 — the checks below "

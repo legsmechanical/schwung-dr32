@@ -156,6 +156,16 @@ static void walk_next_root(dr32_kits *c) {
     }
     c->root++;
     if (c->root == 0) {
+        /* The Init kit, FIRST: its category is interned before any folder's,
+         * and categories show in the order they were interned. Seeded on every
+         * rebuild, and there before the scan has found anything. */
+        int ic = cat_intern(c, DR32_KIT_INIT_CAT);
+        if (ic >= 0 && c->n < DR32_KITS_MAX) {
+            entry *en = &c->v[c->n++];
+            snprintf(en->path, sizeof(en->path), "%s", DR32_KIT_INIT_PATH);
+            snprintf(en->name, sizeof(en->name), "%s", DR32_KIT_INIT_NAME);
+            en->cat = ic;
+        }
         walk_push(c, core_root, -1);        /* -1: category comes from the subfolder */
     } else if (c->root == 1) {
         walk_push(c, user_root, cat_intern(c, USER_CAT));

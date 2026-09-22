@@ -530,6 +530,18 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
  * loading, kit_path bookkeeping, the error string, the dirty flag and the
  * timing log — a second copy would drift from it, and the drift would be
  * invisible until a restored slot behaved subtly unlike a freshly loaded one. */
+/* Load a kit by path — a preset file, or the Init kit's marker. EVERY kit load
+ * goes through here, so the marker is a kit wherever a path is: the browser, a
+ * saved set restoring it, a cancelled preview returning to it. */
+static int load_kit_any(dr32_instance *in, const char *path, dr32_preset_report *rep) {
+    if (!strcmp(path, DR32_KIT_INIT_PATH)) {
+        dr32_kit_reset(&in->kit);
+        memset(rep, 0, sizeof(*rep));
+        return 1;
+    }
+    return dr32_preset_load(&in->kit, path, rep);
+}
+
 static void set_param(void *instance, const char *key, const char *val);
 static void dr32_state_load_kit_cb(void *ctx, const char *path) {
     set_param(ctx, "kit", path);
@@ -582,6 +594,10 @@ static void set_param(void *instance, const char *key, const char *val) {
         // Whether this is the kit we ALREADY hold, decided before the copy
         // below overwrites the incumbent -- comparing after it always says yes.
         int same_kit = (in->state_baseline && !strcmp(in->kit_path, val));
+        /* Not for Init: its reset reads nothing, so there is nothing to save,
+         * and a baseline replay cannot EMPTY a pad (an empty pad writes no
+         * `sample` into the baseline) — a sample added since would survive. */
+        if (!strcmp(val, DR32_KIT_INIT_PATH)) same_kit = 0;
 
         snprintf(in->kit_path, sizeof(in->kit_path), "%s", val);
         // Load HERE. NOT "on the host thread" as this comment used to claim:
@@ -625,7 +641,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         // while scrolling.
         struct timespec t0, t1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
-        int ok = dr32_preset_load(&in->kit, val, &rep);
+        int ok = load_kit_any(in, val, &rep);
         clock_gettime(CLOCK_MONOTONIC, &t1);
         double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
         char msg[DR32_MAX_PATH + 200];
@@ -657,7 +673,7 @@ static void set_param(void *instance, const char *key, const char *val) {
             dr32_preset_report rep;
             char saved[DR32_MAX_PATH];
             snprintf(saved, sizeof(saved), "%s", in->kit_saved);
-            if (dr32_preset_load(&in->kit, saved, &rep)) {
+            if (load_kit_any(in, saved, &rep)) {
                 snprintf(in->kit_path, sizeof(in->kit_path), "%s", saved);
                 dr32_capture_baseline(in);
                 char msg[DR32_MAX_PATH + 200];

@@ -221,12 +221,32 @@ const HDR_GAP = 4;      /* HEADER_GAP, between header elements */
  * against it than a blank row gives.
  */
 const HDR_RULE_Y = HDR_H;
-const ROW_H = 10;
-/* ⚠ 11, not 10. The row HIGHLIGHT is drawn one row above its text, so a first
- * row at 10 put its highlight on row 9 -- inside the clear row the header band
- * needs below it. The highlight is what has to land on MENU_LIST_Y. */
-const TITLE_H = 11;
-const VISIBLE = 4;
+/*
+ * THE LIST IS THE HOST'S LIST (Josh, 2026-09-22: "scroll bar and 5th line --
+ * should be able to fit if everything is arranged scaled like 'module' 'my
+ * presets' pages"). Those are drawMenuList (shared/menu_layout.mjs) in the
+ * list_geometry.mjs rect, so these are its numbers, not ours:
+ *   rows at y = 10, 19, 28, 37, 46 (LIST_TOP_Y, LIST_LINE_HEIGHT 9)
+ *   the highlight one row above its text and 9 tall (LIST_HIGHLIGHT_OFFSET)
+ *   labels at x = 9 (LIST_LABEL_X)
+ *   the selection kept OFF the last row (keepOffLastRow), so you see what
+ *   comes next before you reach it
+ *   a dotted track with a solid thumb in the last-but-one column, 3 columns
+ *   kept clear for it (drawScrollbar, BAR_GUTTER) -- only when the list scrolls
+ * Our rule under the header (row 7) and the hint pills (57..63) sit outside
+ * that rect, exactly where the host's own chrome sits.
+ */
+const LIST_Y = 10;      /* LIST_TOP_Y */
+const ROW_H = 9;        /* LIST_LINE_HEIGHT */
+const LABEL_X = 9;      /* LIST_LABEL_X */
+const VISIBLE = 5;
+const BAR_X = 126;      /* SCREEN_WIDTH - 2 */
+const BAR_GUTTER = 3;
+const ROW_INK = 7;      /* LIST_HIGHLIGHT_HEIGHT - 2 * LIST_HIGHLIGHT_OFFSET */
+/* The device font's widest advance is 6 (measured through the host's own
+ * font table), and there is no measureText on a canvas ctx: a label gets as
+ * many characters as fit at 6 each between LABEL_X and the bar's gutter. */
+const LABEL_CHARS = Math.floor((128 - BAR_GUTTER - 1 - LABEL_X) / 6);
 
 /*
  * The hint row we draw ourselves.
@@ -370,10 +390,11 @@ function seat(st, dir, cursorOn) {
     clampScroll(st);
 }
 
+/* drawMenuList's window: the selection may sit on rows 0..VISIBLE-2, never
+ * the last one, and scrolling keeps it there. */
 function clampScroll(st) {
-    if (st.cursor < st.top) st.top = st.cursor;
-    if (st.cursor >= st.top + VISIBLE) st.top = st.cursor - VISIBLE + 1;
-    if (st.top < 0) st.top = 0;
+    const maxRow = VISIBLE - 2;
+    st.top = st.cursor > maxRow ? st.cursor - maxRow : 0;
 }
 
 /*
@@ -602,6 +623,21 @@ function drawHint(ctx, x, y, h, key, action) {
     ctx.setPixel(x + kw - 1, y + h - 1, 0);
     printSmall(ctx, x + HINT_PAD, y + 1, key, 0);
     printSmall(ctx, x + kw + HINT_GAP, y + 1, action, 1);
+}
+
+/*
+ * The host's scroll bar (menu_layout.mjs drawScrollbar), transcribed: a dotted
+ * track over the ROWS (not the whole rect), a solid thumb with a 2px floor,
+ * sized and placed on the WINDOW so it does not shrink as the list ends.
+ */
+function drawScrollbar(ctx, total, top, shown) {
+    const trackBottom = LIST_Y + (VISIBLE - 1) * ROW_H + ROW_INK;
+    const trackH = trackBottom - LIST_Y;
+    for (let y = LIST_Y; y < trackBottom; y += 2) ctx.setPixel(BAR_X, y, 1);
+    const thumbH = Math.max(2, Math.round((shown / total) * trackH));
+    const maxStart = total - shown;
+    const ty = LIST_Y + (maxStart > 0 ? Math.round((top / maxStart) * (trackH - thumbH)) : 0);
+    ctx.fillRect(BAR_X, ty, 1, thumbH, 1);
 }
 
 /* Trim a string to fit `maxW`, in our own font. */
@@ -857,14 +893,17 @@ globalThis.canvas_overlay = {
 
         drawHeader(ctx, st);
 
-        for (let i = 0; i < VISIBLE; i++) {
+        const total = st.rows.length;
+        const shown = Math.min(VISIBLE, total - st.top);
+        const scrolls = st.top > 0 || st.top + shown < total;
+        for (let i = 0; i < shown; i++) {
             const idx = st.top + i;
-            if (idx >= st.rows.length) break;
-            const y = TITLE_H + i * ROW_H;
+            const y = LIST_Y + i * ROW_H;
             const on = idx === st.cursor;
-            if (on) ctx.fillRect(0, y - 1, ctx.width, ROW_H, 1);
-            ctx.print(3, y, st.rows[idx].label.slice(0, 20), on ? 0 : 1);
+            if (on) ctx.fillRect(0, y - 1, ctx.width - (scrolls ? BAR_GUTTER : 0), ROW_H, 1);
+            ctx.print(LABEL_X, y, st.rows[idx].label.slice(0, LABEL_CHARS), on ? 0 : 1);
         }
+        if (scrolls) drawScrollbar(ctx, total, st.top, shown);
 
         drawHints(ctx, st);
     },

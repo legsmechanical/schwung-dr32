@@ -13,7 +13,7 @@ loads fine, logs nothing, menu does nothing.
 ## 🧭 The six pages, and why each one is shaped that way (2026-09-09)
 
 ```
-Category <items>   Acoustic · Electronic · Hybrid · My Kits   <- first bank
+Category <items>   Init · Acoustic · Electronic · Hybrid · My Kits   <- first bank
   Kit    <preset>  a flat list of just that category
 Pad      PAD   ENGN  STRT  END   TRSP  DETN  CHOKE VOL    <- level `pads` (STRT/END: samples)
 Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (samples only)
@@ -91,6 +91,21 @@ Master   MASTR
   only became visible when the PAD cell drew its number big. It also made `child_note_base`'s
   promise to the host (pad i = note 36+i) false. ⓘ State blobs saved before it are NOT remapped
   (Josh: *"i don't care about backward compatibility or prior sets"*).
+- ⭑ **The Init kit** (Josh, 2026-09-22: *"an 'Init' category that has one preset - 'Init'
+  basically puts the module in the state it's in when you first load it"*). FIRST category, one
+  kit. It is not a file: its path is the marker `DR32_KIT_INIT_PATH` ("dr32:init",
+  `dr32_kits.h`), seeded into the catalogue on every rebuild, and `load_kit_any` (`dr32.c`) is the
+  ONE loader every kit load goes through (browser, state restore, cancelled preview), so the
+  marker is a kit everywhere a path is. `dr32_kit_reset` retires samples/engines one-deep like
+  `clear`, then defaults, notes, master, Link, focus — `test_browser.c` compares every pad key
+  against a FRESH instance. ⚠ The same-kit shortcut is OFF for Init: a baseline replay cannot EMPTY
+  a pad (an empty pad writes no `sample`), so a sample added since would survive a re-Init.
+  ⚠ Category 0 is Init now: a test that picks the first category expecting a folder gets one kit.
+- ⭑ **The engine/sample browser (`src/browser.js`) is the host's list**: five rows at y
+  10/19/28/37/46, labels at x 9, the selection kept off the last row, `drawScrollbar`'s dotted track
+  in column 126 only when the list scrolls (Josh: *"scroll bar and 5th line"*, like Modules / My
+  Presets). Transcribed from `menu_layout.mjs` / `list_geometry.mjs`, not imported — a canvas
+  cannot rely on the host's measurer. `check_browser_nav` §13 pins it.
 - **DR32 opens EMPTY** (Josh, 2026-09-09). No default kit — it used to load the 707.
   `create_instance` is on the SPI callback and a kit load reads up to 32 WAVs there, so this is
   also the faster start. ⚠ The state BASELINE is still captured: an empty kit is a fine baseline,

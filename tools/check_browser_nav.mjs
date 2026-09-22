@@ -449,5 +449,42 @@ check('...and stays put, for the host to close', sect(), '');
     delete ctx.close;
 }
 
+/* ── 13. the list is the HOST's list: five rows and a scroll bar ────────── */
+/*
+ * Josh (2026-09-22): "scroll bar and 5th line -- should be able to fit if
+ * everything is arranged scaled like 'module' 'my presets' pages". Those are
+ * drawMenuList in list_geometry's rect: rows at y 10/19/28/37/46, labels at
+ * x 9, the selection kept off the last row, and drawScrollbar's dotted track
+ * in column 126 -- only when the list scrolls.
+ */
+{
+    const prints = [], bar = [];
+    const lctx = Object.assign({}, ctx, {
+        print: (x, y, t) => prints.push({ x, y, t }),
+        /* Column 126 above the hint row (57..63), whose BACK pill reaches it. */
+        setPixel: (x, y) => { if (x === 126 && y < 55) bar.push(y); },
+        fillRect: (x, y, w, h) => { if (x === 126 && y < 55) for (let i = 0; i < h; i++) bar.push(y + i); },
+    });
+    const drawList = () => { prints.length = 0; bar.length = 0; ov.draw(lctx); };
+    params = { ui_current_pad: '5' };
+    ov.onOpen(ctx);
+    cursorTo('Simian'); navRight();                     /* 11 rows: it scrolls */
+    drawList();
+    check('five rows on screen', prints.length, 5);
+    check('...at the host list rows', prints.map((p) => p.y).join(','), '10,19,28,37,46');
+    check('...labels at x 9', prints.every((p) => p.x === 9), true);
+    check('a list that scrolls draws its bar', bar.length > 0, true);
+    check('...inside the rows (10..52)', Math.min(...bar) >= 10 && Math.max(...bar) <= 52, true);
+    jog(4);
+    drawList();
+    check('the selection stays off the last row', prints[3].t, at());
+    jog(60);                                            /* a jog byte is signed: 60 is +60 */
+    drawList();
+    check('...until the list ends', prints[prints.length - 1].t, at());
+    navLeft(); cursorTo('Sample'); navRight();          /* the two libraries: no scroll */
+    drawList();
+    check('a list that fits draws no bar', bar.length, 0);
+}
+
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
 process.exit(fail ? 1 : 0);
