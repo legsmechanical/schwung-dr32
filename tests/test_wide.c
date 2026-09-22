@@ -18,6 +18,8 @@
  *     sounding, on BOTH render paths
  *   - a NEGATIVE Wide mirrors: the comb's side flips sign; Haas delays the
  *     LEFT side instead of the right
+ *   - WMODE Disperse (after Polyverse's Wider): mono-safe, the side an
+ *     ALL-PASS of the mid (same energy), arriving with the hit, not after it
  *   - WMODE Haas is the Haas delay, exactly: one side 15 ms x (Wide/100)^2
  *     late, the other untouched
  *   - the knobs clamp, read back, and survive a state round trip
@@ -218,6 +220,46 @@ int main(void) {
         CHECK(side[1] < 0.2 * side[0], "Wide Freq 400 did not keep the kick's body centred (side/mid %.3f vs %.3f)",
               side[1], side[0]);
         printf("  kick side/mid: full band %.3f, crossover 400 Hz %.4f\n", side[0], side[1]);
+    }
+
+    /* ---- WMODE Disperse: Wider's shape — mono-safe, all-pass, no echo ----- */
+    {
+        /* The mono sum is the dry pad... */
+        static float bb[2 * LEN];
+        dr32_kit_init(&k);
+        set(&k, "pad1_model", "fm/chat");
+        set(&k, "pad1_pan", "0");
+        set(&k, "pad1_wide_mode", "Disperse");
+        set(&k, "pad1_wide", "100");
+        set(&k, "pad1_wide_freq", "20");
+        set(&k, "pad1_play", "127");
+        for (int at = 0; at < LEN; at += FR) dr32_kit_render(&k, bb + 2 * at, FR);
+        CHECK(!strcmp(get(&k, "pad1_wide_mode"), "Disperse"), "Wide Mode reads %s", get(&k, "pad1_wide_mode"));
+        static float dry[2 * LEN];
+        hit(&k, "fm/chat", NULL, NULL, dry);
+        float worst = 0, pk = 0;
+        double es = 0, em = 0, cs = 0, cm = 0;
+        int ts = -1, tm = -1;
+        for (int i = 0; i < LEN; i++) {
+            const float e = fabsf((bb[2 * i] + bb[2 * i + 1]) - 2.0f * dry[2 * i]);
+            if (e > worst) worst = e;
+            if (fabsf(dry[2 * i]) > pk) pk = fabsf(dry[2 * i]);
+            const double sd = 0.5 * (bb[2 * i] - bb[2 * i + 1]);
+            es += sd * sd; em += (double) dry[2 * i] * dry[2 * i];
+        }
+        CHECK(worst <= 4e-7f * pk, "Disperse changed the mono sum by %g", worst);
+        /* ...the side carries the mid's energy (an all-pass passes every
+         * frequency at unity)... */
+        CHECK(fabs(es / em - 1.0) < 0.01, "Disperse side/mid energy %.4f, want 1 — not an all-pass", es / em);
+        /* ...and it arrives WITH the hit: half its energy within 1 ms of the
+         * dry signal's (Comb's comes 8 ms later). */
+        for (int i = 0; i < LEN; i++) {
+            const double sd = 0.5 * (bb[2 * i] - bb[2 * i + 1]);
+            cs += sd * sd; cm += (double) dry[2 * i] * dry[2 * i];
+            if (ts < 0 && cs >= 0.5 * es) ts = i;
+            if (tm < 0 && cm >= 0.5 * em) tm = i;
+        }
+        CHECK(ts - tm < SR / 1000, "Disperse's side arrives %.2f ms after the hit, want < 1", (ts - tm) * 1000.0 / SR);
     }
 
     /* ---- WMODE Haas: the Haas delay, exactly, on the sign's side ---------- */

@@ -308,7 +308,8 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * written before the rename still restores its levels. */
         if (!strcmp(sub, "wide"))      return snprintf(buf, buf_len, "%g", (double)p->wide_pct);
         if (!strcmp(sub, "wide_freq")) return snprintf(buf, buf_len, "%g", (double)p->wide_hz);
-        if (!strcmp(sub, "wide_mode")) return snprintf(buf, buf_len, "%s", p->wide_mode ? "Haas" : "Comb");
+        if (!strcmp(sub, "wide_mode"))
+            return snprintf(buf, buf_len, "%s", p->wide_mode == 2 ? "Disperse" : p->wide_mode ? "Haas" : "Comb");
         if (!strcmp(sub, "send_a") || !strcmp(sub, "send1"))
             return snprintf(buf, buf_len, "%g", (double)p->send_db[0]);
         if (!strcmp(sub, "send_b") || !strcmp(sub, "send2"))
@@ -448,8 +449,9 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
          * sign mirrors the image, in both modes. */
         else if (!strcmp(sub, "wide"))
             p->wide_pct = f > 100.0f ? 100.0f : (f < -100.0f ? -100.0f : f);
-        else if (!strcmp(sub, "wide_mode"))     /* WMODE: "Comb" | "Haas" */
-            p->wide_mode = (!strcmp(val, "Haas") || atoi(val) == 1) ? 1 : 0;
+        else if (!strcmp(sub, "wide_mode"))     /* WMODE: "Comb" | "Haas" | "Disperse" */
+            p->wide_mode = !strcmp(val, "Disperse") || atoi(val) == 2 ? 2
+                         : (!strcmp(val, "Haas") || atoi(val) == 1) ? 1 : 0;
         else if (!strcmp(sub, "wide_freq"))
             p->wide_hz = f < 20.0f ? 20.0f : (f > DR32_WIDE_HZ_MAX ? DR32_WIDE_HZ_MAX : f);
         /* Punch as a plain per-pad control (Josh, 2026-07-28). It is the

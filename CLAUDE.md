@@ -35,7 +35,15 @@ Master   MASTR
     split LR4 so the lows stay in phase. It LEANS toward the leading side (precedence effect) —
     that is its character; Josh called it "a lot more character". Curved because width comes on
     under ~3 ms; capped at 15 ms because past that a drum flams.
-  - **WIDE is −100..+100 in both modes; the SIGN MIRRORS.** Haas: + delays the right, − the left
+  - **WMODE Disperse** (`disperse_run`, branch `wide-disperse`, A/B build): after Polyverse's
+    Wider, from two video transcripts only (Josh: *"try to get as close to wider as we can"*,
+    *"based on nothing but transcripts, of course"*). Comb's M/S shape with the delay swapped for
+    an 8-stage SVF ALL-PASS cascade, `side = g·AP(HP(mid))`: mono-safe, the side at the mid's
+    energy, arriving 0.25 ms after the hit (Comb: 8 ms), 13 broad peaks/dips per side 100 Hz–
+    15 kHz (Comb: 126). ⚠ The stage table (`DISPERSE_HZ`, `DISPERSE_Q`) is a GUESS; an impulse
+    response rendered through Wider itself would let it be fitted. +0.3–0.4 µs/pad (Mac).
+    With three options WMODE no longer flips on click (host: only 2-option enums flip).
+  - **WIDE is −100..+100 in all modes; the SIGN MIRRORS.** Haas: + delays the right, − the left
     (how a kit's leans are balanced). Comb: − flips the side's sign (the comb teeth mirror).
   - WMODE is a two-option enum, so the grid FLIPS it on click (`flipsOnClick`, any 2-option enum)
     — the one-click A/B at the same WIDE. A mode change clears the shared buffer.

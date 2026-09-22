@@ -345,6 +345,7 @@ static inline float svf_hp(const dr32_wide *d, float st[2], float v0) {
 }
 
 static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames);
+static void disperse_run(dr32_wide *d, const dr32_pad *p, float *x, int frames);
 
 static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     /* A mode change starts the stage clean — the two modes share `buf`. */
@@ -352,9 +353,11 @@ static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
         memset(d->buf, 0, sizeof(d->buf));
         memset(d->s, 0, sizeof(d->s));
         memset(d->hs, 0, sizeof(d->hs));
+        memset(d->ap, 0, sizeof(d->ap));
         d->mode = p->wide_mode;
     }
     if (p->wide_mode == 1) { haas_run(d, p, x, frames); return; }
+    if (p->wide_mode == 2) { disperse_run(d, p, x, frames); return; }
     float pct = p->wide_pct;
     if (pct < -100.0f) pct = -100.0f;
     if (pct > 100.0f) pct = 100.0f;
@@ -442,6 +445,81 @@ static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
         }
         x[2 * i] = y[0];
         x[2 * i + 1] = y[1];
+    }
+}
+
+/*
+ * DISPERSE — the third Wide mode, after Polyverse's Wider (Josh: "try to get
+ * as close to wider as we can" — from two video transcripts, not from the
+ * plugin: "based on nothing but transcripts, of course").
+ *
+ * What the videos agree on: Wider is MONO-SAFE (L + R is the dry signal),
+ * each side shows peaks and dips that are each other's opposite, they are
+ * "not quite" a comb, and a phase analyser shows all-pass ("Disperser")
+ * signatures, many stages high and a little low. That is this structure:
+ *
+ *     side = g * AP(HP(mid))      L = x_L + side      R = x_R - side
+ *
+ * the same M/S shape as Comb with the DELAY swapped for an all-pass cascade.
+ * An all-pass leaves every frequency's level alone and only turns its phase,
+ * so each side's response is |1 +/- g e^(j phi(f))|: broad, irregular peaks
+ * and dips where the comb has regular teeth, and no delayed copy — nothing
+ * arrives after the hit, which is what should keep a drum transient tight.
+ *
+ * ⚠ THE TUNING IS A GUESS FROM THE VIDEOS, and the one place to change it is
+ * the table below: stage centres (Hz) and Q. Many stages high, few low (video
+ * 1: "a really high frequency ... with a full amount ... and a one amount on
+ * the lowest frequency"); Q low so a stage does not ring on a transient.
+ * Measuring Wider's own impulse response would replace the guess.
+ */
+static const float DISPERSE_HZ[DR32_WIDE_AP_STAGES] = {
+    180.0f, 1400.0f, 3200.0f, 5000.0f, 6800.0f, 8600.0f, 10500.0f, 12500.0f,
+};
+#define DISPERSE_Q 0.55f
+
+static void disperse_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
+    float pct = p->wide_pct;
+    if (pct < -100.0f) pct = -100.0f;
+    if (pct > 100.0f) pct = 100.0f;
+    const float g = pct * 0.01f;
+    const int hp = p->wide_hz > 20.5f;
+    if (hp && d->hz != p->wide_hz) {
+        const float t = tanf(3.14159265f * p->wide_hz / DR32_SR);
+        d->k = 1.41421356f;
+        d->a1 = 1.0f / (1.0f + t * (t + d->k));
+        d->a2 = t * d->a1;
+        d->a3 = t * d->a2;
+        d->hz = p->wide_hz;
+    }
+    /* The cascade's coefficients never change: computed once. */
+    static float c1[DR32_WIDE_AP_STAGES], c2[DR32_WIDE_AP_STAGES], c3[DR32_WIDE_AP_STAGES];
+    static const float ck = 1.0f / DISPERSE_Q;
+    static int ready = 0;
+    if (!ready) {
+        for (int j = 0; j < DR32_WIDE_AP_STAGES; j++) {
+            const float t = tanf(3.14159265f * DISPERSE_HZ[j] / DR32_SR);
+            c1[j] = 1.0f / (1.0f + t * (t + ck));
+            c2[j] = t * c1[j];
+            c3[j] = t * c2[j];
+        }
+        ready = 1;
+    }
+    for (int i = 0; i < frames; i++) {
+        float m = 0.5f * (x[2 * i] + x[2 * i + 1]);
+        if (hp) m = svf_hp(d, d->s[1], svf_hp(d, d->s[0], m));
+        /* SVF all-pass: x - 2k * band. Unity at every frequency. */
+        for (int j = 0; j < DR32_WIDE_AP_STAGES; j++) {
+            float *st = d->ap[j];
+            const float v3 = m - st[1];
+            const float v1 = c1[j] * st[0] + c2[j] * v3;
+            const float v2 = st[1] + c2[j] * st[0] + c3[j] * v3;
+            st[0] = 2.0f * v1 - st[0];
+            st[1] = 2.0f * v2 - st[1];
+            m = m - 2.0f * ck * v1;
+        }
+        const float side = g * m;
+        x[2 * i]     += side;
+        x[2 * i + 1] -= side;
     }
 }
 
