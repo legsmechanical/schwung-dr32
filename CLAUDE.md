@@ -62,6 +62,14 @@ Master   MASTR
   `abbrev: "DR32"` alone changed nothing. The long form lives in `description`, `docs/manual.html`
   and `src/help.json`.
 
+- ⭐ **A kit's pads are SEATED BY NOTE, not file order** (Josh, 2026-09-22: *"can't we just use the
+  pad number ... note assignment isn't something we expose to the user"*). `dr32_preset_load` puts
+  the entry receiving note 36+s at pad s+1; out-of-range or duplicate notes take the free pads in
+  file order, and a duplicate never steals its note's routing. Before this, pad N was the file's Nth
+  entry: Core Library's Glide Kit (notes 41 39 37 36 ...) numbered its bottom row 4 3 6 2, which
+  only became visible when the PAD cell drew its number big. It also made `child_note_base`'s
+  promise to the host (pad i = note 36+i) false. ⓘ State blobs saved before it are NOT remapped
+  (Josh: *"i don't care about backward compatibility or prior sets"*).
 - **DR32 opens EMPTY** (Josh, 2026-09-09). No default kit — it used to load the 707.
   `create_instance` is on the SPI callback and a kit load reads up to 32 WAVs there, so this is
   also the faster start. ⚠ The state BASELINE is still captured: an empty kit is a fine baseline,

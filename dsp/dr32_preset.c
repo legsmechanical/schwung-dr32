@@ -139,23 +139,69 @@ int dr32_preset_load(dr32_kit *kit, const char *path, dr32_preset_report *rep) {
     char filled[DR32_PADS];
     memset(filled, 0, sizeof(filled));
 
-    // Pads are addressed positionally but ROUTED by note, and real kits are not
-    // sorted by note (MD1Kit13 has 46/47 swapped) — so read the note from the
-    // chain, never from its index.
+    // ⭐ PADS ARE SEATED BY NOTE, NOT BY FILE ORDER (Josh, 2026-09-22: "can't
+    // we just use the pad number ... note assignment isn't something we expose
+    // to the user"). A kit file lists its pads in any order — Core Library's
+    // Glide Kit lists notes 41 39 37 36 40 ... — and the pad a note lands on
+    // on the Move is fixed by the note. Seating file entry i at pad i made the
+    // PAD number (the big number, the header, which pad the knobs edit, and
+    // child_note_base's promise to the host that pad i is note 36+i) disagree
+    // with the pad actually hit. So an entry receiving note 36+s sits at pad s;
+    // an entry whose note is outside 36..67, or already taken, fills the pads
+    // left over, in file order. Routing is still by the note either way.
+    // ⓘ A state blob saved before this numbered pads in FILE order and is not
+    // remapped (Josh: "i don't care about backward compatibility or prior
+    // sets"): on a kit whose file is out of note order, its edits land by pad
+    // number.
     int count = dr32_json_count(chains);
     if (count > DR32_PADS) count = DR32_PADS;
+    signed char slot_of[DR32_PADS];
+    /* Notes an entry of THIS kit already routes. A duplicate note does not take
+     * the routing from the pad seated by it (the first entry for a note is the
+     * one at that note's physical pad); it keeps its note, unrouted. */
+    char routed[128];
+    memset(routed, 0, sizeof(routed));
+    {
+        char taken[DR32_PADS], seated[DR32_PADS];
+        memset(taken, 0, sizeof(taken));
+        memset(seated, 0, sizeof(seated));
+        for (int i = 0; i < count; i++) {
+            const dr32_json *zone = dr32_json_get(dr32_json_at(chains, i), "drumZoneSettings");
+            const int s = (int)dr32_json_num(zone, "receivingNote", DR32_FIRST_NOTE + i) - DR32_FIRST_NOTE;
+            if (s >= 0 && s < DR32_PADS && !taken[s]) {
+                slot_of[i] = (signed char)s;
+                taken[s] = seated[i] = 1;
+            }
+        }
+        /* Everything not seated by its note takes the free pads in order. */
+        int free_at = 0;
+        for (int i = 0; i < count; i++) {
+            if (seated[i]) continue;
+            while (taken[free_at]) free_at++;
+            slot_of[i] = (signed char)free_at;
+            taken[free_at] = 1;
+        }
+    }
 
     for (int i = 0; i < count; i++) {
         const dr32_json *chain = dr32_json_at(chains, i);
         if (!chain) continue;
-        dr32_pad *pad = &kit->pads[i].params;
+        const int slot = slot_of[i];
+        dr32_pad *pad = &kit->pads[slot].params;
 
         const dr32_json *zone = dr32_json_get(chain, "drumZoneSettings");
         int note = (int)dr32_json_num(zone, "receivingNote", DR32_FIRST_NOTE + i);
         pad->sending_note = (int)dr32_json_num(zone, "sendingNote", 60);
         const dr32_json *choke = dr32_json_get(zone, "chokeGroup");
         pad->choke_group = (choke && choke->type == DR32_JSON_NUMBER) ? (int)choke->num : 0;
-        dr32_kit_set_note(kit, i, note);
+        if (note >= 0 && note < 128 && routed[note]) {
+            const int old = kit->pads[slot].note;           /* its placeholder, 36+slot */
+            if (old >= 0 && old < 128 && kit->note_to_pad[old] == slot) kit->note_to_pad[old] = -1;
+            kit->pads[slot].note = note;
+        } else {
+            dr32_kit_set_note(kit, slot, note);
+            if (note >= 0 && note < 128) routed[note] = 1;
+        }
 
         const dr32_json *mixer = dr32_json_get(chain, "mixer");
         pad->volume_db  = (float)dr32_json_num(mixer, "volume", 0.0);
@@ -211,8 +257,8 @@ int dr32_preset_load(dr32_kit *kit, const char *path, dr32_preset_report *rep) {
             if (rep) rep->unresolved++;
             continue;
         }
-        if (dr32_kit_load_sample(kit, i, file) == DR32_WAV_OK) {
-            filled[i] = 1;
+        if (dr32_kit_load_sample(kit, slot, file) == DR32_WAV_OK) {
+            filled[slot] = 1;
             if (rep) rep->loaded++;
         } else if (rep) {
             rep->failed++;

@@ -163,6 +163,57 @@ int main(int argc, char **argv) {
         remove(wp);
     }
 
+    // ---- pads are SEATED BY NOTE, not by file order (2026-09-22).
+    //
+    // Core Library's Glide Kit lists its pads as notes 41 39 37 36 40 ..., and
+    // the Move's pad for a note is fixed by the note — so seating file entry i
+    // at pad i numbered the pads 4 3 6 2 5 1 ... across the bottom rows (Josh,
+    // from the device, the moment the PAD cell drew its number big). Each
+    // entry here carries its note as its transpose, so the check is simply
+    // "pad s holds the entry for note 36+s". Plus the two leftovers: a note
+    // outside 36..67 and a duplicate note take the free pads in file order.
+    {
+        const int notes[] = {41, 39, 37, 36, 40, 38, 42, 90, 36, 43};
+        const int n = (int)(sizeof(notes) / sizeof(notes[0]));
+        const char *kp = "/tmp/dr32_seat_kit.json";
+        FILE *f = fopen(kp, "wb");
+        if (f) {
+            fputs("{\"kind\":\"drumRack\",\"chains\":[", f);
+            for (int i = 0; i < n; i++)
+                fprintf(f, "%s{\"drumZoneSettings\":{\"receivingNote\":%d},\"devices\":[{\"kind\":\"drumCell\","
+                           "\"parameters\":{\"Voice_Transpose\":%d}}]}", i ? "," : "", notes[i], i + 1);
+            fputs("]}", f);
+            fclose(f);
+        }
+        dr32_kit kit;
+        dr32_kit_init(&kit);
+        CHECK(dr32_preset_load(&kit, kp, NULL), "seat: kit loaded");
+        /* file entry i carries transpose i+1; where did each land? */
+        int at[DR32_PADS];
+        for (int s = 0; s < DR32_PADS; s++) at[s] = (int)kit.pads[s].params.transpose;
+        /* note 36+s -> pad s, for the eight in-range, first-come notes */
+        CHECK(at[0] == 4,  "note 36 should be pad 1, holding entry 4; pad 1 holds %d", at[0]);
+        CHECK(at[1] == 3,  "note 37 -> pad 2 (entry 3); got %d", at[1]);
+        CHECK(at[2] == 6,  "note 38 -> pad 3 (entry 6); got %d", at[2]);
+        CHECK(at[3] == 2,  "note 39 -> pad 4 (entry 2); got %d", at[3]);
+        CHECK(at[4] == 5,  "note 40 -> pad 5 (entry 5); got %d", at[4]);
+        CHECK(at[5] == 1,  "note 41 -> pad 6 (entry 1); got %d", at[5]);
+        CHECK(at[6] == 7,  "note 42 -> pad 7 (entry 7); got %d", at[6]);
+        CHECK(at[7] == 10, "note 43 -> pad 8 (entry 10); got %d", at[7]);
+        /* the leftovers — note 90 (entry 8) and the second 36 (entry 9) —
+         * take the first free pads, 9 and 10, in file order */
+        CHECK(at[8] == 8 && at[9] == 9, "leftovers should fill pads 9, 10 in file order; got %d, %d", at[8], at[9]);
+        /* and every note still routes to the pad that holds its entry */
+        for (int s = 0; s < 8; s++)
+            CHECK(kit.note_to_pad[36 + s] == s, "note %d routes to pad %d, want %d", 36 + s, kit.note_to_pad[36 + s] + 1, s + 1);
+        CHECK(kit.pads[8].note == 90 && kit.note_to_pad[90] == 8, "note 90 routes to its pad");
+        /* the duplicate keeps note 36, unrouted, and does not keep its
+         * placeholder note (36+9 = 45) routed to it either */
+        CHECK(kit.pads[9].note == 36 && kit.note_to_pad[45] != 9, "the duplicate's pad must not route its placeholder note");
+        dr32_kit_free(&kit);
+        remove(kp);
+    }
+
     // ---- a missing / wrong file must fail cleanly
     {
         dr32_kit kit;
