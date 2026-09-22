@@ -314,7 +314,7 @@ ranges and only its knobs, all on one core (Josh: *"keep all the engines fm-base
 | FM Perc (58, `fp_`) | Percussion, Zap, Drip, Glitch, Clank | wide ranges ON PURPOSE + **Mangle** (Noise FM, Ring, Crush, Bits) |
 
 - Pages: Tone · FM (Metal: Metal) · Noise · (Mangle) · **Output** · Velocity. **Level is knob 1**
-  of Tone and Noise (Josh). Output = **Mix** (−100 tone only … 0 both … +100 noise only; Josh's
+  of Tone and Noise (Josh). Output = **Tone<>Noise** (`TN-NS`, Josh; key `*_mix`; −100 tone only … 0 both … +100 noise only; Josh's
   "Mixer page"), Drive, Low Cut, **High Cut** (off at 20 kHz). ⚠ The page is NOT called "Mix":
   DR32's own per-pad Mix page is in the same nav list.
 - **Sweep is bipolar** (−48..+48 st; negative rises into the note).

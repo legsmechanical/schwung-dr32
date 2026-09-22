@@ -135,7 +135,7 @@ struct Engine {
     {P "vsweep", "Vel>Sweep", "VSWP",  0.0f,    100.0f, 0.0f,  1.0f, "%",  "Velocity", nullptr}
 
 #define MIX_PAGE(P, LCMAX, HCMIN) \
-    {P "mix",    "Mix",       "MIX",   -100.0f, 100.0f, 0.0f,  1.0f, "%",  "Output", nullptr}, \
+    {P "mix",    "Tone<>Noise", "TN-NS", -100.0f, 100.0f, 0.0f,  1.0f, "%",  "Output", nullptr}, \
     {P "drive",  "Drive",     "DRIVE", 0.0f,    100.0f, 0.0f,  1.0f, "%",  "Output", nullptr}, \
     {P "lowcut", "Low Cut",   "LOCUT", 20.0f,   LCMAX,  20.0f, 1.0f, "hz", "Output", nullptr}, \
     {P "hicut",  "High Cut",  "HICUT", HCMIN,   20000.0f, 20000.0f, 10.0f, "hz", "Output", nullptr}
