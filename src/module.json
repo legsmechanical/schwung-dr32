@@ -448,12 +448,11 @@
               "key": "wide",
               "name": "Wide",
               "short_name": "WIDE",
-              "type": "float",
-              "min": -30.0,
-              "max": 30.0,
-              "step": 0.1,
-              "unit": "ms",
-              "default": 0.0
+              "type": "int",
+              "min": -100,
+              "max": 100,
+              "unit": "%",
+              "default": 0
             },
             {
               "key": "wide_freq",
@@ -461,7 +460,7 @@
               "short_name": "WFREQ",
               "type": "int",
               "min": 20,
-              "max": 1000,
+              "max": 4000,
               "unit": "Hz",
               "default": 150
             }

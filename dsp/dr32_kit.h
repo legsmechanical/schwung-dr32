@@ -41,11 +41,12 @@ typedef struct {
 /* Wide (Josh, 2026-09-22: "a haas stereo spread ... and a knob to set a
  * crossover below which the sound is not spread"). Per PAD, after everything
  * else the pad does, so it spreads a sample pad and a synth pad alike.
- * `buf` holds the delayed side's (high band of the) signal; 2048 frames is
- * 46 ms, over the 30 ms the knob reaches. `tail` keeps a pad rendering after
- * it stops sounding, so the delayed side's last 30 ms are not cut off. */
-#define DR32_WIDE_BUF   2048
-#define DR32_WIDE_MS_MAX 30.0f
+ * `buf` holds the delayed side's (high band of the) signal; 1024 frames is
+ * 23 ms, over the 15 ms the knob reaches. `tail` keeps a pad rendering after
+ * it stops sounding, so the delayed side's last 15 ms are not cut off. */
+#define DR32_WIDE_BUF    1024
+#define DR32_WIDE_MS_MAX 15.0f
+#define DR32_WIDE_HZ_MAX 4000.0f
 typedef struct {
     float buf[DR32_WIDE_BUF];
     int   w;             // write index

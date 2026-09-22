@@ -97,9 +97,14 @@ typedef struct {
     float send_db[2];      // post-fader send amounts, dB (-70 = off), like native
     /* Wide: a Haas spread of the pad's stereo output (dr32_kit.c, wide_run).
      * DR32's own, not the Move's: never in an .ablpreset, only the state blob.
-     * wide_ms: + delays the RIGHT side, - the LEFT, 0 = off (a true bypass).
+     * wide: -100..+100 %, + delays the RIGHT side, - the LEFT, 0 = off (a
+     *       true bypass). The delay is 15 ms x (wide/100)^2: CURVED, because
+     *       width comes on between 0 and ~3 ms and a linear knob spent that in
+     *       a few detents (Josh: "goes to zero from pretty darn wide pretty
+     *       quickly"). CAPPED at 15 ms: past ~10-15 ms a drum's transient
+     *       stops fusing and reads as a flam.
      * wide_hz: the crossover below which nothing is delayed (20 = full band). */
-    float wide_ms;
+    float wide_pct;
     float wide_hz;
 } dr32_pad;
 

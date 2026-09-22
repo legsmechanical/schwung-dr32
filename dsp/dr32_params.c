@@ -306,7 +306,7 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * Send A, `send_b` is Send B (see get_param("voice_send_params") in
          * dr32.c). `send1`/`send2` are accepted as read aliases so a state blob
          * written before the rename still restores its levels. */
-        if (!strcmp(sub, "wide"))      return snprintf(buf, buf_len, "%g", (double)p->wide_ms);
+        if (!strcmp(sub, "wide"))      return snprintf(buf, buf_len, "%g", (double)p->wide_pct);
         if (!strcmp(sub, "wide_freq")) return snprintf(buf, buf_len, "%g", (double)p->wide_hz);
         if (!strcmp(sub, "send_a") || !strcmp(sub, "send1"))
             return snprintf(buf, buf_len, "%g", (double)p->send_db[0]);
@@ -392,12 +392,12 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
             if (s->engine && val[0]) {
                 int choke = p->choke_group;
                 float sa = p->send_db[0], sb = p->send_db[1];
-                float wm = p->wide_ms, wh = p->wide_hz;
+                float wm = p->wide_pct, wh = p->wide_hz;
                 dr32_pad_defaults(p);
                 p->choke_group = choke;
                 p->send_db[0] = sa;
                 p->send_db[1] = sb;
-                p->wide_ms = wm;          /* where it sits, like the sends */
+                p->wide_pct = wm;         /* where it sits, like the sends */
                 p->wide_hz = wh;
             }
             dr32_kit_load_sample(kit, pad, val);
@@ -444,9 +444,9 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         /* Wide (DR32's own Haas spread; dr32_kit.c wide_run). Clamped here so
          * the render never sees a delay past its buffer. */
         else if (!strcmp(sub, "wide"))
-            p->wide_ms = f > DR32_WIDE_MS_MAX ? DR32_WIDE_MS_MAX : (f < -DR32_WIDE_MS_MAX ? -DR32_WIDE_MS_MAX : f);
+            p->wide_pct = f > 100.0f ? 100.0f : (f < -100.0f ? -100.0f : f);
         else if (!strcmp(sub, "wide_freq"))
-            p->wide_hz = f < 20.0f ? 20.0f : (f > 1000.0f ? 1000.0f : f);
+            p->wide_hz = f < 20.0f ? 20.0f : (f > DR32_WIDE_HZ_MAX ? DR32_WIDE_HZ_MAX : f);
         /* Punch as a plain per-pad control (Josh, 2026-07-28). It is the
          * native transient shaper, so unlike a bespoke one its settings live in
          * the kit: these write Effect_Type / Effect_PunchAmount / _PunchTime and

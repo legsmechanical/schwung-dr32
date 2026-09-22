@@ -7,8 +7,9 @@
  * its crossover, Wide Freq. What it promises, measured on the kit's output:
  *   - Wide 0 is a TRUE bypass: the pad renders bit for bit as with the stage
  *     absent, whatever Wide Freq says
- *   - full band (Wide Freq 20): + delays the RIGHT side by exactly the knob's
- *     ms, - the LEFT, and the other side is untouched
+ *   - full band (Wide Freq 20): + delays the RIGHT side, - the LEFT, by
+ *     exactly 15 ms x (Wide/100)^2 — the CURVE, pinned at 10%, 50% and 100% —
+ *     and the other side is untouched
  *   - above a crossover only: a kick's body stays centred (L and R nearly
  *     equal) while a hat's top is spread by the knob's ms
  *   - nothing is cut off: the delayed side's last ms play out after the pad
@@ -74,6 +75,12 @@ static void make_wav(const char *path) {
     fclose(f);
 }
 
+/* The frames the knob's % must delay by: 15 ms x (pct/100)^2, rounded. */
+static int frames_for(float pct) {
+    const float a = fabsf(pct) * 0.01f;
+    return (int) (15.0f * a * a * 0.001f * SR + 0.5f);
+}
+
 static double energy(const float *x, int ch, int lag) {
     double e = 0;
     for (int i = lag; i < LEN; i++) e += (double) x[2 * i + ch] * x[2 * i + ch];
@@ -92,33 +99,30 @@ int main(void) {
     for (int i = 0; i < LEN; i++)
         if (a[2 * i] != a[2 * i + 1]) { CHECK(0, "a centred pad is not mono at frame %d", i); break; }
 
-    /* ---- full band: the knob's ms, on the knob's side ------------------ */
+    /* ---- full band: the curve's ms, on the knob's side ------------------- */
     {
-        const int d = (int) (10.0f * 0.001f * SR + 0.5f);   /* 441 */
-        hit(&k, "fm/snare", "10", "20", b);
-        int ok_l = 1, ok_r = 1;
-        for (int i = 0; i < LEN; i++) {
-            if (b[2 * i] != a[2 * i]) ok_l = 0;
-            const float want = i >= d ? a[2 * (i - d) + 1] : 0.0f;
-            if (b[2 * i + 1] != want) ok_r = 0;
+        const char *pct[] = {"10", "50", "100", "-10", "-50", "-100"};
+        for (int t = 0; t < 6; t++) {
+            const float v = (float) atof(pct[t]);
+            const int d = frames_for(v), dch = v > 0 ? 1 : 0;
+            hit(&k, "fm/snare", pct[t], "20", b);
+            int ok_other = 1, ok_delayed = 1;
+            for (int i = 0; i < LEN; i++) {
+                if (b[2 * i + (1 - dch)] != a[2 * i + (1 - dch)]) ok_other = 0;
+                const float want = i >= d ? a[2 * (i - d) + dch] : 0.0f;
+                if (b[2 * i + dch] != want) ok_delayed = 0;
+            }
+            CHECK(ok_other, "Wide %s%% changed the %s side", pct[t], dch ? "LEFT" : "RIGHT");
+            CHECK(ok_delayed, "Wide %s%% is not the %s side delayed by exactly %d frames", pct[t],
+                  dch ? "right" : "left", d);
         }
-        CHECK(ok_l, "Wide +10 changed the LEFT side");
-        CHECK(ok_r, "Wide +10 is not the right side delayed by exactly %d frames", d);
-
-        hit(&k, "fm/snare", "-10", "20", b);
-        ok_l = ok_r = 1;
-        for (int i = 0; i < LEN; i++) {
-            if (b[2 * i + 1] != a[2 * i + 1]) ok_r = 0;
-            const float want = i >= d ? a[2 * (i - d)] : 0.0f;
-            if (b[2 * i] != want) ok_l = 0;
-        }
-        CHECK(ok_r, "Wide -10 changed the RIGHT side");
-        CHECK(ok_l, "Wide -10 is not the left side delayed by exactly %d frames", d);
+        CHECK(frames_for(10) == 7 && frames_for(50) == 165 && frames_for(100) == 662,
+              "the curve: %d %d %d frames, want 7 165 662", frames_for(10), frames_for(50), frames_for(100));
     }
 
     /* ---- nothing cut off: a short hit's delayed side plays out ---------- */
     {
-        hit(&k, "fm/chat", "30", "20", b);
+        hit(&k, "fm/chat", "100", "20", b);
         const double el = energy(b, 0, 0), er = energy(b, 1, 0);
         CHECK(fabs(er / el - 1.0) < 1e-4, "the delayed side lost its end: R/L energy %.6f", er / el);
         CHECK(!dr32_pad_sounding(&k.pads[0]) && k.pads[0].wide.tail <= 0,
@@ -126,7 +130,7 @@ int main(void) {
     }
 
     /* ...and on a SAMPLE pad, on BOTH render paths: the sample ends abruptly,
-     * so the pad stops sounding while the delayed side still has 30 ms to go. */
+     * so the pad stops sounding while the delayed side still has 15 ms to go. */
     {
         const char *wav = "/tmp/dr32_wide.wav";
         make_wav(wav);
@@ -135,7 +139,7 @@ int main(void) {
             set(&k, "pad1_sample", wav);
             set(&k, "pad1_pan", "0");
             set(&k, "pad1_hold", "60");
-            set(&k, "pad1_wide", "30");
+            set(&k, "pad1_wide", "100");
             set(&k, "pad1_wide_freq", "20");
             set(&k, "pad1_play", "127");
             static int16_t mo[2 * FR];
@@ -157,7 +161,7 @@ int main(void) {
         double side[2];
         const char *freq[] = {"20", "400"};
         for (int f = 0; f < 2; f++) {
-            hit(&k, "fm/kick", "20", freq[f], b);
+            hit(&k, "fm/kick", "100", freq[f], b);
             double s = 0, m = 0;
             for (int i = 0; i < LEN; i++) {
                 const double l = b[2 * i], r = b[2 * i + 1];
@@ -173,15 +177,15 @@ int main(void) {
 
     /* ---- ...and a hat's top is still spread by the knob's ms ------------ */
     {
-        const int d = (int) (10.0f * 0.001f * SR + 0.5f);
-        hit(&k, "fm/chat", "10", "150", b);
+        const int d = frames_for(80);
+        hit(&k, "fm/chat", "80", "150", b);
         double xy = 0, xx = 0, yy = 0;
         for (int i = d; i < LEN; i++) {
             const double l = b[2 * (i - d)];
             xy += l * b[2 * i + 1]; xx += l * l; yy += (double) b[2 * i + 1] * b[2 * i + 1];
         }
         const double lagged = xy / sqrt(xx * yy);
-        CHECK(lagged > 0.95, "a hat above the crossover is not R = L delayed 10 ms (corr %.3f)", lagged);
+        CHECK(lagged > 0.95, "a hat above the crossover is not R = L delayed (corr %.3f)", lagged);
     }
 
     /* ---- both render entry points agree --------------------------------- */
@@ -216,14 +220,16 @@ int main(void) {
         dr32_kit_init(&k);
         CHECK(!strcmp(get(&k, "pad1_wide"), "0") && !strcmp(get(&k, "pad1_wide_freq"), "150"),
               "defaults: wide %s, wide_freq %s", get(&k, "pad1_wide"), get(&k, "pad1_wide_freq"));
-        set(&k, "pad1_wide", "12.5");
-        CHECK(!strcmp(get(&k, "pad1_wide"), "12.5"), "wide reads %s", get(&k, "pad1_wide"));
-        set(&k, "pad1_wide", "99");
-        CHECK(!strcmp(get(&k, "pad1_wide"), "30"), "wide clamps to 30: %s", get(&k, "pad1_wide"));
-        set(&k, "pad1_wide", "-99");
-        CHECK(!strcmp(get(&k, "pad1_wide"), "-30"), "wide clamps to -30: %s", get(&k, "pad1_wide"));
+        set(&k, "pad1_wide", "37");
+        CHECK(!strcmp(get(&k, "pad1_wide"), "37"), "wide reads %s", get(&k, "pad1_wide"));
+        set(&k, "pad1_wide", "150");
+        CHECK(!strcmp(get(&k, "pad1_wide"), "100"), "wide clamps to 100: %s", get(&k, "pad1_wide"));
+        set(&k, "pad1_wide", "-150");
+        CHECK(!strcmp(get(&k, "pad1_wide"), "-100"), "wide clamps to -100: %s", get(&k, "pad1_wide"));
         set(&k, "pad1_wide_freq", "5");
         CHECK(!strcmp(get(&k, "pad1_wide_freq"), "20"), "wide_freq clamps to 20: %s", get(&k, "pad1_wide_freq"));
+        set(&k, "pad1_wide_freq", "9000");
+        CHECK(!strcmp(get(&k, "pad1_wide_freq"), "4000"), "wide_freq clamps to 4000: %s", get(&k, "pad1_wide_freq"));
 
         /* Choosing a model or a sample keeps it: it is where the pad sits. */
         set(&k, "pad1_wide", "-7");

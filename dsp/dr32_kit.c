@@ -300,7 +300,7 @@ static void source_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames)
 /*
  * WIDE — a Haas spread of one pad's stereo output, in place.
  *
- * One side is delayed by |wide_ms| (+ the right, - the left). Above a
+ * One side is delayed by wide_ms(wide) (+ the right, - the left). Above a
  * crossover only: each channel is split Linkwitz-Riley 24 dB (two Butterworth
  * 2nd-order sections per band, from one SVF split), the low band passes on
  * both sides as it was, and only the delayed side's HIGH band goes through the
@@ -320,16 +320,22 @@ static inline void svf_step(const dr32_wide *d, float st[2], float v0, float *lp
     *hp = v0 - d->k * v1 - v2;
 }
 
+/* The knob's % -> a signed delay in ms: 15 ms x (pct/100)^2, sign kept. */
+static float wide_ms(float pct) {
+    if (pct > 100.0f) pct = 100.0f;
+    if (pct < -100.0f) pct = -100.0f;
+    const float a = pct * 0.01f;
+    return (a < 0.0f ? -1.0f : 1.0f) * DR32_WIDE_MS_MAX * a * a;
+}
+
 static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
-    float ms = p->wide_ms;
-    if (ms > DR32_WIDE_MS_MAX) ms = DR32_WIDE_MS_MAX;
-    if (ms < -DR32_WIDE_MS_MAX) ms = -DR32_WIDE_MS_MAX;
+    const float ms = wide_ms(p->wide_pct);
     int side = ms > 0.0f ? 1 : (ms < 0.0f ? -1 : d->side);
     if (side != d->side) {                 /* the other side now: start clean */
         memset(d->buf, 0, sizeof(d->buf));
         d->side = side;
     }
-    const int dly = (int)(fabsf(ms) * 0.001f * DR32_SR + 0.5f);
+    const int dly = (int)(fabsf(ms) * 0.001f * DR32_SR + 0.5f);   /* <= 662 */
     const int split = p->wide_hz > 20.5f;
     if (split && d->hz != p->wide_hz) {
         float fc = p->wide_hz;
@@ -375,7 +381,7 @@ static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
 static void pad_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
     dr32_wide *d = &s->wide;
     const int sounding = dr32_pad_sounding(s);
-    if (s->params.wide_ms == 0.0f && d->tail <= 0) {
+    if (s->params.wide_pct == 0.0f && d->tail <= 0) {
         if (sounding) source_render(k, s, out, frames);
         return;
     }

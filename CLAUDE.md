@@ -24,8 +24,12 @@ Master   MASTR
 ```
 
 - ⭑ **WIDE / WFREQ** (Josh, 2026-09-22: *"a haas stereo spread to each drum's mix page ... and a
-  knob to set a crossover below which the sound is not spread"*; names his). `wide` −30..+30 ms
-  (+ delays the RIGHT side), `wide_freq` 20..1000 Hz (20 = full band, default 150). The stage is
+  knob to set a crossover below which the sound is not spread"*; names his). `wide` −100..+100 %
+  (+ delays the RIGHT side), CURVED to 15 ms × (wide/100)²: width comes on between 0 and ~3 ms, and
+  a linear ms knob spent that in a few detents (Josh: *"goes to zero from pretty darn wide pretty
+  quickly"*). Capped at 15 ms, not 30: past ~10–15 ms a drum transient stops fusing and reads as a
+  flam. `wide_freq` 20..4000 Hz (20 = full band, default 150; 4 kHz so a pad can spread only its
+  top). The stage is
   `wide_run` in `dr32_kit.c`, per PAD after the source, inside the one `pad_render` both render
   paths share. LR4 split from one SVF per channel, BOTH channels split so their low bands stay in
   phase; only the delayed side's high band is delayed.
@@ -33,7 +37,7 @@ Master   MASTR
     Peak, Punch, choke, pan, a synth pad, both render paths) matched the pre-Wide build bit for
     bit, and a 1 Hz cutoff change moved it.
   - ⚠ **A pad renders while `pad_live`, not only while sounding** — the delayed side's last
-    30 ms outlive the source. BOTH render loops ask `pad_live`. It only shows on a SAMPLE pad (a
+    15 ms outlive the source. BOTH render loops ask `pad_live`. It only shows on a SAMPLE pad (a
     sample stops dead; a synth has 100 ms of near-silence before its gate), so `test_wide.c` checks
     the tail with an abruptly-ending WAV on both paths.
   - It is "where the pad sits", like the sends: kept across sample <-> synth, in the state blob,

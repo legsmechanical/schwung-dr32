@@ -30,7 +30,7 @@ void dr32_pad_defaults(dr32_pad *p) {
     p->speaker_on = 1;
     p->send_db[0] = -70.0f;      // off
     p->send_db[1] = -70.0f;
-    p->wide_ms = 0.0f;           // off
+    p->wide_pct = 0.0f;          // off
     p->wide_hz = 150.0f;         // keeps a kick's body centred when Wide goes up
 }
 
