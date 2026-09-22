@@ -323,7 +323,13 @@ built-in pictures (envelope, filter curve, fader, switch, sample waveform + wave
 1.2.0 drum-surface contract. The canvaskit Pad Editor (the OLD `canvas.js`) and the fork-only
 host keys it needed (`host_canvas_ui`, `canvas_takes_click`) are **gone**; do not bring them back.
 ⭑ **`src/canvas.js` exists again, and it is something else**: the PAD cell's big number (Josh,
-2026-09-22), a per-cell `custom:padnum` widget. Old hosts draw the plain number.
+2026-09-22), a per-cell `custom:padnum` widget that draws **the host's OWN big number**. The
+built-in (`WIDGET_BIGNUM`) cannot be asked for: the host picks it for a whole-number knob spanning
+<= 24 or named like a count, and PAD is 1..32. So the widget imports the host's
+`shared/param_pages/font_big_num.mjs` by a path RELATIVE to the installed module
+(`../../../shared/...`, which resolves per host tree, dbx-host's under dAVEBOx) and places it as
+`drawBigNumber` does. A failed import fails the whole script: the kind goes unregistered and the
+host draws its arc knob.
 🔴 **How it reaches the host is the trap.** The host loads `canvas.js` only if the `chain_params`
 it reads FROM THE PLUGIN declares a `custom:` kind, and **its fallback for a plugin that serves
 none carries no `viz`**, so the kind cannot live in module.json. And DR32's metadata comes from
@@ -336,8 +342,9 @@ holds the per-pad send ranges (the 09-19 silent-sends failure). `tools/check_cha
 proves it with the host's own `chain_params.c`, compiled from `SCHWUNG_SRC`: the re-parse matches
 the host's parse of module.json struct for struct, and the page sees the fallback's fields plus
 the viz (checked against v1.4.0, #533 and dbxhost; five mutations caught).
-`tools/check_pad_cell.mjs` renders all 32 through the host's framebuffer (none blank, none
-clipped, none alike; sheet at `build/pad_cell.png`). `build.sh` ships both files;
+`tools/check_pad_cell.mjs` loads canvas.js from a temp copy of the DEVICE layout (so the relative
+import is tested) and requires pads 1..32 and the unread "--" to be pixel-identical to the host's
+`drawBigNumber` (sheet at `build/pad_cell.png`). `build.sh` ships both files;
 `check_build_script` fails if it doesn't, or if `install.sh` deletes a shipped file (it used to
 `rm` canvas.js after copying, a Pad Editor leftover).
 
