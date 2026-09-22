@@ -23,7 +23,7 @@ Stereo   WMODE WIDE  WFREQ                              <- level `pad_stereo`
 Master   MASTR
 ```
 
-- ⭑ **The Stereo page: WMODE · WIDE · WFREQ · TIME · COMP** (Josh, 2026-09-22: *"a haas stereo spread to each
+- ⭑ **The Stereo page: WMODE · WIDE · WFREQ · TIME · COMP · LATE** (Josh, 2026-09-22: *"a haas stereo spread to each
   drum's mix page ... and a knob to set a crossover below which the sound is not spread"*; then,
   having heard both, *"I like both, and can see the use in each depending on context"* — so both
   modes stay, on their own page, `pad_stereo`, after Mix; names his). Per pad, after everything
@@ -56,6 +56,11 @@ Master   MASTR
     do that for haas"*): TIME the delay, |WIDE| the delayed side's MIX (dry → fully delayed), the
     sign still the side; Auto keeps the curve. Not here: true time-intensity trading (a LOUDER late
     side). The cell reads "0.0 ms" for Auto — a float cell can only print its number.
+  - **LATE** (Haas only, −12..+12 dB): the delayed side's level above the crossover — time-
+    intensity trading (Josh: *"No delayed-side level ... let's try this"*): up counters the lean,
+    down deepens it. Shown only in Haas: `visible_if wide_mode == "Haas"`. ⚠ That is the FOURTH
+    distinct visible_if param (ui_engine, ui_family, filter_type, wide_mode) and the host
+    evaluates at most four — `check_module_json` fails a fifth.
   - **COMP** (Off | On, flips on click): trims the pad by 1/√(1+g²) so stereo loudness holds as
     it widens (a mid/side widener adds up to +3 dB per ear), at the price of the MONO sum, which
     drops by as much. Off (default) keeps the mono sum exact, as Wider does. Haas is never trimmed

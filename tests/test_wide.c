@@ -24,7 +24,8 @@
  *   - WMODE Haas is the Haas delay, exactly: one side 15 ms x (Wide/100)^2
  *     late, the other untouched
  *   - TIME is the delay (Comb exactly; Disperse's whatever WIDE is); in Haas
- *     TIME is the delay and |WIDE| the delayed side's mix. COMP trims by 1/sqrt(1+g^2): mono sum = dry x that, a
+ *     TIME is the delay and |WIDE| the delayed side's mix; LATE scales the
+ *     delayed side (Haas only), the other side untouched. COMP trims by 1/sqrt(1+g^2): mono sum = dry x that, a
  *     full-width hat's ear energy holds; Haas is never trimmed
  *   - the knobs clamp, read back, and survive a state round trip
  */
@@ -389,6 +390,27 @@ int main(void) {
             }
         }
 
+        /* LATE: the delayed side's level. +6.02 dB doubles it, exactly, and the
+         * other side does not move. (0 dB is every Haas check above.) */
+        {
+            const int d5 = (int) (5.0f * 0.001f * SR + 0.5f);
+            dr32_kit_init(&k); set(&k, "pad1_model", "fm/snare"); set(&k, "pad1_pan", "0");
+            set(&k, "pad1_wide_mode", "Haas"); set(&k, "pad1_wide", "100"); set(&k, "pad1_wide_freq", "20");
+            set(&k, "pad1_wide_time", "5"); set(&k, "pad1_wide_late", "6.0206"); set(&k, "pad1_play", "127");
+            for (int at = 0; at < LEN; at += FR) dr32_kit_render(&k, t1 + 2 * at, FR);
+            float wd = 0, wo = 0;
+            for (int i = 0; i < LEN; i++) {
+                const float late = i >= d5 ? a[2 * (i - d5) + 1] : 0.0f;
+                const float e = fabsf(t1[2 * i + 1] - 2.0f * late);
+                if (e > wd) wd = e;
+                const float o = fabsf(t1[2 * i] - a[2 * i]);
+                if (o > wo) wo = o;
+            }
+            CHECK(wd < 1e-5f, "LATE +6 dB did not double the delayed side (worst %g)", wd);
+            CHECK(wo == 0.0f, "LATE moved the other side (worst %g)", wo);
+            CHECK(!strcmp(get(&k, "pad1_wide_late"), "6.0206"), "LATE reads %s", get(&k, "pad1_wide_late"));
+        }
+
         /* COMP: the pad is trimmed by 1/sqrt(1 + g^2): the MONO sum is the dry
          * pad x that, exactly, and a hat's stereo energy per ear holds. */
         static float hat[2 * LEN];
@@ -503,6 +525,7 @@ int main(void) {
         set(&k, "pad1_wide_mode", "Haas");
         set(&k, "pad1_wide_time", "4.5");
         set(&k, "pad1_wide_comp", "On");
+        set(&k, "pad1_wide_late", "-4");
         set(&k, "pad1_model", "fm/kick");
         CHECK(!strcmp(get(&k, "pad1_wide"), "7") && !strcmp(get(&k, "pad1_wide_freq"), "220"),
               "choosing a model reset Wide (%s, %s)", get(&k, "pad1_wide"), get(&k, "pad1_wide_freq"));
@@ -516,6 +539,7 @@ int main(void) {
         CHECK(!strcmp(get(&r, "pad1_wide_mode"), "Haas"), "Wide Mode did not survive a state round trip");
         CHECK(!strcmp(get(&r, "pad1_wide_time"), "4.5") && !strcmp(get(&r, "pad1_wide_comp"), "On"),
               "TIME/COMP did not survive a state round trip (%s, %s)", get(&r, "pad1_wide_time"), get(&r, "pad1_wide_comp"));
+        CHECK(!strcmp(get(&r, "pad1_wide_late"), "-4"), "LATE did not survive a state round trip (%s)", get(&r, "pad1_wide_late"));
         CHECK(!strcmp(get(&r, "pad1_wide"), "7") && !strcmp(get(&r, "pad1_wide_freq"), "220"),
               "Wide did not survive a state round trip (%s, %s)", get(&r, "pad1_wide"), get(&r, "pad1_wide_freq"));
     }

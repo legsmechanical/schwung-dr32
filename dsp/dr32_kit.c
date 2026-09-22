@@ -444,6 +444,10 @@ static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     const int manual = p->wide_time > 0.0f;
     const float ms = manual ? p->wide_time : DR32_WIDE_HAAS_MS_MAX * a * a;
     const float mix = manual ? fabsf(a) : 1.0f;
+    /* LATE: the delayed side's level above the crossover (Josh: "No
+     * delayed-side level ... let's try this"). Up counters the lean — the
+     * precedence effect traded against intensity — down deepens it. */
+    const float late_g = powf(10.0f, p->wide_late_db * 0.05f);
     const int dch = a < 0.0f ? 0 : 1;          /* + delays the RIGHT side, - the LEFT */
     if (dch != d->haas_side) {                 /* the other side now: start clean */
         memset(d->buf, 0, sizeof(d->buf));
@@ -474,7 +478,7 @@ static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
             if (c == dch) {
                 d->buf[d->w] = hi;
                 const float late = d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
-                hi = mix >= 1.0f ? late : hi + mix * (late - hi);
+                hi = (mix >= 1.0f ? late : hi + mix * (late - hi)) * late_g;
                 d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
             }
             y[c] = lo + hi;

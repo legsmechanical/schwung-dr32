@@ -115,6 +115,9 @@ typedef struct {
      * the delayed side's mix. */
     float wide_time;
     int   wide_comp;
+    /* LATE (Haas only): the delayed side's level above the crossover, dB,
+     * -12..+12, 0 = as it was. */
+    float wide_late_db;
 } dr32_pad;
 
 /** One TPT SVF stage's integrator state. */

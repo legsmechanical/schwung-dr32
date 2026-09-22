@@ -156,7 +156,7 @@ has no interface of its own. Every page below is Schwung's own knob grid.</p>
 <span class="pg">Shape</span>ATK&nbsp;&nbsp;&nbsp;&nbsp;DCY&nbsp;&nbsp;&nbsp;&nbsp;HOLD&nbsp;&nbsp;ENV&nbsp;&nbsp;&nbsp;&nbsp;CUT&nbsp;&nbsp;&nbsp;RES&nbsp;&nbsp;&nbsp;TYPE&nbsp;&nbsp;&nbsp;FILT&nbsp;&nbsp;<span class="dim">(sample pads)</span><br>
 <span class="pg dim">&nbsp;&nbsp;Engine</span><span class="dim">Tone &middot; Noise / Drum &middot; Shell &middot; Chop &middot; Media / Voice &nbsp;(synth pads)</span><br>
 <span class="pg">Mix</span>VVOL&nbsp;&nbsp;&nbsp;VOL&nbsp;&nbsp;&nbsp;&nbsp;PAN&nbsp;&nbsp;&nbsp;LINK&nbsp;&nbsp;&nbsp;SNDA&nbsp;&nbsp;SNDB&nbsp;&nbsp;PUNCH&nbsp;&nbsp;PTIME<br>
-<span class="pg">Stereo</span>WMODE&nbsp;&nbsp;WIDE&nbsp;&nbsp;&nbsp;WFREQ&nbsp;&nbsp;TIME&nbsp;&nbsp;&nbsp;COMP<br>
+<span class="pg">Stereo</span>WMODE&nbsp;&nbsp;WIDE&nbsp;&nbsp;&nbsp;WFREQ&nbsp;&nbsp;TIME&nbsp;&nbsp;&nbsp;COMP&nbsp;&nbsp;&nbsp;LATE<br>
 <span class="pg">Master</span>MASTER
 </div>
 
@@ -215,7 +215,7 @@ it and close.</p>
   <tr><td>CUT · RES · TYPE</td><td>Filter, four types, with FILT as its on/off switch.</td></tr>
   <tr><td>VELVOL</td><td>How much velocity affects level.</td></tr>
   <tr><td>VOL · PAN</td><td>Per-pad level and position.</td></tr>
-  <tr><td>WMODE · WIDE · WFREQ · TIME · COMP</td><td>The Stereo page: three ways to widen a pad, chosen with
+  <tr><td>WMODE · WIDE · WFREQ · TIME · COMP · LATE</td><td>The Stereo page: three ways to widen a pad, chosen with
       WMODE. <em>Comb</em> spreads the pad without moving it off its pan position, and a
       mono mix-down is unchanged. <em>Haas</em> delays one side by up to 15 ms: more character, and
       the sound leans toward the side that arrives first. <em>Disperse</em> is modelled on
@@ -226,7 +226,8 @@ it and close.</p>
       nothing is widened, so a kick's top can go wide while its body stays in the middle; at
       20 Hz the whole pad widens. TIME sets the widener's internal delay yourself (0 = each
       mode's own): longer is denser and smoother, shorter is more coloured. With Haas, TIME set makes it a
-      classic Haas: TIME is the delay and WIDE how much of the delayed side you hear.
+      classic Haas: TIME is the delay and WIDE how much of the delayed side you hear. LATE (Haas
+      only) sets the delayed side's level: turn it up to pull the image back toward the centre.
       COMP keeps the pad's loudness steady as it widens, at the cost of making it quieter in
       mono. At WIDE 0 the pad is untouched. Every pad, sample or synth.</td></tr>
   <tr><td>PUNCH · PTIME</td><td>Move's transient shaper. Above zero it turns itself on. Sample

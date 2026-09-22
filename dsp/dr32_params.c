@@ -309,6 +309,7 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "wide"))      return snprintf(buf, buf_len, "%g", (double)p->wide_pct);
         if (!strcmp(sub, "wide_freq")) return snprintf(buf, buf_len, "%g", (double)p->wide_hz);
         if (!strcmp(sub, "wide_time")) return snprintf(buf, buf_len, "%g", (double)p->wide_time);
+        if (!strcmp(sub, "wide_late")) return snprintf(buf, buf_len, "%g", (double)p->wide_late_db);
         if (!strcmp(sub, "wide_comp")) return snprintf(buf, buf_len, "%s", p->wide_comp ? "On" : "Off");
         if (!strcmp(sub, "wide_mode"))
             return snprintf(buf, buf_len, "%s", p->wide_mode == 2 ? "Disperse" : p->wide_mode ? "Haas" : "Comb");
@@ -398,7 +399,7 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
                 float sa = p->send_db[0], sb = p->send_db[1];
                 float wm = p->wide_pct, wh = p->wide_hz;
                 int wmode = p->wide_mode, wcomp = p->wide_comp;
-                float wtime = p->wide_time;
+                float wtime = p->wide_time, wlate = p->wide_late_db;
                 dr32_pad_defaults(p);
                 p->choke_group = choke;
                 p->send_db[0] = sa;
@@ -408,6 +409,7 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
                 p->wide_mode = wmode;
                 p->wide_comp = wcomp;
                 p->wide_time = wtime;
+                p->wide_late_db = wlate;
             }
             dr32_kit_load_sample(kit, pad, val);
         }
@@ -459,6 +461,8 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
                          : (!strcmp(val, "Haas") || atoi(val) == 1) ? 1 : 0;
         else if (!strcmp(sub, "wide_time"))
             p->wide_time = f < 0.0f ? 0.0f : (f > DR32_WIDE_TIME_MAX ? DR32_WIDE_TIME_MAX : f);
+        else if (!strcmp(sub, "wide_late"))
+            p->wide_late_db = f < -12.0f ? -12.0f : (f > 12.0f ? 12.0f : f);
         else if (!strcmp(sub, "wide_comp"))
             p->wide_comp = (!strcmp(val, "On") || atoi(val) == 1) ? 1 : 0;
         else if (!strcmp(sub, "wide_freq"))
