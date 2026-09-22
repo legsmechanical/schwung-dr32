@@ -43,7 +43,13 @@ try {
     process.exit(1);
 }
 const mod = JSON.parse(fs.readFileSync("src/module.json", "utf8"));
-const chainParams = mod.capabilities.chain_params;
+/* The chain_params the host actually PLANS from is the one dsp.so SERVES
+ * (src/chain_params.json), not module.json's copy: planning from the latter
+ * drew the Resample page as a plain cell, because a module-drawn page is
+ * declared in the served list alone. */
+const chainParams = fs.existsSync("src/chain_params.json")
+    ? JSON.parse(fs.readFileSync("src/chain_params.json", "utf8"))
+    : mod.capabilities.chain_params;
 
 let fail = 0;
 const bad = (m) => { fail++; console.error("  FAIL " + m); };
@@ -86,6 +92,19 @@ for (const p of pages) {
         ? (p.keys || []).map((k) => k || "-").join(" ")
         : `<${p.kind}>${p.name ? ` "${p.name}"` : ""}`;
     console.log(`    ${String(p.level ?? "-").padEnd(8)} ${what}`);
+}
+
+/* The Resample page (Josh: "it should go at the very end after master"): the
+ * LAST page, module-drawn, and a door you click into. Checked only against a
+ * host whose planner knows enterable canvas pages (PR #520 and later). */
+{
+    const last = pages[pages.length - 1];
+    if (!last || last.level !== "resample" || !last.canvas)
+        bad(`the last page is ${last ? `${last.level} (${last.kind}${last.canvas ? ", canvas" : ""})` : "missing"}, want the Resample canvas page`);
+    else if ("enterable" in last.canvas && last.canvas.enterable !== true)
+        bad("the Resample page is not enterable — it could be looked at and never used");
+    else console.log(`  Resample page: last of ${pages.length}, canvas ${last.canvas.script}, ` +
+                     ("enterable" in last.canvas ? "enterable" : "enterable NOT KNOWN to this host's planner"));
 }
 
 // ---- a fixture for upstream's preview tools

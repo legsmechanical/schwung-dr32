@@ -275,3 +275,57 @@ fail:
     memset(out, 0, sizeof(*out));
     return err;
 }
+
+/* ---------------------------------------------------------------- writer
+ * 24-bit PCM, the Resample feature's output (dr32_resample.c). The encoding is
+ * the exact inverse of decode() above, so what a pad plays from memory and
+ * what it plays after the file is reloaded are the same numbers. */
+
+static int32_t q24_int(float x) {
+    float v = x * 8388608.0f;
+    if (!(v > -8388608.0f)) return -8388608;      /* also catches NaN */
+    if (v >= 8388607.0f) return 8388607;
+    return (int32_t)lrintf(v);
+}
+
+float dr32_wav_q24(float x) { return (float)q24_int(x) / 8388608.0f; }
+
+static void put16(unsigned char *p, uint32_t v) { p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); }
+static void put32(unsigned char *p, uint32_t v) { for (int i = 0; i < 4; i++) p[i] = (unsigned char)(v >> (8 * i)); }
+
+int dr32_wav_write24(const char *path, const float *data, size_t frames,
+                     int channels, int sample_rate) {
+    if (!path || !path[0] || (!data && frames) || channels < 1 || channels > 2 || sample_rate <= 0) return -1;
+    const uint64_t bytes = (uint64_t)frames * (uint64_t)channels * 3u;
+    if (bytes > 0xFFFFFFF0u - 36u) return -1;
+    char part[4096];
+    if (snprintf(part, sizeof(part), "%s.part", path) >= (int)sizeof(part)) return -1;
+    FILE *f = fopen(part, "wb");
+    if (!f) return -1;
+
+    unsigned char h[44];
+    memcpy(h, "RIFF", 4);  put32(h + 4, (uint32_t)(36u + bytes + (bytes & 1u)));
+    memcpy(h + 8, "WAVE", 4);
+    memcpy(h + 12, "fmt ", 4); put32(h + 16, 16);
+    put16(h + 20, WAVE_FMT_PCM); put16(h + 22, (uint32_t)channels);
+    put32(h + 24, (uint32_t)sample_rate);
+    put32(h + 28, (uint32_t)sample_rate * (uint32_t)channels * 3u);
+    put16(h + 32, (uint32_t)channels * 3u); put16(h + 34, 24);
+    memcpy(h + 36, "data", 4); put32(h + 40, (uint32_t)bytes);
+    int ok = fwrite(h, 1, sizeof(h), f) == sizeof(h);
+
+    unsigned char buf[3 * 2 * 1024];
+    const size_t n = frames * (size_t)channels;
+    for (size_t i = 0; ok && i < n; ) {
+        size_t m = 0;
+        for (; i < n && m + 3 <= sizeof(buf); i++, m += 3) {
+            const uint32_t v = (uint32_t)q24_int(data[i]);
+            buf[m] = (unsigned char)v; buf[m + 1] = (unsigned char)(v >> 8); buf[m + 2] = (unsigned char)(v >> 16);
+        }
+        ok = fwrite(buf, 1, m, f) == m;
+    }
+    if (ok && (bytes & 1u)) ok = fputc(0, f) != EOF;        /* RIFF word alignment */
+    if (fclose(f) != 0) ok = 0;
+    if (!ok || rename(part, path) != 0) { remove(part); return -1; }
+    return 0;
+}

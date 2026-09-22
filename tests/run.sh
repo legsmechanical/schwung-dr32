@@ -48,6 +48,10 @@ node tools/gen_engine_ui.mjs --check || fail=1
 # run by hand; the picker's new top menu made it worth running every time.
 node tools/check_browser_nav.mjs >/dev/null || { node tools/check_browser_nav.mjs | grep FAIL; fail=1; }
 
+# The Resample page (src/resample.js), driven the way the host drives an
+# entered canvas page: jog/click as CCs, Back, drawPage with its extra_keys.
+node tools/check_resample_page.mjs || fail=1
+
 # build.sh's two-pass shape: the outer pass must not fall through past its
 # `docker run`, or every line below the guard silently runs twice on the same
 # mounted volume. Greps a shell script; no Docker, no toolchain, milliseconds.

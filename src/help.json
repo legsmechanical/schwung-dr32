@@ -46,8 +46,13 @@
         "Mix",
         " level, pan, sends",
         " and punch",
+        "Stereo",
+        " width, per pad",
         "Master",
-        " level for the kit"
+        " level for the kit",
+        "Resample",
+        " turn pads into",
+        " samples"
       ]
     },
     {
@@ -355,6 +360,46 @@
         "Kits are Move's own",
         "files and are never",
         "modified."
+      ]
+    },
+    {
+      "title": "Resample",
+      "lines": [
+        "Turns a pad into a",
+        "sample of what it",
+        "plays, and puts it",
+        "on the pad.",
+        "",
+        "Click into the",
+        "Resample page.",
+        "",
+        "Resample pad",
+        "Tap the pad, then",
+        "click Resample. It",
+        "is taken at the",
+        "velocity you hit.",
+        "",
+        "Resample kit",
+        "Every synth pad, at",
+        "one velocity",
+        "(100 unless set).",
+        "",
+        "The sound is baked:",
+        "engine, tuning,",
+        "envelope, filter.",
+        "Volume, pan, sends,",
+        "Stereo and choke",
+        "stay live, and the",
+        "level is matched.",
+        "",
+        "Files go to User",
+        "Library > Samples >",
+        "DR32 Resample,",
+        "named for the sound,",
+        "velocity and date.",
+        "",
+        "Stops after 1 s of",
+        "silence, or at 20 s."
       ]
     },
     {

@@ -308,6 +308,23 @@ if (isBuild) {
                     'the host finds no widget and the cell silently falls back to a built-in.');
 }
 
+/* Every canvas script the hierarchy names is loaded BY NAME from the module
+ * directory, and a missing one fails silently (an empty body, a dead page).
+ * So each must be copied — found from module.json, not listed here. */
+if (isBuild) {
+    let scripts = new Set();
+    try {
+        const mj = JSON.parse(fs.readFileSync('src/module.json', 'utf8'));
+        for (const lv of Object.values(mj.capabilities.ui_hierarchy.levels || {}))
+            for (const p of lv.params || [])
+                if (p && p.type === 'canvas' && typeof p.canvas_script === 'string') scripts.add(p.canvas_script.split('#')[0]);
+    } catch { /* module.json is checked elsewhere */ }
+    for (const f of scripts) {
+        const re = new RegExp(`cp\\s+src\\/${f.replace(/[.]/g, '\\.')}\\s`);
+        if (!re.test(src)) errors.push(`module.json names canvas_script "${f}" but build.sh never copies src/${f} — the host loads it by name and the page stays empty, silently.`);
+    }
+}
+
 /* The binary carries MIT-licensed code, whose notice must accompany every
  * copy, so the package carries LICENSE and NOTICES.md. */
 if (isBuild && !/cp\s+LICENSE\s+NOTICES\.md\s/.test(src)) {

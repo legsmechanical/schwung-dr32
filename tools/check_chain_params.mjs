@@ -47,7 +47,13 @@ try {
     const served = JSON.parse(fs.readFileSync('src/chain_params.json', 'utf8'));
     const fb = r.fallback;
     const EXTRA = new Set(['default', 'step', 'max_param', 'viz']);
-    served.forEach((e, i) => {
+    /* The module-drawn pages ride at the END and are not the fallback's —
+     * the host's C parser skips them (r.served above is its count), and the
+     * page planner is their only reader. Anything else is compared. */
+    const pages = served.filter((e) => e.type === 'canvas' && e.as_page === true);
+    const tail = served.slice(served.length - pages.length);
+    if (pages.some((e, i) => tail[i] !== e)) errors.push('a canvas page entry sits among the fallback entries — it must come last');
+    served.slice(0, served.length - pages.length).forEach((e, i) => {
         const bare = Object.fromEntries(Object.entries(e).filter(([k]) => !EXTRA.has(k)));
         if (JSON.stringify(bare) !== JSON.stringify(fb[i]))
             errors.push(`entry ${i} (${e.key}) is ${JSON.stringify(bare)}; the host's fallback is ${JSON.stringify(fb[i])}`);
@@ -59,7 +65,8 @@ try {
         for (const e of errors) console.error('  - ' + e);
         process.exit(1);
     }
-    console.log(`check_chain_params: OK — ${r.served} params, the host's parse unchanged, the page's fields the fallback's plus ${viz}`);
+    console.log(`check_chain_params: OK — ${r.served} params, the host's parse unchanged, the page's fields the fallback's plus ${viz}` +
+                (pages.length ? `, and ${pages.length} canvas page (${pages.map((e) => e.key).join(', ')})` : ''));
 } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
 }

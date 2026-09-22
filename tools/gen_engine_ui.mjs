@@ -400,6 +400,20 @@ const cpOut = [];
     }
     for (const k of Object.keys(CUSTOM_VIZ))
         if (!cpOut.some((e) => e.key === k)) throw new Error(`chain_params: ${k} is not an inline float/int/enum param`);
+    /* A module-drawn PAGE (a canvas with `as_page`: the Resample page). The
+     * host plans those from chain_params ALONE (page_plan.mjs,
+     * canvasPageParams) — declared only inline, the page never appears. So it
+     * is the one addition beyond the fallback, APPENDED after the fallback's
+     * entries so the index-for-index comparison in check_chain_params still
+     * lines up; the host's C parser drops the type (not float/int/enum), which
+     * that check proves by re-parsing. */
+    for (const p of objs) {
+        if (!p || p.type !== 'canvas' || p.as_page !== true) continue;
+        const e = { key: p.key, name: p.name ?? p.key, type: 'canvas', canvas_script: p.canvas_script, as_page: true };
+        if (p.enterable === true) e.enterable = true;
+        if (Array.isArray(p.extra_keys)) e.extra_keys = p.extra_keys;
+        cpOut.push(e);
+    }
 }
 const CP = join(ROOT, 'src/chain_params.json');
 const outCp = JSON.stringify(cpOut) + '\n';

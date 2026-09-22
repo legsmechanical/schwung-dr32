@@ -158,6 +158,11 @@ typedef struct {
     unsigned      live_arm_block;  // block it was signalled on
     int           last_hit_pad;    // pad of the most recent note-on, -1 = none
     unsigned      last_hit_block;  // block that note-on landed on
+    /* Resample (dr32_resample.c): the velocity of each pad's most recent
+     * note-on (0 = never hit), and a count of every note-on, so the Resample
+     * page can tell a tap made AFTER it opened from one made before. */
+    int           pad_vel[DR32_PADS];
+    unsigned      hit_seq;
 
     // Is a transport running? Mirrored from the host every render block
     // (host_api get_beat_position / get_clock_status; dr32.c). While it is NOT,
@@ -241,6 +246,16 @@ void dr32_kit_set_note(dr32_kit *k, int pad, int note);
 /** Load `path` into `pad`. Host thread only — does file I/O and allocates.
  *  Returns a dr32_wav_err. Passing NULL/"" clears the pad. */
 int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path);
+
+/** Put an already-decoded buffer on `pad` as its sample — the Resample
+ *  feature's switch, which must not read the file it just wrote. Takes
+ *  ownership of `data` (malloc'd, interleaved). Does exactly what
+ *  dr32_kit_load_sample does around a decode: silences the pad, retires its
+ *  engine and its old buffer one-deep, stamps path/size/mtime. Pad params are
+ *  the caller's. Safe on the audio thread: no I/O, no allocation. */
+void dr32_kit_adopt_sample(dr32_kit *k, int pad, float *data, size_t frames,
+                           int channels, int sample_rate, const char *path,
+                           long size, long mtime);
 
 /** Folder browse. All three are HOST-THREAD ONLY — they read the filesystem,
  *  and _select() loads a sample. They operate on the directory the pad's

@@ -1,4 +1,4 @@
-// wav.h — minimal RIFF/WAVE loader for DR32 pad samples.
+// wav.h — minimal RIFF/WAVE loader (and 24-bit writer) for DR32 pad samples.
 //
 // Scope is deliberately narrow: what Move's own sample library actually
 // contains, plus what a user can drop in. Measured on device 2026-07-25 —
@@ -44,6 +44,19 @@ dr32_wav_err dr32_wav_load(const char *path, dr32_wav *out);
 
 /** Free the buffer and zero the struct. Safe on an already-freed/zeroed wav. */
 void dr32_wav_free(dr32_wav *w);
+
+/** WRITE `frames` of interleaved float as 24-bit PCM WAV — the format most of
+ *  the Move's stock library uses (measured 2026-09-22: 144 of the readable
+ *  stock WAVs are 24-bit, 45 are 16). Values are clipped to [-1, 1). The file
+ *  appears under `path` only once it is complete: it is written to a sibling
+ *  ".part" name and renamed, so a browser never lists half a file. Returns
+ *  0, or -1 (errno says why). NEVER on the audio thread. */
+int dr32_wav_write24(const char *path, const float *data, size_t frames,
+                     int channels, int sample_rate);
+
+/** One float as the 24-bit writer will store it, read back as the loader will
+ *  decode it — so an in-memory buffer can be made bit-identical to the file. */
+float dr32_wav_q24(float x);
 
 /** Human-readable error, for logging off the audio thread. */
 const char *dr32_wav_strerror(dr32_wav_err e);

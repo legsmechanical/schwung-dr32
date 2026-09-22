@@ -104,6 +104,10 @@
             {
               "level": "output",
               "label": "Master"
+            },
+            {
+              "level": "resample",
+              "label": "Resample"
             }
           ],
           "knobs": []
@@ -572,6 +576,21 @@
             }
           ],
           "knobs": ["master"]
+        },
+        "resample": {
+          "name": "Resample",
+          "params": [
+            {
+              "key": "resample",
+              "name": "Resample",
+              "type": "canvas",
+              "canvas_script": "resample.js",
+              "as_page": true,
+              "enterable": true,
+              "extra_keys": ["rs_status"]
+            }
+          ],
+          "knobs": []
         },
         "kits": {
           "name": "Category",

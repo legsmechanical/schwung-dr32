@@ -157,7 +157,8 @@ has no interface of its own. Every page below is Schwung's own knob grid.</p>
 <span class="pg dim">&nbsp;&nbsp;Engine</span><span class="dim">Tone &middot; Noise / Drum &middot; Shell &middot; Chop &middot; Media / Voice &nbsp;(synth pads)</span><br>
 <span class="pg">Mix</span>VVOL&nbsp;&nbsp;&nbsp;VOL&nbsp;&nbsp;&nbsp;&nbsp;PAN&nbsp;&nbsp;&nbsp;LINK&nbsp;&nbsp;&nbsp;SNDA&nbsp;&nbsp;SNDB&nbsp;&nbsp;PUNCH&nbsp;&nbsp;PTIME<br>
 <span class="pg">Stereo</span>WMODE&nbsp;&nbsp;WIDE&nbsp;&nbsp;&nbsp;WFREQ&nbsp;&nbsp;TIME&nbsp;&nbsp;&nbsp;COMP&nbsp;&nbsp;&nbsp;LATE<br>
-<span class="pg">Master</span>MASTER
+<span class="pg">Master</span>MASTER<br>
+<span class="pg">Resample</span>Resample pad &middot; Resample kit &nbsp;<span class="dim">(click in)</span>
 </div>
 
 <p>Jog moves between pages. The pad banks &mdash; <strong>Pad</strong>, <strong>Shape</strong>
@@ -364,6 +365,27 @@ never modified.</p>
 <p><strong>Synth pads live in the set only.</strong> A Move kit holds samples, so a kit that mixes
 samples and synth drums is kept in your set, and loading a Move kit turns every pad back into a
 sample pad.</p>
+
+<h2>Resample</h2>
+
+<p><strong>Resample</strong> turns a pad into a sample of what it plays and puts that sample on the
+pad. It is the last page: jog to it, then click to go in.</p>
+
+<p><strong>Resample pad</strong> &mdash; tap the pad you want, then click <em>Resample</em>. It is
+taken at the velocity you tapped it with. <strong>Resample kit</strong> &mdash; every synth pad at
+once, at one velocity (100 unless you change it). Sample pads and empty pads are left alone.</p>
+
+<p>The sound is baked in: the engine and its knobs, tuning, the envelope, the filter and Punch come
+back to neutral, so nothing is applied twice. Volume, Pan, the sends, the Stereo page and Choke stay
+live, and the level is matched &mdash; a hit at the captured velocity sounds exactly as it did. A
+sample pad keeps its velocity response; a synth pad's is baked at the captured velocity.</p>
+
+<p>Files go to <em>User Library &rsaquo; Samples &rsaquo; DR32 Resample</em>, 24-bit, named for the
+sound, the velocity and the date (&ldquo;FM Kick v100 2026-09-22&rdquo;), with a number added if
+the name is taken. Capture stops after a second of silence, or at 20 seconds. It runs in the
+background: the pad keeps playing its old sound until the file is written, and leaving the page does
+not stop it. If you change the pad while it runs, the file is still saved but the pad is not
+switched.</p>
 
 <h2>Known limits</h2>
 

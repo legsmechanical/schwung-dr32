@@ -706,6 +706,26 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     return DR32_WAV_OK;
 }
 
+void dr32_kit_adopt_sample(dr32_kit *k, int pad, float *data, size_t frames,
+                           int channels, int sample_rate, const char *path,
+                           long size, long mtime) {
+    if (!k || pad < 0 || pad >= DR32_PADS) { free(data); return; }
+    dr32_pad_slot *s = &k->pads[pad];
+    /* The same order as dr32_kit_load_sample: stop the voice before the
+     * pointer moves, retire rather than free. */
+    s->voice.active = 0;
+    if (s->engine) retire_engine(s);
+    free(s->retired);
+    s->retired = s->sample;
+    s->sample = data;
+    s->frames = data ? frames : 0;
+    s->channels = channels == 2 ? 2 : 1;
+    s->sample_rate = sample_rate;
+    snprintf(s->path, sizeof(s->path), "%s", data && path ? path : "");
+    s->src_size = data ? size : 0;
+    s->src_mtime = data ? mtime : 0;
+}
+
 void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
     if (note < 0 || note > 127) return;
     int pad = k->note_to_pad[note];
@@ -722,6 +742,8 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
      * the gate removed; that plumbing was reverted. Don't re-tread it.) */
     k->last_hit_pad = pad;
     k->last_hit_block = k->block;
+    k->pad_vel[pad] = velocity;
+    k->hit_seq++;
     if (k->ui_auto_select_pad && !k->transport_running && !k->host_vouches) {
         /* Nothing is sequencing, so this note came from a hand. Follow it
          * outright — no vouch needed, on any host. (See transport_running in

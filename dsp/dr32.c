@@ -16,6 +16,7 @@
 #include "dr32_kits.h"
 #include "dr32_state.h"
 #include "dr32_engine.h"
+#include "dr32_resample.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,6 +84,10 @@ typedef struct {
      * to — see the is_loading note in get_param. */
     int        names_dirty;
     unsigned   names_dirty_at;   /* render-block counter of the last swap */
+
+    /* RESAMPLE (dr32_resample.h): renders on its own thread; switched pads
+     * land in dr32_service_resample, from both render paths. */
+    dr32_rs_job *rs;
 } dr32_instance;
 
 /** Capture the freshly-loaded kit as the state baseline. Called after every
@@ -446,6 +451,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
      * fills in from the browser's own reads — see get_param. */
     in->kits = dr32_kits_create();
     in->kit_pending = -1;
+    in->rs = dr32_rs_job_create(DR32_RS_DIR);
     in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
     {
         char path[DR32_MAX_PATH];
@@ -491,6 +497,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
 static void destroy_instance(void *instance) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
+    /* First: the worker reads nothing of the kit, but a switch must not be
+     * waiting on a kit about to be freed. */
+    dr32_rs_job_destroy(in->rs);
     dr32_kit_free(&in->kit);
     dr32_kits_destroy(in->kits);
     free(in->ui_hierarchy_src);
@@ -710,6 +719,28 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    /*
+     * RESAMPLE (Josh, 2026-09-22; the Resample page, src/resample.js). Both
+     * only snapshot and start a thread — the render is never on this callback.
+     *   rs_pad = "<pad 1-32> <velocity>"   the page names the pad and the
+     *            velocity it SHOWED, so what is taken is what was on screen
+     *   rs_kit = "<velocity>"              every synth pad
+     */
+    if (!strcmp(key, "rs_pad")) {
+        int pad = 0, vel = 0;
+        if (sscanf(val, "%d %d", &pad, &vel) == 2 && pad >= 1 && pad <= DR32_PADS) {
+            int p0 = pad - 1;
+            dr32_rs_job_start(in->rs, &in->kit, &p0, 1, vel);
+        }
+        return;
+    }
+    if (!strcmp(key, "rs_kit")) {
+        int pads[DR32_PADS], n = 0;
+        for (int i = 0; i < DR32_PADS; i++) if (dr32_rs_is_synth(&in->kit, i)) pads[n++] = i;
+        if (n) dr32_rs_job_start(in->rs, &in->kit, pads, n, atoi(val));
+        return;
+    }
+
     if (!strcmp(key, "state")) {
         // Schwung restoring a saved slot. The kit is loaded through the same
         // path set_param("kit") uses (via the callback below) so preset loading
@@ -784,6 +815,46 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
             in->names_dirty = 0;
         }
         return snprintf(buf, buf_len, "0");
+    }
+
+    /*
+     * The Resample page's one read (its `extra_keys`, on the host's read
+     * rotation — a draw may not read). The focused pad and the velocity it
+     * was last hit at, `seq` so the page can tell a tap made after it opened,
+     * the synth-pad count for Resample kit, and the job's progress.
+     */
+    if (!strcmp(key, "rs_status")) {
+        const int cp = in->kit.ui_current_pad;
+        const dr32_pad_slot *s = &in->kit.pads[cp];
+        int synths = 0;
+        for (int i = 0; i < DR32_PADS; i++) synths += dr32_rs_is_synth(&in->kit, i);
+        dr32_rs_status st;
+        dr32_rs_job_status(in->rs, &st);
+        int n = snprintf(buf, buf_len, "{\"pad\":%d,\"vel\":%d,\"seq\":%u,\"empty\":%d,\"synths\":%d,"
+                         "\"busy\":%d,\"total\":%d,\"done\":%d,\"switched\":%d,\"saved\":%d,"
+                         "\"failed\":%d,\"clamped\":%d,\"name\":",
+                         cp + 1, in->kit.pad_vel[cp], in->kit.hit_seq,
+                         !(s->engine || (s->sample && s->path[0])), synths,
+                         st.busy, st.total, st.done, st.switched, st.saved_only, st.failed, st.clamped);
+        if (n <= 0 || n >= buf_len) return 0;
+        int m = (s->engine || s->path[0]) ? append_pad_name(s, buf + n, buf_len - n)
+                                          : snprintf(buf + n, buf_len - n, "\"\"");
+        if (m <= 0 || n + m >= buf_len) return 0;
+        n += m;
+        int w = snprintf(buf + n, buf_len - n, ",\"last\":");
+        if (w <= 0 || n + w >= buf_len) return 0;
+        n += w;
+        /* The file name, through the same escaper as a pad name. */
+        dr32_pad_slot tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        snprintf(tmp.path, sizeof(tmp.path), "%s.wav", st.last);
+        m = st.last[0] ? append_pad_name(&tmp, buf + n, buf_len - n)
+                       : snprintf(buf + n, buf_len - n, "\"\"");
+        if (m <= 0 || n + m + 2 > buf_len) return 0;
+        n += m;
+        buf[n++] = '}';
+        buf[n] = '\0';
+        return n;
     }
 
     if (!strcmp(key, "chain_params")) {
@@ -986,6 +1057,19 @@ static void dr32_service_pending_kit(dr32_instance *in) {
     if (path && path[0]) set_param(in, "kit", path);
 }
 
+/* RESAMPLE's switch: a pad whose file is written starts playing it now, here,
+ * on the audio thread, between blocks — the buffer is handed over, not read
+ * back. Part of the per-block housekeeping, so BOTH render paths call it (the
+ * two-render-path rule; see move_plugin_render_split). The pad's name
+ * changes, so the served hierarchy does too, as after a sample load. */
+static void dr32_service_resample(dr32_instance *in) {
+    if (dr32_rs_job_service(in->rs, &in->kit) > 0) {
+        dr32_refresh_hierarchy(in);
+        in->names_dirty = 1;
+        in->names_dirty_at = in->kit.block;
+    }
+}
+
 static void render_block(void *instance, int16_t *out, int frames) {
     dr32_instance *in = (dr32_instance *)instance;
     if (!in) return;
@@ -993,6 +1077,7 @@ static void render_block(void *instance, int16_t *out, int frames) {
 
     dr32_sync_transport(in);
     dr32_service_pending_kit(in);
+    dr32_service_resample(in);
 
     dr32_kit_render(&in->kit, in->scratch, frames);
 
@@ -1054,6 +1139,7 @@ void move_plugin_render_split(void *instance, int16_t *const *voice_out,
      */
     dr32_sync_transport(in);
     dr32_service_pending_kit(in);
+    dr32_service_resample(in);
 
     dr32_kit_render_split(&in->kit, voice_out, n_voices, main_out, frames);
 }
