@@ -129,7 +129,7 @@ Master   MASTR
 - ⚠ **A knob GAP cannot be declared.** `knobKeys` filters null entries out, so authored knobs are
   packed — an intended blank in a `knobs` array closes up rather than reserving a slot.
 
-## 🥁 Synth engines: any pad can be a SIMIAN or URCHIN voice (branch `multiengine`, 2026-09-21)
+## 🥁 Synth engines: any pad can be a SIMIAN, URCHIN, 9W9, 6W6, 8W8 or CW-78 voice (branch `multiengine`)
 
 Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a sample engine
 (what's there now) or a synthesis engine per pad."* Josh's rules:
@@ -210,17 +210,61 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
   cannot say "drum OR snare", and duplicating the drum pages would repeat their keys.
 - LINK spreads an engine param only to pads running the same engine (the key simply is not the
   other pads'). `model` is never linked.
-- **The four forked engines** (`schwung-9W9`, `-6W6`, `-8W8`, `-cw-78`, all GPL-3.0) are the
-  planned next families. Known costs: 9W9's hats and cymbals need its WAVs; 8W8's metal voices
-  share one oscillator bank (per-pad banks change their tuning); 9W9 and CW-78 voices each need a
-  private noise source.
+
+### 🥁 The kit ports: 9W9, 6W6, 8W8, CW-78 (2026-09-22)
+
+Josh: *"let's start porting the other engines over"*. Four whole drum MACHINES by athousanddetails
+(GPL-3.0), vendored UNMODIFIED under `dsp/engines/{9w9,6w6,8w8,cw78}/` (commits in NOTICES.md).
+**One DR32 engine per LANE of a machine** (49 lanes, ids from each `DR32_ENG_*_BASE`), one model
+per lane from the machine's own defaults. Each pad owns a WHOLE machine and renders only its lane,
+through that lane's own drive/distortion stage and the machine's default master volume. The
+machines' reverb, delay, master distortion, glue and CW-78's rhythm player are NOT run.
+
+- ⭐ **"The machine's own voice" is PROVEN, not claimed.** `tests/test_kit_ports.c` renders every
+  lane through the pad AND through the whole vendored machine (its own `*_render`, only that lane
+  hit) and requires them **sample-identical** until DR32's gate stops the pad. It holds on clang and
+  on bookworm GCC. Mutations it catches: dropping the master volume, checking liveness per block
+  instead of per sample (CW-78 residue), no-op knob writes re-quantising 9W9's defaults.
+- **Adapters `#include` the vendored engine source** (`9w9/er99_engine.c`, `*/..._engine.cpp`) to
+  reach the per-lane render helpers the machines keep `static`. The C++ ones wrap it in a namespace
+  (insurance: today the ports namespace their own classes and share no symbol; see the comment in
+  `6w6_engine.cpp`). ⚠ **9W9 stays C** (`dsp/engines/*.c`, its own glob in build.sh/run.sh): C++'s
+  float overloads would change its arithmetic.
+- ⚠ **The machines never stop a lane** (their guard is the choke gain, 1.0 forever after a hit),
+  so the pad gate is DR32's (`kit_port.h`, 100 ms below 0.001), AND a lane the machine says is
+  finished (`active()` false, choke gain 0) ends the pad at once. Liveness is checked PER SAMPLE,
+  as the machines do; a dead lane's sample is an exact 0 and its drive stage is not run.
+- **One page per MACHINE, not per lane** (a page set per lane would be ~50 levels and blow the
+  served hierarchy's 64 KB). Lanes share keys (`n9_`, `s6_`, `e8_`, `c7_` + tune/decay/drive/dist/
+  vel); the page is gated on the second derived gate **`ui_family`** (DR32_FAM_*, in chain_params,
+  on no level, read-only like `ui_engine`), and a lane's own knob on `ui_engine` inside it. A
+  condition names ONE value, so a key must be on every lane, one lane (`equals`) or all but one
+  (`not_equals`); `gen_engine_ui.mjs` refuses anything else. That is why 9W9's toms each have
+  their own `n9_<lane>_attack`. Gates in use: ui_engine, ui_family, filter_type (≤ 4, checked).
+- **Knobs are the machines' 0–127 pots** and go through the machines' own setters. ⚠ 9W9 holds its
+  factory values in ENGINEERING units, off the pot grid: a write that does not move the knob is
+  skipped, or a model load would nudge every default.
+- **Transpose moves the lane's Tune**: added for a semitone (LIN) pot, multiplied for a ratio/Hz
+  (EXP) pot, never on 9W9's kick (Tune = sweep time). The pot is not moved. Pinned exactly:
+  N knob-steps' worth of semitones must sound like Tune + N steps.
+- **9W9's hats/ride/crash are WAVs** (`src/samples/9w9/`, ER-99's), decoded once at class init from
+  `<module dir>/samples/9w9/` (the dir comes from `create_instance`, `dr32_engines_set_module_dir`).
+  `build.sh` ships `samples/` and **`install.sh` copies directories (`scp -r`)**, both pinned by
+  `check_build_script`. A files-only install ships everything but the cymbals.
+- Costs: ~385 KB per pad (the machine struct, mostly its unused delay line; 9W9 zero-fills it, so
+  its pages are resident). CPU per voice is below every URCHIN voice (bench, 2026-09-22).
+- Velocity is the MACHINE's (per-pad `*_vel` = its master velocity depth; on 8W8/CW-78 it is a
+  trigger voltage, i.e. timbre), so `vel_vol` starts at 0 as for the Faust engines.
+
 - **Licence:** GPL-3.0-or-later since the engines (they are GPL; the combined `dsp.so` is too).
   `NOTICES.md` carries the MIT notice for the earlier code, including Charles's two PRs.
 
 Tests: `tests/test_engine.c` (every model sounds, is a hit, is deterministic, starts in its own
-block, retriggers, goes quiet; tune; key uniqueness) and `tests/test_synth_pads.c` (ui_engine,
-params, both render paths, level/pan, choke across kinds, panic, back to sample, kit load, LINK,
-state round trip, plugin names/split/state).
+block, retriggers, goes quiet; tune; keys: one knob wherever a key appears),
+`tests/test_kit_ports.c` (the A/B against the machines, transpose = Tune, every knob reaches the
+machine) and `tests/test_synth_pads.c` (ui_engine/ui_family, params, both render paths,
+level/pan, choke across kinds, panic, back to sample, kit load, LINK, state round trip, 9W9's
+WAVs, plugin names/split/state/module dir).
 
 ## 🎛 The UI is the host's param-pages grid — DR32 ships no UI of its own (since 0.2.0, 2026-09-05)
 

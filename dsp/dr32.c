@@ -15,6 +15,7 @@
 #include "dr32_preset.h"
 #include "dr32_kits.h"
 #include "dr32_state.h"
+#include "dr32_engine.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -427,6 +428,9 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     dr32_instance *in = (dr32_instance *)calloc(1, sizeof(dr32_instance));
     if (!in) return NULL;
     dr32_kit_init(&in->kit);
+    /* Where 9W9 finds its cymbal WAVs. Only the path is kept here: the PCM is
+     * decoded when a 9W9 model is first picked, never on the SPI callback. */
+    dr32_engines_set_module_dir(module_dir);
     /* Empty, and NOT scanned here: create_instance is on the SPI callback too,
      * so walking ~442 files at this point would stall the load. The catalogue
      * fills in from the browser's own reads — see get_param. */

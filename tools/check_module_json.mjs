@@ -177,15 +177,49 @@ const ALL_PAD_LEVELS = [...PAD_LEVELS, ...ENGINE_LEVELS];
             errors.push(`level "${lname}" lists "${GATE}" — the gate must be on no level (docs/MODULES.md, "The gate does not need a cell")`);
     }
     const onGate = (g, v) => g && g.param === GATE && g.equals === v;
-    /* Every engine page is gated to exactly one engine... */
+    /* The kit ports' second gate: their lanes share ONE page set per
+     * instrument, gated on ui_family (DR32_FAM_*, 3 and up), with a lane's
+     * own knob gated on ui_engine inside it. Same rules as ui_engine: in
+     * chain_params, on no level. */
+    const FGATE = 'ui_family';
+    const famPages = ENGINE_LEVELS.filter((n) => (levels[n].visible_if || {}).param === FGATE);
+    if (famPages.length) {
+        if (!(caps.chain_params || []).some((p) => p && p.key === FGATE))
+            errors.push(`chain_params must declare "${FGATE}" — the kit ports' pages gate on it`);
+        for (const [lname, lvl] of Object.entries(levels))
+            if ((lvl.params || []).some((p) => p && p.key === FGATE) || (lvl.knobs || []).includes(FGATE))
+                errors.push(`level "${lname}" lists "${FGATE}" — a gate must be on no level`);
+    }
+    /* Every engine page is gated to exactly one engine, or to one kit port... */
     for (const name of ENGINE_LEVELS) {
         const lvl = levels[name];
         const g = lvl.visible_if;
-        if (!g || g.param !== GATE || !Number.isInteger(g.equals) || g.equals < 1)
-            errors.push(`levels.${name} must carry visible_if {param:"${GATE}", equals:<engine id>}; ungated, it shows on every pad`);
+        const fam = g && g.param === FGATE;
+        if (!g || (g.param !== GATE && !fam) || !Number.isInteger(g.equals) || g.equals < (fam ? 3 : 1))
+            errors.push(`levels.${name} must carry visible_if {param:"${GATE}", equals:<engine id>} or {param:"${FGATE}", equals:<kit port>}; ungated, it shows on every pad`);
         const knobs = (lvl.knobs || []).filter(Boolean);
-        if (knobs.length > 8)
-            errors.push(`levels.${name} has ${knobs.length} knobs; an engine page is one bank`);
+        /* One bank per LANE: on a kit port's page a knob gated on ui_engine
+         * shows on one lane (equals) or all but one (not_equals), so count
+         * what each lane actually sees. A lane named by no gate sees only the
+         * ungated knobs. */
+        const kg = (k) => ((lvl.params || []).find((p) => p && p.key === k) || {}).visible_if || null;
+        for (const k of knobs) {
+            const gk = kg(k);
+            if (gk && (gk.param !== GATE || (gk.equals === undefined) === (gk.not_equals === undefined)))
+                errors.push(`levels.${name}.${k}: a knob on an engine page may only be gated on ${GATE} (equals or not_equals)`);
+            if (gk && !fam)
+                errors.push(`levels.${name}.${k} is gated, but its page belongs to one engine already`);
+        }
+        const ids = new Set([-1]);
+        for (const k of knobs) { const gk = kg(k); if (gk) ids.add(gk.equals !== undefined ? gk.equals : gk.not_equals); }
+        for (const id of ids) {
+            const seen = knobs.filter((k) => {
+                const gk = kg(k);
+                return !gk || (gk.equals !== undefined ? gk.equals === id : gk.not_equals !== id);
+            }).length;
+            if (seen > 8)
+                errors.push(`levels.${name} shows ${seen} knobs${id >= 0 ? ` on engine ${id}` : ''}; an engine page is one bank`);
+        }
         for (const k of knobs)
             if (!(lvl.params || []).some((p) => p && p.key === k))
                 errors.push(`levels.${name} puts "${k}" on a knob but declares it nowhere — engine params must be declared inline (a key only some pads have cannot borrow metadata)`);
@@ -223,6 +257,20 @@ const ALL_PAD_LEVELS = [...PAD_LEVELS, ...ENGINE_LEVELS];
     const ck = (levels.pads || {}).child_copy_keys || [];
     if (ck.indexOf('model') !== ck.indexOf('sample') + 1)
         errors.push('child_copy_keys must list "model" immediately after "sample"');
+}
+
+// 5a'. the host evaluates at most FOUR distinct gate params per module (the
+//      #533 condition-read budget). Counted on the MERGED document.
+{
+    const gates = new Set();
+    const walk = (o) => {
+        if (!o || typeof o !== 'object') return;
+        if (o.visible_if && o.visible_if.param) gates.add(o.visible_if.param);
+        for (const v of Object.values(o)) walk(v);
+    };
+    walk(caps.ui_hierarchy);
+    if (gates.size > 4)
+        errors.push(`${gates.size} distinct visible_if params (${[...gates].join(', ')}); the host evaluates at most 4`);
 }
 
 // 5b. the three banks must partition the pad params — no key on two banks

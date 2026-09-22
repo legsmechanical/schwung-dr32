@@ -173,7 +173,7 @@ extern "C" {
 
 const dr32_engine_ops dr32_engine_simian = {
     DR32_ENG_SIMIAN, "simian", "Simian", "sm_", N, T.params,
-    create, destroy, set, note_on, choke, render,
+    create, destroy, set, note_on, choke, render, DR32_FAM_SIMIAN,
 };
 
 const dr32_model *dr32_simian_models(int *count) {

@@ -323,6 +323,17 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         int e = (cur >= 0 && cur < DR32_PADS) ? kit->pads[cur].engine : 0;
         return snprintf(buf, buf_len, "%d", e);
     }
+    /* THE SECOND GATE: which INSTRUMENT that engine comes from (DR32_FAM_*).
+     * The kit ports (9W9, 6W6, 8W8, CW-78) are one engine per lane but share
+     * ONE page set per instrument, gated on this; a lane's own extra knob is
+     * then gated on ui_engine inside it. Derived like ui_engine, refused the
+     * same way. */
+    if (!strcmp(key, "ui_family")) {
+        int cur = kit->ui_current_pad;
+        const dr32_pad_slot *s = (cur >= 0 && cur < DR32_PADS) ? &kit->pads[cur] : NULL;
+        int f = (s && s->engine && s->eops) ? s->eops->family : DR32_FAM_SAMPLE;
+        return snprintf(buf, buf_len, "%d", f);
+    }
     if (!strcmp(key, "ui_auto_select_pad"))
         return snprintf(buf, buf_len, "%s", kit->ui_auto_select_pad ? "on" : "off");
     if (!strcmp(key, "link"))
@@ -556,6 +567,7 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         return 1;
     }
     if (!strcmp(key, "ui_engine")) return 1;   /* derived — see the read path */
+    if (!strcmp(key, "ui_family")) return 1;   /* derived too */
     if (!strcmp(key, "ui_current_pad")) {
         int v = atoi(val) - 1;                   /* 1-based on the wire */
         kit->ui_current_pad = (v < 0) ? 0 : (v >= DR32_PADS ? DR32_PADS - 1 : v);

@@ -31,10 +31,12 @@ ssh "ableton@${HOST}" "mv -f '${DEST}/.dsp.so.new' '${DEST}/dsp.so'"
 # row for a module with no help.json, so the symptom was a missing FEATURE
 # rather than an error. dsp.so is excluded only because it needs the
 # temp-name + mv dance above to dodge ETXTBSY.
+# Directories too (-r): 9W9's cymbal WAVs are dist/<id>/samples/9w9/, and a
+# files-only loop shipped the rest of the package without them — silently.
 for f in "$HERE/dist/${MODULE_ID}"/*; do
-    [ -f "$f" ] || continue
+    [ -f "$f" ] || [ -d "$f" ] || continue
     [ "$(basename "$f")" = "dsp.so" ] && continue
-    scp "$f" "ableton@${HOST}:${DEST}/"
+    scp -r "$f" "ableton@${HOST}:${DEST}/"
 done
 # The canvas Pad Editor is gone (0.2.0); a stale canvas.js left on the device
 # is harmless to the host but misleading to anyone reading the module dir.

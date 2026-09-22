@@ -67,7 +67,7 @@ jobs:
           set -eu
           test -f dist/dr32-module.tar.gz
           tar tzf dist/dr32-module.tar.gz
-          for f in dr32/module.json dr32/dsp.so dr32/help.json; do
+          for f in dr32/module.json dr32/dsp.so dr32/help.json dr32/engine_ui.json dr32/samples/9w9/hh.wav dr32/samples/9w9/ride.wav dr32/samples/9w9/crash.wav; do
             tar tzf dist/dr32-module.tar.gz | grep -qx "$f" || {
               echo "ERROR: $f missing from the tarball" >&2; exit 1; }
           done

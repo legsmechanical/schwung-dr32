@@ -55,6 +55,12 @@ function dumpEngines() {
                 '-c', join(ROOT, 'dsp/engines', f), '-o', o]);
             objs.push(o);
         }
+        for (const f of readdirSync(join(ROOT, 'dsp/engines')).filter((f) => f.endsWith('.c'))) {
+            const o = join(dir, f + '.o');
+            execFileSync('cc', ['-std=c11', '-O1', '-I' + join(ROOT, 'dsp'), '-I' + join(ROOT, 'dsp/engines'),
+                '-c', join(ROOT, 'dsp/engines', f), '-o', o]);
+            objs.push(o);
+        }
         for (const f of ['dsp/dr32_engine.c', 'tools/dump_engines.c']) {
             const o = join(dir, f.replace(/\W/g, '_') + '.o');
             execFileSync('cc', ['-std=c11', '-O1', '-I' + join(ROOT, 'dsp'), '-c', join(ROOT, f), '-o', o]);
@@ -98,6 +104,8 @@ const caps = mj.capabilities;
 const levels = caps.ui_hierarchy.levels;
 
 const GEN = 'eng_';                    /* every generated level's key starts so */
+/* DR32_FAM_* from which a family is a KIT PORT (dsp/dr32_engine.h). */
+const FAMILY_PORTS = 3;
 const engineKeys = new Set(engines.flatMap((e) => e.params.map((p) => p.key)));
 const isGenKey = (k) => k === 'model' || engineKeys.has(k) || engines.some((e) => k.startsWith(e.prefix));
 
@@ -128,29 +136,112 @@ function paramEntry(p) {
     return e;
 }
 
+/*
+ * Engines that share a key PREFIX are one instrument's LANES — the kit ports
+ * (9W9, 6W6, 8W8, CW-78), one engine per lane of the machine. Their lanes have
+ * the same panel (Tune, Decay, Drive, ...), so they share ONE page set, gated
+ * on `ui_family`; a knob only some lanes have is gated on `ui_engine` inside
+ * it. A page set per lane would be ~50 levels, and the served hierarchy has
+ * to cross a 64 KB value channel (dr32.c load_ui_hierarchy).
+ *
+ * ⚠ A condition tests ONE value. So a knob must be on every lane of its
+ * instrument, on exactly one (`equals`), or on all but one (`not_equals`);
+ * anything else cannot be expressed and is refused here — give each lane its
+ * own key instead (9W9's toms each have `n9_<lane>_attack`).
+ *
+ * An engine with a prefix of its own (SIMIAN, URCHIN's three) is a group of
+ * one and keeps the shape it had: its pages gated on `ui_engine == id`.
+ */
+const groups = [];
+for (const e of engines) {
+    let g = groups.find((x) => x.prefix === e.prefix);
+    if (!g) groups.push(g = { prefix: e.prefix, engines: [] });
+    g.engines.push(e);
+}
+
+/* The union of a group's params, each lane's own ORDER kept: a key new to the
+ * union goes straight after the key that precedes it in its lane, so a lane's
+ * extra lands next to the knob it belongs beside (the snare's Snappy after
+ * Decay, not after Velocity). */
+function unionParams(g) {
+    const out = [];
+    const lanes = new Map();
+    for (const e of g.engines) {
+        let prev = null;
+        for (const p of e.params) {
+            const at = out.findIndex((x) => x.key === p.key);
+            if (at < 0) {
+                const pi = prev === null ? -1 : out.findIndex((x) => x.key === prev);
+                /* After the predecessor AND any keys already slotted after it
+                 * for other lanes' extras — up to the next key this lane has. */
+                let ins = pi + 1;
+                const laneKeys = e.params.map((x) => x.key);
+                while (ins < out.length && !laneKeys.includes(out[ins].key)) ins++;
+                out.splice(ins, 0, p);
+                lanes.set(p.key, [e.id]);
+            } else {
+                const q = out[at];
+                for (const f of ['name', 'short_name', 'min', 'max', 'page', 'options', 'unit'])
+                    if (q[f] !== p[f])
+                        throw new Error(`${p.key}: lane ${e.slug} declares ${f}=${p[f]}, another lane ${q[f]} — a shared key is one knob`);
+                lanes.get(p.key).push(e.id);
+            }
+            prev = p.key;
+        }
+    }
+    return { params: out, lanes };
+}
+
+function laneGate(g, key, lanes) {
+    const all = g.engines.map((e) => e.id);
+    const on = lanes.get(key);
+    if (on.length === all.length) return null;
+    if (on.length === 1) return { param: 'ui_engine', equals: on[0] };
+    if (on.length === all.length - 1)
+        return { param: 'ui_engine', not_equals: all.find((id) => !on.includes(id)) };
+    throw new Error(`${key} is on ${on.length} of ${all.length} ${g.prefix} lanes — a condition can ` +
+                    `only name one lane; give each lane its own key`);
+}
+
 /* Rebuild the level table with the generated levels removed, then re-add them
  * right after pad_shape — the nav order is Kits, Pad, Shape | engine pages,
  * Mix, Master, and a gated level simply drops out of it. */
 const newLevels = {};
 const genLevels = [];
-for (const e of engines) {
+for (const g of groups) {
+    const shared = g.engines.length > 1 && new Set(g.engines.map((e) => e.family)).size === 1
+                   && g.engines[0].family >= FAMILY_PORTS;
+    if (g.engines.length > 1 && !shared)
+        throw new Error(`prefix ${g.prefix} is shared by engines that are not one kit port's lanes`);
+    const { params, lanes } = shared ? unionParams(g) : { params: g.engines[0].params, lanes: null };
     const pages = [];
-    for (const p of e.params) {
+    for (const p of params) {
         let pg = pages.find((x) => x.name === p.page);
         if (!pg) pages.push(pg = { name: p.page, params: [] });
         pg.params.push(p);
     }
     for (const pg of pages) {
-        if (pg.params.length > 8)
-            throw new Error(`${e.slug} page "${pg.name}" has ${pg.params.length} knobs; a bank holds 8`);
-        const key = GEN + e.prefix + pg.name.toLowerCase().replace(/\W+/g, '_');
-        const lv = { name: pg.name, visible_if: { param: 'ui_engine', equals: e.id } };
+        /* A bank holds 8 knobs — counted per LANE, since a lane sees only its
+         * own. */
+        for (const e of g.engines) {
+            const n = pg.params.filter((p) => !lanes || lanes.get(p.key).includes(e.id)).length;
+            if (n > 8) throw new Error(`${e.slug} page "${pg.name}" has ${n} knobs; a bank holds 8`);
+        }
+        const key = GEN + g.prefix + pg.name.toLowerCase().replace(/\W+/g, '_');
+        const lv = { name: pg.name,
+                     visible_if: shared ? { param: 'ui_family', equals: g.engines[0].family }
+                                        : { param: 'ui_engine', equals: g.engines[0].id } };
         for (const t of TEMPLATE) lv[t] = shape[t];
         /* Copy/Clear act on the level you are STANDING on, so every pad
          * level carries the same full list (filled in below). */
         lv.child_copy_keys = [];
-        lv._engine = e;                        /* for the copy list below; not emitted */
-        lv.params = pg.params.map(paramEntry);
+        lv._keys = params.map((p) => p.key);   /* for the copy list below; not emitted */
+        lv.params = pg.params.map((p) => {
+            const ent = paramEntry(p);
+            const gate = shared ? laneGate(g, p.key, lanes) : null;
+            if (gate) ent.visible_if = gate;
+            return ent;
+        });
         lv.knobs = pg.params.map((p) => p.key);
         genLevels.push([key, lv]);
     }
@@ -178,12 +269,16 @@ const withKeys = (keys) => {
     base.splice(base.indexOf('sample') + 1, 0, 'model', ...keys);
     return base;
 };
-const allKeys = engines.flatMap((e) => e.params.map((p) => p.key));
+const allKeys = [...new Set(engines.flatMap((e) => e.params.map((p) => p.key)))];
 for (const lv of Object.values(newLevels))
     if (Array.isArray(lv.child_copy_keys)) lv.child_copy_keys = withKeys(allKeys);
 for (const [, lv] of genLevels) {
-    lv.child_copy_keys = withKeys(lv._engine.params.map((p) => p.key));
-    delete lv._engine;
+    /* In the base banks' ORDER, not the page's: a kit port's page lays its
+     * lanes' extras out beside the knobs they belong to, which is not the
+     * order the base banks list them in, and two orders are two lists. */
+    const own = new Set(lv._keys);
+    lv.child_copy_keys = withKeys(allKeys.filter((k) => own.has(k)));
+    delete lv._keys;
 }
 
 /* The gate, in chain_params: that is the table the grid's condition evaluator
@@ -193,6 +288,12 @@ const gate = { key: 'ui_engine', name: 'Engine', type: 'int', min: 0,
                max: Math.max(...engines.map((e) => e.id)), default: 0 };
 const gi = caps.chain_params.findIndex((p) => p.key === 'ui_engine');
 if (gi >= 0) caps.chain_params[gi] = gate; else caps.chain_params.push(gate);
+/* The second gate: the kit ports' page sets follow the INSTRUMENT. */
+const fgate = { key: 'ui_family', name: 'Instrument', type: 'int', min: 0,
+                max: Math.max(...engines.map((e) => e.family)), default: 0 };
+const fi = caps.chain_params.findIndex((p) => p.key === 'ui_family');
+if (fi >= 0) caps.chain_params[fi] = fgate;
+else caps.chain_params.splice(caps.chain_params.findIndex((p) => p.key === 'ui_engine') + 1, 0, fgate);
 
 const outMj = ser(mj, 0, false) + '\n';
 
@@ -205,11 +306,13 @@ const outEu = JSON.stringify({
 }) + '\n';
 
 /* ---- browser.js model list -------------------------------------------- */
+/* A section's label, where capitalising its slug prefix is not the name. */
+const FAMILY_LABEL = { '9w9': '9W9', '6w6': '6W6', '8w8': '8W8', cw78: 'CW-78' };
 const fams = [];
 for (const m of models) {
     const id = m.slug.split('/')[0];
     let f = fams.find((x) => x.id === id);
-    if (!f) fams.push(f = { id, label: id.charAt(0).toUpperCase() + id.slice(1), models: [] });
+    if (!f) fams.push(f = { id, label: FAMILY_LABEL[id] || id.charAt(0).toUpperCase() + id.slice(1), models: [] });
     f.models.push({ slug: m.slug, name: m.name });
 }
 const br = readFileSync(BR, 'utf8');

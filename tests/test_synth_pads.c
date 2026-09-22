@@ -390,11 +390,101 @@ int main(void) {
         dr32_kit_free(&a); dr32_kit_free(&b);
     }
 
+    /* ---- the kit ports: one engine per lane, one page set per machine ---- */
+    {
+        static dr32_kit a, b;
+        dr32_engines_set_module_dir("src");     /* 9W9's cymbal WAVs, src/samples/9w9/ */
+        dr32_kit_init(&a); dr32_kit_init(&b);
+        set(&a, "pad1_model", "9w9/kick");
+        set(&a, "pad2_model", "6w6/snare");
+        set(&a, "pad3_model", "cw78/guiro");
+        set(&a, "pad4_model", "8w8/cowbell");
+        set(&a, "pad5_model", "9w9/ride");
+        CHECK(a.pads[0].engine == DR32_ENG_9W9_BASE && a.pads[2].engine == DR32_ENG_CW78_BASE + 12,
+              "lane engines %d %d", a.pads[0].engine, a.pads[2].engine);
+        CHECK(!strcmp(get(&a, "pad1_sample"), "Bass Drum"), "the engine cell names the lane: %s", get(&a, "pad1_sample"));
+
+        /* THE TWO GATES follow focus: ui_family picks the machine's page set,
+         * ui_engine the lane's own knob inside it. Both refuse writes. */
+        set(&a, "ui_current_pad", "1");
+        CHECK(!strcmp(get(&a, "ui_family"), "3") && !strcmp(get(&a, "ui_engine"), "5"),
+              "9W9 kick: family %s engine %s", get(&a, "ui_family"), get(&a, "ui_engine"));
+        set(&a, "ui_family", "0");
+        CHECK(!strcmp(get(&a, "ui_family"), "3"), "ui_family is read-only");
+        set(&a, "ui_current_pad", "2");
+        CHECK(!strcmp(get(&a, "ui_family"), "4"), "6W6 snare: family %s", get(&a, "ui_family"));
+        set(&a, "ui_current_pad", "3");
+        CHECK(!strcmp(get(&a, "ui_family"), "6"), "CW-78 guiro: family %s", get(&a, "ui_family"));
+        set(&a, "ui_current_pad", "9");
+        CHECK(!strcmp(get(&a, "ui_family"), "0"), "an empty pad is family 0 (%s)", get(&a, "ui_family"));
+        set(&a, "pad9_model", "simian/kick");
+        CHECK(!strcmp(get(&a, "ui_family"), "1"), "SIMIAN is family 1 (%s)", get(&a, "ui_family"));
+
+        /* Params: an enum by name, a lane's extra, and a SHARED key that lands
+         * only on pads whose lane has it. */
+        set(&a, "pad1_n9_dist", "SAT");
+        CHECK(!strcmp(get(&a, "pad1_n9_dist"), "SAT"), "enum by name: %s", get(&a, "pad1_n9_dist"));
+        set(&a, "pad1_n9_bd_attack", "90");
+        CHECK(!strcmp(get(&a, "pad1_n9_bd_attack"), "90"), "a lane's own knob: %s", get(&a, "pad1_n9_bd_attack"));
+        set(&a, "pad5_n9_bd_attack", "90");
+        CHECK(get(&a, "pad5_n9_bd_attack")[0] == 0, "the kick's knob does not exist on the ride (%s)",
+              get(&a, "pad5_n9_bd_attack"));
+        set(&a, "pad3_c7_gu_rate", "10");
+        set(&a, "pad3_c7_decay", "70");
+        set(&a, "pad2_s6_sd_snappy", "100");
+        set(&a, "pad4_e8_tune", "80");
+        set(&a, "pad4_transpose", "5");
+        CHECK(!strcmp(get(&a, "pad4_e8_tune"), "80"), "shared key: %s", get(&a, "pad4_e8_tune"));
+        CHECK(get(&a, "pad2_e8_tune")[0] == 0, "an 8W8 key is not a 6W6 pad's");
+
+        /* State: the pads come back as the same lanes with the same knobs,
+         * and play the same. */
+        static char blob[65536];
+        int n = dr32_state_write(&a, "", blob, sizeof blob, NULL);
+        CHECK(n > 0 && strstr(blob, "\"pad3_model\":\"cw78/guiro\"") && strstr(blob, "\"pad3_c7_gu_rate\":\"10\""),
+              "kit-port pads persisted");
+        dr32_state_read(&b, blob, NULL, NULL);
+        const char *keys[] = {"pad1_model", "pad1_n9_dist", "pad1_n9_bd_attack", "pad2_s6_sd_snappy",
+                              "pad3_c7_gu_rate", "pad3_c7_decay", "pad4_e8_tune", "pad4_transpose",
+                              "pad5_model", NULL};
+        for (int i = 0; keys[i]; i++)
+            CHECK(!strcmp(get(&a, keys[i]), get(&b, keys[i])), "%s: %s vs %s", keys[i], get(&a, keys[i]), get(&b, keys[i]));
+        static float oa[2 * FR], ob[2 * FR];
+        int same = 1;
+        float pk = 0;
+        for (int note = 36; note <= 40; note++) { dr32_kit_note_on(&a, note, 110); dr32_kit_note_on(&b, note, 110); }
+        for (int blk = 0; blk < 200; blk++) {
+            dr32_kit_render(&a, oa, FR); dr32_kit_render(&b, ob, FR);
+            if (memcmp(oa, ob, sizeof oa)) same = 0;
+            for (int i = 0; i < 2 * FR; i++) if (fabsf(oa[i]) > pk) pk = fabsf(oa[i]);
+        }
+        CHECK(same, "a restored kit-port kit renders identically");
+        CHECK(pk > 0.05f, "and it sounds (peak %g)", (double)pk);
+
+        /* The ride is a SAMPLE lane: it plays only if the WAVs were found. */
+        static dr32_kit c;
+        dr32_kit_init(&c);
+        set(&c, "pad1_model", "9w9/ride");
+        dr32_kit_note_on(&c, 36, 120);
+        pk = 0;
+        for (int blk = 0; blk < 100; blk++) {
+            dr32_kit_render(&c, oa, FR);
+            for (int i = 0; i < 2 * FR; i++) if (fabsf(oa[i]) > pk) pk = fabsf(oa[i]);
+        }
+        CHECK(pk > 0.02f, "9W9 ride plays its PCM (peak %g)", (double)pk);
+        dr32_kit_free(&a); dr32_kit_free(&b); dr32_kit_free(&c);
+    }
+
     /* ---- the plugin: names, the is_loading pulse, split_voices ---------- */
     {
         plugin_api_v2_t *api = move_plugin_init_v2(NULL);
+        dr32_engines_set_module_dir(NULL);
         void *inst = api ? api->create_instance("src", NULL) : NULL;
         CHECK(inst != NULL, "create_instance");
+        /* where 9W9's cymbal WAVs are found comes from the instance */
+        CHECK(dr32_engines_module_dir() && !strcmp(dr32_engines_module_dir(), "src"),
+              "create_instance hands the engines its module dir (%s)",
+              dr32_engines_module_dir() ? dr32_engines_module_dir() : "NULL");
         if (inst) {
             static char buf[65536];
             api->set_param(inst, "pad7_model", "urchin/hat_open");

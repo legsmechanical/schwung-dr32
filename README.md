@@ -33,20 +33,32 @@ choke groups, two envelope modes (A-H-D and A-S-R), four filter types, velocity 
 level and Punch. Pad names follow the sample, so the header tells you which drum you're on.
 
 **Any pad can be a synthesised drum instead.** The **ENGN** knob opens a picker with a section per
-engine: **Sample** (the Move and User libraries, as always), **Simian** and **Urchin**. Pick a
-drum, such as *Kick*, *Closed Hat* or *Rimshot*, and that pad stops being a sampler and plays that
-engine's voice. Mix and match freely: a sampled kick, a Simian clap and an Urchin ride can sit in
-one kit. Everything around the voice stays DR32's: volume, pan, velocity, choke groups, the sends,
+engine: **Sample** (the Move and User libraries, as always), **Simian**, **Urchin**, **9W9**, **6W6**,
+**8W8** and **CW-78**. Pick a drum, such as *Kick*, *Closed Hat* or *Rimshot*, and that pad stops
+being a sampler and plays that engine's voice. Mix and match freely: a sampled kick, an 8W8 cowbell,
+a Simian clap and an Urchin ride can sit in one kit. Everything around the voice stays DR32's: volume, pan, velocity, choke groups, the sends,
 Link, Copy and Delete, and the per-pad buses all treat a synth pad the same as a sample pad.
 
 | engine | what it is | its pages |
 |---|---|---|
 | **Simian** | [OneTrick SIMIAN 2](https://punklabs.com/ot-simian)'s voice: a tuned oscillator that morphs from triangle to cymbal, resonant-filtered noise and a click, all swept by one envelope. The early-80s electronic drum. | Tone · Noise |
 | **Urchin** | OneTrick URCHIN's physically modelled drums: a struck shell with a resonant head for kicks, toms and snares (with Rim), and a bank of inharmonic partials for hats and cymbals (with Closed, the hat pedal) | Drum · Shell · Chop · Media, or Cymbal · Chop · Media |
+| **9W9** | [9W9](https://github.com/athousanddetails/schwung-9W9)'s TR-909 style voices: circuit-modelled kick, snare, toms, rim and clap, and the sampled hats, ride and crash, as on the real machine. 11 drums | Voice |
+| **6W6** | [6W6](https://github.com/athousanddetails/schwung-6W6)'s TR-606 style voices, built on AudioKit's 606-Inspired-Synth-Drums. 8 drums | Voice |
+| **8W8** | [8W8](https://github.com/athousanddetails/schwung-8W8)'s TR-808 style circuit models, congas, claves, maracas and cowbell included. 16 drums | Voice |
+| **CW-78** | [CW-78](https://github.com/athousanddetails/schwung-cw-78)'s CR-78 style voices, modelled from the service notes: bongos, guiro, tambourine and metal beat among them. 14 drums | Voice |
 
 Each drum starts from the engine's own factory values and is yours to change from there. The pages
 follow the pad: hit a Simian pad and you get its Tone and Noise pages, hit a sample pad and you get
 Shape. A synth pad has no Start/End, Shape or Punch, because those belong to the sampler.
+
+The four drum machines (9W9, 6W6, 8W8, CW-78) each give a pad **one lane of the machine**, played
+exactly as the machine plays it, sample for sample. The page is the machine's own panel for that
+drum: **Tune**, **Decay**, **Drive** and **Distortion** on every drum, **Velocity** (how far a soft
+hit falls below a hard one, and on most drums how it changes the sound), and the drum's own extra
+knob where it has one, such as Attack, Snappy, Noise or Rate. The knobs run 0–127, like the
+machines' own. What the machines have around their drums (reverb, delay, master drive, the
+CW-78's rhythm player) is not here: DR32's Mix page and sends do that job.
 
 **Sample swapping without leaving the page.** On a sample pad, **ENGN** opens straight into the folder
 that pad's sample came from, with the cursor on it. Scrolling puts each sample on the pad as you land
@@ -97,6 +109,7 @@ Jog moves between them.
 | **Shape** | Attack · Decay · Hold · Envelope · Cutoff · Reso · Type · Filter *(sample pads)* |
 | **Tone · Noise** | the Simian voice *(Simian pads)* |
 | **Drum · Shell · Chop · Media / Cymbal · Chop · Media** | the Urchin voice, and its record: Vinyl/Tape noise, Sat, Rate, Bits *(Urchin pads)* |
+| **Voice** | Tune · Decay · the drum's own knob · Drive · Distortion · Velocity *(9W9, 6W6, 8W8, CW-78 pads)* |
 | **Mix** | Vel Vol · Volume · Pan · Link · Send A · Send B · Punch · Punch Time |
 | **Master** | level for the whole kit |
 
@@ -126,6 +139,11 @@ the device too, under Module Help.
   On an older host every engine's pages show at once. That's cluttered but it still works.
 - A synth pad's velocity response is the engine's own, so its **Vel Vol** starts at 0. Turn it up to
   add DR32's velocity-to-volume on top.
+- **Transpose on a drum-machine pad moves its Tune.** 9W9's kick is the exception: its Tune is the
+  pitch sweep's time, not a pitch (the 909 kick's base note is fixed), so transpose leaves it alone.
+- **Each drum-machine pad is a whole machine of its own.** Two 8W8 hat pads do not share the metal
+  oscillators the way the machine's own hats do, and two CW-78 noise drums do not hear the same
+  noise. A 9W9 pad holds about 380 KB of memory.
 - **Return-chain effects saved inside a kit are preserved but not set up for you** — a kit's send
   *amounts* are imported, but what sits on the return is yours to choose.
 
@@ -136,7 +154,10 @@ the device too, under Module Help.
 
 The synth engines are Punk Labs' **OneTrick SIMIAN 2** and **OneTrick URCHIN**, GPL-3.0-or-later
 and unmodified. They are *free as in rights, not as in beer*: if you play them, buy them from
-[Punk Labs](https://punklabs.com). [`NOTICES.md`](NOTICES.md) has the full breakdown.
+[Punk Labs](https://punklabs.com). The drum machines are **athousanddetails**' 9W9, 6W6, 8W8 and
+CW-78 (GPL-3.0), unmodified, with the work they build on: ER-99 by Matthew Cieplak (9W9's cymbal
+samples), AudioKit's 606-Inspired-Synth-Drums (6W6's voices, MIT) and sc808 (8W8's rim shot, MIT).
+[`NOTICES.md`](NOTICES.md) has the full breakdown.
 
 The sample engine is a **reconstruction, not a design** — its behaviour comes from analysis of and
 measurement against Move's own, which means any audible deviation is a bug even when it sounds

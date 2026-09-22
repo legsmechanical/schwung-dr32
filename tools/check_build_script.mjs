@@ -202,6 +202,13 @@ if (isBuild) {
     } else if (!/dsp\/engines\/\*\.cpp/.test(cxx.text)) {
         errors.push(`line ${cxx.n} lists engines explicitly: \`${cxx.text}\` — glob dsp/engines/*.cpp.`);
     }
+    /* ...and the C engines (9W9), from their own glob. */
+    if (!code.some((l) => /^for src in dsp\/engines\/\*\.c;/.test(l.text))) {
+        errors.push(
+            `no \`for src in dsp/engines/*.c\` loop in ${path}\n` +
+            `        tests/run.sh compiles the C engines (9W9) from that glob; without it dsp.so ` +
+            `fails at dlopen on dr32_9w9_engine.`);
+    }
 
     /* ---- 3c. the shared link must refuse undefined symbols -------------------- */
 
@@ -278,11 +285,24 @@ if (isBuild && !/cp\s+src\/engine_ui\.json\s/.test(src)) {
                 'the served hierarchy by name, and without it every synth pad loses its engine pages, silently.');
 }
 
+/* 9W9's cymbals are WAVs the DSP opens by path at class init — silent if
+ * missing, the same shape again. */
+if (isBuild && !/cp\s+-R\s+src\/samples\s/.test(src)) {
+    errors.push('build.sh never copies src/samples into dist/<id>/ — 9W9 reads its hat and cymbal ' +
+                'PCM from <module dir>/samples/9w9/ and those lanes go silent without it.');
+}
+
 /* ---- 5. install.sh must ship what build.sh packaged, not a second list ----
  *
  * Checked in install.sh rather than build.sh, so it is passed that path
  * explicitly by tests/run.sh. Skipped when we were handed the build script. */
 if (isInstall) {
+    /* The package has a DIRECTORY in it (samples/9w9/): a loop that copies
+     * files only ships everything else and silently drops it. */
+    if (!code.some((l) => /^scp -r\b/.test(l.text))) {
+        errors.push('install.sh never copies directories (`scp -r`) — dist/<id>/samples/ holds 9W9\'s ' +
+                    'cymbal WAVs, and a files-only loop leaves those four lanes silent on the device.');
+    }
     const names = code.find((l) => /^for f in (module\.json|ui\.js)/.test(l.text));
     if (names) {
         errors.push(

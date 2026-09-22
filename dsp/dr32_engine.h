@@ -36,7 +36,28 @@ enum {
     DR32_ENG_URCHIN_DRUM   = 2,
     DR32_ENG_URCHIN_SNARE  = 3,
     DR32_ENG_URCHIN_CYMBAL = 4,
-    DR32_ENG_COUNT         = 5,
+    /* The kit ports (9W9, 6W6, 8W8, CW-78): ONE ENGINE PER LANE of the
+     * machine, a contiguous run each, in the machine's own lane order. */
+    DR32_ENG_9W9_BASE      = 5,     /* 11 lanes:  5..15 */
+    DR32_ENG_6W6_BASE      = 16,    /*  8 lanes: 16..23 */
+    DR32_ENG_8W8_BASE      = 24,    /* 16 lanes: 24..39 */
+    DR32_ENG_CW78_BASE     = 40,    /* 14 lanes: 40..53 */
+    DR32_ENG_COUNT         = 54,
+};
+
+/* ui_family values: which INSTRUMENT the focused pad's engine comes from.
+ * The kit ports share one set of pages per instrument (their lanes have the
+ * same panel: Tune, Decay, Drive, ...) gated on this, and a lane's own extra
+ * knob is gated on ui_engine within them. One page set per lane would not fit
+ * the served hierarchy (tools/gen_engine_ui.mjs). Append; never renumber. */
+enum {
+    DR32_FAM_SAMPLE = 0,
+    DR32_FAM_SIMIAN = 1,
+    DR32_FAM_URCHIN = 2,
+    DR32_FAM_9W9    = 3,
+    DR32_FAM_6W6    = 4,
+    DR32_FAM_8W8    = 5,
+    DR32_FAM_CW78   = 6,
 };
 
 #define DR32_ENG_MAX_PARAMS 32
@@ -76,6 +97,7 @@ typedef struct {
      * has been silent long enough to stop computing — the caller then skips it
      * until the next note_on. */
     int   (*render)(void *e, float *out, int n);
+    int         family;     /* DR32_FAM_*                              */
 } dr32_engine_ops;
 
 typedef struct {
@@ -94,6 +116,12 @@ const dr32_engine_ops *dr32_engine_get(int id);
  *  thread, once per process before the first create. Idempotent. */
 void dr32_engines_init(int sample_rate);
 
+/** Where the module is installed. 9W9's hats and cymbals are SAMPLES (as on a
+ *  real 909) read from <dir>/samples/9w9/ at class init; without a directory
+ *  those lanes are silent. Host thread, before the first create. */
+void dr32_engines_set_module_dir(const char *dir);
+const char *dr32_engines_module_dir(void);
+
 int               dr32_model_count(void);
 const dr32_model *dr32_model_at(int i);
 /** Index of the model with this slug, or -1. */
@@ -108,11 +136,21 @@ extern const dr32_engine_ops dr32_engine_simian;
 extern const dr32_engine_ops dr32_engine_urchin_drum;
 extern const dr32_engine_ops dr32_engine_urchin_snare;
 extern const dr32_engine_ops dr32_engine_urchin_cymbal;
+/* The kit ports: each family's lane engines, in id order from its BASE. */
+const dr32_engine_ops *dr32_9w9_engine(int lane, int *count);
+const dr32_engine_ops *dr32_6w6_engine(int lane, int *count);
+const dr32_engine_ops *dr32_8w8_engine(int lane, int *count);
+const dr32_engine_ops *dr32_cw78_engine(int lane, int *count);
 /* Each engine TU's models, in picker order. */
 const dr32_model *dr32_simian_models(int *count);
 const dr32_model *dr32_urchin_models(int *count);
+const dr32_model *dr32_9w9_models(int *count);
+const dr32_model *dr32_6w6_models(int *count);
+const dr32_model *dr32_8w8_models(int *count);
+const dr32_model *dr32_cw78_models(int *count);
 void dr32_simian_class_init(int sample_rate);
 void dr32_urchin_class_init(int sample_rate);
+void dr32_9w9_class_init(int sample_rate);
 
 #ifdef __cplusplus
 }

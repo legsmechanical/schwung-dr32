@@ -25,7 +25,8 @@ int main(void) {
         if (!e) continue;
         printf("%s{\"id\":%d,\"slug\":", id > 1 ? "," : "", e->id);
         str(e->slug); printf(",\"name\":"); str(e->name);
-        printf(",\"prefix\":"); str(e->prefix); printf(",\"params\":[");
+        printf(",\"prefix\":"); str(e->prefix);
+        printf(",\"family\":%d,\"params\":[", e->family);
         for (int i = 0; i < e->nparams; i++) {
             const dr32_eparam *p = &e->params[i];
             printf("%s{\"key\":", i ? "," : ""); str(p->key);

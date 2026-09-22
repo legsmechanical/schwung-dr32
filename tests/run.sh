@@ -21,6 +21,11 @@ for src in dsp/engines/*.cpp; do
       -fno-exceptions -fno-rtti -Idsp -Idsp/engines \
       -c "$src" -o "dist/tests/eng_$(basename "${src%.cpp}").o"
 done
+# The C engines (9W9) — C11, as the machine is.
+for src in dsp/engines/*.c; do
+  cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -Idsp/engines \
+      -c "$src" -o "dist/tests/eng_$(basename "${src%.c}").o"
+done
 for src in tests/test_*.c; do
   name=$(basename "$src" .c)
   cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$src" -o "dist/tests/$name.o"

@@ -336,15 +336,15 @@ extern "C" {
 
 const dr32_engine_ops dr32_engine_urchin_drum = {
     DR32_ENG_URCHIN_DRUM, "urchin_drum", "Urchin Drum", "ud_", COUNT(DRUM), T.drum.params,
-    create_drum, destroy, set, note_on, choke, render,
+    create_drum, destroy, set, note_on, choke, render, DR32_FAM_URCHIN,
 };
 const dr32_engine_ops dr32_engine_urchin_snare = {
     DR32_ENG_URCHIN_SNARE, "urchin_snare", "Urchin Snare", "us_", COUNT(SNARE), T.snare.params,
-    create_snare, destroy, set, note_on, choke, render,
+    create_snare, destroy, set, note_on, choke, render, DR32_FAM_URCHIN,
 };
 const dr32_engine_ops dr32_engine_urchin_cymbal = {
     DR32_ENG_URCHIN_CYMBAL, "urchin_cymbal", "Urchin Cymbal", "uc_", COUNT(CYMBAL), T.cymbal.params,
-    create_cymbal, destroy, set, note_on, choke, render,
+    create_cymbal, destroy, set, note_on, choke, render, DR32_FAM_URCHIN,
 };
 
 const dr32_model *dr32_urchin_models(int *count) {

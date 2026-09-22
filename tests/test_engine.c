@@ -82,8 +82,13 @@ static void test_model(const dr32_model *m) {
      * (URCHIN's Lateness is a model value; every model here starts at 0). */
     void *c = make(m);
     e->note_on(c, 1.0f, 0.0f);
-    e->render(c, buf2, 128);
-    CHECK(peak(buf2, 128) > 1e-4f, "%s: hit did not start in its own block", m->slug);
+    /* ⭑ One exception, and it is the machine's: CW-78's guiro is a free-running
+     * scrape oscillator whose first TOOTH lands one scrape period after the
+     * trigger (77-125 Hz, so ~8-13 ms), exactly as in schwung-cw-78 — the lane
+     * is silent until then by design. It must still be sounding within 15 ms. */
+    const int first = !strcmp(m->slug, "cw78/guiro") ? SR * 15 / 1000 : 128;
+    for (int at = 0; at < first; at += 128) e->render(c, buf2 + at, first - at < 128 ? first - at : 128);
+    CHECK(peak(buf2, first) > 1e-4f, "%s: hit did not start in its own block", m->slug);
 
     /* A retrigger must be a NEW hit, measured against the same voice left
      * alone: two instances, one second in, one hit again. The Trigger zone is
@@ -142,15 +147,22 @@ static void test_tune(const char *slug) {
 
 int main(void) {
     printf("synth engines\n");
+    /* 9W9's cymbals are WAVs under <module dir>/samples/9w9/; the source tree
+     * is laid out the same way under src/. */
+    dr32_engines_set_module_dir("src");
     dr32_engines_init(SR);
     dr32_engines_init(SR);      /* idempotent */
 
     int n = dr32_model_count();
-    CHECK(n == 19, "model count %d", n);
+    /* SIMIAN 10, URCHIN 9, then one per lane: 9W9 11, 6W6 8, 8W8 16, CW-78 14. */
+    CHECK(n == 68, "model count %d", n);
 
-    /* Engines: keys prefixed, unique across ALL engines (one hierarchy holds
-     * them all, and a repeated key kills the host's metadata load). */
-    const char *seen[256]; int ns = 0;
+    /* Engines: keys prefixed, and a key is ONE knob wherever it appears (one
+     * hierarchy holds them all, and a repeated key kills the host's metadata
+     * load). Two engines may share a key only as lanes of one kit port —
+     * same prefix, same family — and then only with identical metadata,
+     * because the page shows it once for all of them. */
+    const dr32_eparam *seen[512]; const dr32_engine_ops *seen_e[512]; int ns = 0;
     for (int id = 1; id < DR32_ENG_COUNT; id++) {
         const dr32_engine_ops *e = dr32_engine_get(id);
         CHECK(e && e->id == id, "engine %d missing or misnumbered", id);
@@ -162,8 +174,21 @@ int main(void) {
             CHECK(p->min < p->max && p->def >= p->min && p->def <= p->max, "%s: bad range", p->key);
             CHECK(p->page && p->page[0], "%s: no page", p->key);
             CHECK(strlen(p->short_name) <= 5, "%s: short name too long", p->key);
-            for (int j = 0; j < ns; j++) CHECK(strcmp(seen[j], p->key), "duplicate key %s", p->key);
-            if (ns < 256) seen[ns++] = p->key;
+            for (int j = 0; j < i; j++) CHECK(strcmp(e->params[j].key, p->key), "%s: key %s twice", e->slug, p->key);
+            int dup = 0;
+            for (int j = 0; j < ns && !dup; j++) {
+                if (strcmp(seen[j]->key, p->key)) continue;
+                dup = 1;
+                const dr32_eparam *q = seen[j];
+                CHECK(seen_e[j]->family == e->family && e->family >= DR32_FAM_9W9 &&
+                      !strcmp(seen_e[j]->prefix, e->prefix),
+                      "duplicate key %s (%s and %s are not one kit port's lanes)", p->key, seen_e[j]->slug, e->slug);
+                CHECK(!strcmp(q->name, p->name) && !strcmp(q->short_name, p->short_name) &&
+                      q->min == p->min && q->max == p->max && !strcmp(q->page, p->page) &&
+                      ((!q->options && !p->options) || (q->options && p->options && !strcmp(q->options, p->options))),
+                      "%s: shared key differs between %s and %s", p->key, seen_e[j]->slug, e->slug);
+            }
+            if (!dup && ns < 512) { seen[ns] = p; seen_e[ns] = e; ns++; }
         }
     }
     CHECK(dr32_engine_get(DR32_ENG_SAMPLE) == NULL, "sample is not an engine");
