@@ -68,7 +68,7 @@ static const char *const PAD_FIELDS[] = {
     "mod_target", "mod_amount",
     "fx_type", "fx_p1", "fx_p2",
     "start", "length", "punch", "punch_time",
-    "send_a", "send_b", "wide", "wide_freq", "wide_mode",
+    "send_a", "send_b", "wide", "wide_freq", "wide_mode", "wide_time", "wide_comp",
     NULL
 };
 

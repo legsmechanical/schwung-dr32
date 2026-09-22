@@ -346,6 +346,7 @@ static inline float svf_hp(const dr32_wide *d, float st[2], float v0) {
 
 static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames);
 static void disperse_run(dr32_wide *d, const dr32_pad *p, float *x, int frames);
+static void comb_run(dr32_wide *d, const dr32_pad *p, float pct, float *x, int frames);
 
 static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     /* A mode change starts the stage clean — the two modes share `buf`. */
@@ -357,13 +358,38 @@ static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
         memset(d->dhp, 0, sizeof(d->dhp));
         d->mode = p->wide_mode;
     }
-    if (p->wide_mode == 1) { haas_run(d, p, x, frames); return; }
-    if (p->wide_mode == 2) { disperse_run(d, p, x, frames); return; }
     float pct = p->wide_pct;
     if (pct < -100.0f) pct = -100.0f;
     if (pct > 100.0f) pct = 100.0f;
+    float side_g;                    /* the side's level: what COMP answers to */
+    if (p->wide_mode == 1) { haas_run(d, p, x, frames); side_g = 0.0f; }
+    else if (p->wide_mode == 2) {
+        disperse_run(d, p, x, frames);
+        const float W = 2.0f * fabsf(pct);
+        side_g = W < 100.0f ? W * 0.01f : 1.0f;
+    } else {
+        comb_run(d, p, pct, x, frames);
+        side_g = fabsf(pct) * 0.01f;
+    }
+    /*
+     * COMP (Josh: "let's add comp"). A mid/side widener ADDS the side to
+     * each ear, so each ear's energy grows by (1 + g^2): +3 dB at full. On,
+     * the pad is trimmed by 1/sqrt(1 + g^2) so its stereo loudness holds as
+     * it widens — at the price of the MONO sum, which drops by the same
+     * amount (off, the mono sum is exactly the dry pad, as in Wider). Haas
+     * adds no energy (one ear is only delayed), so it is never trimmed.
+     */
+    if (p->wide_comp && side_g > 0.0f) {
+        const float c = 1.0f / sqrtf(1.0f + side_g * side_g);
+        for (int i = 0; i < 2 * frames; i++) x[i] *= c;
+    }
+}
+
+/* COMB: side = g * HP(mid) TIME late (Auto: 8 ms). */
+static void comb_run(dr32_wide *d, const dr32_pad *p, float pct, float *x, int frames) {
     const float g = pct * 0.01f;   /* signed: - mirrors which side gets which comb teeth */
-    const int dly = (int)(DR32_WIDE_MS * 0.001f * DR32_SR + 0.5f);   /* 353 */
+    const float ms = p->wide_time > 0.0f ? p->wide_time : DR32_WIDE_MS;
+    const int dly = (int)(ms * 0.001f * DR32_SR + 0.5f);          /* <= 529 */
     const int hp = p->wide_hz > 20.5f;
     if (hp && d->hz != p->wide_hz) {
         const float t = tanf(3.14159265f * p->wide_hz / DR32_SR);
@@ -483,7 +509,7 @@ static const float DISPERSE_A[DR32_WIDE_AP_STAGES] = {
     -0.999374f, -0.994100f, -0.967481f, -0.832310f, 0.816475f,
 };
 #define DISPERSE_MS_PER_PCT 0.0300f
-#define DISPERSE_RING 512           /* per channel; 6 ms at 200% is 265 frames */
+#define DISPERSE_RING 1024          /* per channel; TIME's 12 ms is 529 frames */
 
 static void disperse_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     float pct = p->wide_pct;
@@ -491,7 +517,9 @@ static void disperse_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) 
     if (pct > 100.0f) pct = 100.0f;
     const float W = 2.0f * fabsf(pct);                    /* Wider's 0..200 % */
     const float g = (W < 100.0f ? W * 0.01f : 1.0f) * (pct < 0.0f ? -1.0f : 1.0f);
-    const float D = DISPERSE_MS_PER_PCT * W * 0.001f * DR32_SR;   /* frames, fractional */
+    /* TIME overrides the delay (Auto, 0: Wider's own law, tied to W). */
+    const float ms = p->wide_time > 0.0f ? p->wide_time : DISPERSE_MS_PER_PCT * W;
+    const float D = ms * 0.001f * DR32_SR;                         /* frames, fractional */
     const int   Di = (int)D;
     const float Df = D - (float)Di;
     const int hp = p->wide_hz > 20.5f;

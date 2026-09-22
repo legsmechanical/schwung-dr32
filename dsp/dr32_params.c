@@ -308,6 +308,8 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * written before the rename still restores its levels. */
         if (!strcmp(sub, "wide"))      return snprintf(buf, buf_len, "%g", (double)p->wide_pct);
         if (!strcmp(sub, "wide_freq")) return snprintf(buf, buf_len, "%g", (double)p->wide_hz);
+        if (!strcmp(sub, "wide_time")) return snprintf(buf, buf_len, "%g", (double)p->wide_time);
+        if (!strcmp(sub, "wide_comp")) return snprintf(buf, buf_len, "%s", p->wide_comp ? "On" : "Off");
         if (!strcmp(sub, "wide_mode"))
             return snprintf(buf, buf_len, "%s", p->wide_mode == 2 ? "Disperse" : p->wide_mode ? "Haas" : "Comb");
         if (!strcmp(sub, "send_a") || !strcmp(sub, "send1"))
@@ -395,7 +397,8 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
                 int choke = p->choke_group;
                 float sa = p->send_db[0], sb = p->send_db[1];
                 float wm = p->wide_pct, wh = p->wide_hz;
-                int wmode = p->wide_mode;
+                int wmode = p->wide_mode, wcomp = p->wide_comp;
+                float wtime = p->wide_time;
                 dr32_pad_defaults(p);
                 p->choke_group = choke;
                 p->send_db[0] = sa;
@@ -403,6 +406,8 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
                 p->wide_pct = wm;         /* where it sits, like the sends */
                 p->wide_hz = wh;
                 p->wide_mode = wmode;
+                p->wide_comp = wcomp;
+                p->wide_time = wtime;
             }
             dr32_kit_load_sample(kit, pad, val);
         }
@@ -452,6 +457,10 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         else if (!strcmp(sub, "wide_mode"))     /* WMODE: "Comb" | "Haas" | "Disperse" */
             p->wide_mode = !strcmp(val, "Disperse") || atoi(val) == 2 ? 2
                          : (!strcmp(val, "Haas") || atoi(val) == 1) ? 1 : 0;
+        else if (!strcmp(sub, "wide_time"))
+            p->wide_time = f < 0.0f ? 0.0f : (f > DR32_WIDE_TIME_MAX ? DR32_WIDE_TIME_MAX : f);
+        else if (!strcmp(sub, "wide_comp"))
+            p->wide_comp = (!strcmp(val, "On") || atoi(val) == 1) ? 1 : 0;
         else if (!strcmp(sub, "wide_freq"))
             p->wide_hz = f < 20.0f ? 20.0f : (f > DR32_WIDE_HZ_MAX ? DR32_WIDE_HZ_MAX : f);
         /* Punch as a plain per-pad control (Josh, 2026-07-28). It is the

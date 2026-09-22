@@ -23,6 +23,9 @@
  *     Wider-%), and PER-CHANNEL processing (a left-only click leaves R silent)
  *   - WMODE Haas is the Haas delay, exactly: one side 15 ms x (Wide/100)^2
  *     late, the other untouched
+ *   - TIME is the delay (Comb exactly; Disperse's whatever WIDE is); Haas
+ *     ignores it. COMP trims by 1/sqrt(1+g^2): mono sum = dry x that, a
+ *     full-width hat's ear energy holds; Haas is never trimmed
  *   - the knobs clamp, read back, and survive a state round trip
  */
 #include "../dsp/dr32_kit.h"
@@ -328,6 +331,82 @@ int main(void) {
         CHECK(!strcmp(get(&k, "pad1_wide_mode"), "Disperse"), "Wide Mode reads %s", get(&k, "pad1_wide_mode"));
     }
 
+    /* ---- TIME and COMP ---------------------------------------------------- */
+    {
+        /* One pad render with the Stereo page set as given. */
+        #define RENDER(model, mode, wide, time, comp, out) do { \
+            dr32_kit_init(&k); set(&k, "pad1_model", model); set(&k, "pad1_pan", "0"); \
+            set(&k, "pad1_wide_mode", mode); set(&k, "pad1_wide", wide); set(&k, "pad1_wide_freq", "20"); \
+            set(&k, "pad1_wide_time", time); set(&k, "pad1_wide_comp", comp); set(&k, "pad1_play", "127"); \
+            for (int at_ = 0; at_ < LEN; at_ += FR) dr32_kit_render(&k, (out) + 2 * at_, FR); } while (0)
+        static float t1[2 * LEN], t2[2 * LEN];
+
+        /* Comb: TIME is the delay, exactly (Auto = 8 ms is pinned above). */
+        RENDER("fm/snare", "Comb", "50", "3", "Off", t1);
+        {
+            const int d3 = (int) (3.0f * 0.001f * SR + 0.5f);
+            float worst = 0;
+            for (int i = 0; i < LEN; i++) {
+                const float want = i >= d3 ? 0.5f * a[2 * (i - d3)] : 0.0f;
+                const float e = fabsf(0.5f * (t1[2 * i] - t1[2 * i + 1]) - want);
+                if (e > worst) worst = e;
+            }
+            CHECK(worst < 1e-6f, "Comb TIME 3 ms: the side is not the mid 3 ms late (worst %g)", worst);
+        }
+
+        /* Disperse: TIME fixes the delay whatever WIDE is — the side starts at
+         * the same frame at WIDE 25 and 100 (Auto: 1.5 and 6 ms apart). */
+        int on[2];
+        const char *ws[] = {"25", "100"};
+        for (int t = 0; t < 2; t++) {
+            RENDER("fm/snare", "Disperse", ws[t], "5", "Off", t1);
+            on[t] = -1;
+            for (int i = 0; i < LEN && on[t] < 0; i++) if (fabsf(t1[2 * i] - t1[2 * i + 1]) > 1e-7f) on[t] = i;
+        }
+        CHECK(on[0] == on[1] && abs(on[0] - 220) <= 3, "Disperse TIME 5 ms: side starts at %d / %d frames, want both ~220",
+              on[0], on[1]);
+
+        /* Haas ignores TIME. */
+        RENDER("fm/snare", "Haas", "60", "0", "Off", t1);
+        RENDER("fm/snare", "Haas", "60", "7", "Off", t2);
+        CHECK(!memcmp(t1, t2, sizeof t1), "Haas changed with TIME");
+
+        /* COMP: the pad is trimmed by 1/sqrt(1 + g^2): the MONO sum is the dry
+         * pad x that, exactly, and a hat's stereo energy per ear holds. */
+        static float hat[2 * LEN];
+        hit(&k, "fm/chat", NULL, NULL, hat);
+        RENDER("fm/chat", "Comb", "100", "0", "On", t1);
+        {
+            const float c = 1.0f / sqrtf(2.0f);
+            float worst = 0, pk = 0;
+            double e_on = 0, e_dry = 0;
+            for (int i = 0; i < LEN; i++) {
+                const float e = fabsf((t1[2 * i] + t1[2 * i + 1]) - 2.0f * c * hat[2 * i]);
+                if (e > worst) worst = e;
+                if (fabsf(hat[2 * i]) > pk) pk = fabsf(hat[2 * i]);
+                e_on += (double) t1[2 * i] * t1[2 * i];
+                e_dry += (double) hat[2 * i] * hat[2 * i];
+            }
+            CHECK(worst <= 1e-6f * pk, "COMP: the mono sum is not the dry pad x 1/sqrt 2 (worst %g)", worst);
+            CHECK(fabs(e_on / e_dry - 1.0) < 0.05, "COMP: a full-width hat's left ear is %.3f of the dry, want ~1", e_on / e_dry);
+        }
+        /* Disperse at WIDE 50 is full level too: the same trim. */
+        RENDER("fm/chat", "Disperse", "50", "0", "On", t1);
+        {
+            float worst = 0;
+            for (int i = 0; i < LEN; i++) {
+                const float e = fabsf((t1[2 * i] + t1[2 * i + 1]) - 2.0f / sqrtf(2.0f) * hat[2 * i]);
+                if (e > worst) worst = e;
+            }
+            CHECK(worst < 1e-5f, "COMP on Disperse 50: the mono sum is not the dry x 1/sqrt 2 (worst %g)", worst);
+        }
+        /* Haas adds no energy: COMP leaves it alone. */
+        RENDER("fm/snare", "Haas", "60", "0", "Off", t1);
+        RENDER("fm/snare", "Haas", "60", "0", "On", t2);
+        CHECK(!memcmp(t1, t2, sizeof t1), "COMP changed a Haas pad");
+        #undef RENDER
+    }
+
     /* ---- WMODE Haas: the Haas delay, exactly, on the sign's side ---------- */
     {
         const int pcts[] = {50, 100, -50, -100};
@@ -404,6 +483,8 @@ int main(void) {
         set(&k, "pad1_wide", "7");
         set(&k, "pad1_wide_freq", "220");
         set(&k, "pad1_wide_mode", "Haas");
+        set(&k, "pad1_wide_time", "4.5");
+        set(&k, "pad1_wide_comp", "On");
         set(&k, "pad1_model", "fm/kick");
         CHECK(!strcmp(get(&k, "pad1_wide"), "7") && !strcmp(get(&k, "pad1_wide_freq"), "220"),
               "choosing a model reset Wide (%s, %s)", get(&k, "pad1_wide"), get(&k, "pad1_wide_freq"));
@@ -415,6 +496,8 @@ int main(void) {
         dr32_kit_init(&r);
         CHECK(dr32_state_read(&r, blob, NULL, NULL), "state read");
         CHECK(!strcmp(get(&r, "pad1_wide_mode"), "Haas"), "Wide Mode did not survive a state round trip");
+        CHECK(!strcmp(get(&r, "pad1_wide_time"), "4.5") && !strcmp(get(&r, "pad1_wide_comp"), "On"),
+              "TIME/COMP did not survive a state round trip (%s, %s)", get(&r, "pad1_wide_time"), get(&r, "pad1_wide_comp"));
         CHECK(!strcmp(get(&r, "pad1_wide"), "7") && !strcmp(get(&r, "pad1_wide_freq"), "220"),
               "Wide did not survive a state round trip (%s, %s)", get(&r, "pad1_wide"), get(&r, "pad1_wide_freq"));
     }

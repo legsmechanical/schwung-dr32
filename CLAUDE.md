@@ -23,7 +23,7 @@ Stereo   WMODE WIDE  WFREQ                              <- level `pad_stereo`
 Master   MASTR
 ```
 
-- ⭑ **The Stereo page: WMODE · WIDE · WFREQ** (Josh, 2026-09-22: *"a haas stereo spread to each
+- ⭑ **The Stereo page: WMODE · WIDE · WFREQ · TIME · COMP** (Josh, 2026-09-22: *"a haas stereo spread to each
   drum's mix page ... and a knob to set a crossover below which the sound is not spread"*; then,
   having heard both, *"I like both, and can see the use in each depending on context"* — so both
   modes stay, on their own page, `pad_stereo`, after Mix; names his). Per pad, after everything
@@ -50,6 +50,17 @@ Master   MASTR
     −6/0 dB, the delay, the 200 Hz group delay, per-channel). Cost +0.23–0.29 µs/pad (Mac).
     Named "Disperse", not "Wider": that is Polyverse's product name. With three options WMODE no
     longer flips on click (host: only 2-option enums flip).
+  - **TIME** (0–12 ms, 0 = Auto): the widener's delay, independent of WIDE (Josh: *"the
+    independent delay time knob"*). Auto keeps each mode's own (Comb 8 ms; Disperse Wider's law),
+    so a fresh pad is unchanged. Haas ignores it (WIDE is its delay). The cell reads "0.0 ms"
+    for Auto — a float cell can only print its number.
+  - **COMP** (Off | On, flips on click): trims the pad by 1/√(1+g²) so stereo loudness holds as
+    it widens (a mid/side widener adds up to +3 dB per ear), at the price of the MONO sum, which
+    drops by as much. Off (default) keeps the mono sum exact, as Wider does. Haas is never trimmed
+    (it adds no energy).
+  - ⚠ **Engine renames leave stale copy keys** — FM's old `fm_*` keys sat in every copy list for
+    a day (11 KB of the served hierarchy) because isGenKey stopped recognising the prefix.
+    `gen_engine_ui` now refuses an engine-shaped key (`xx_`) that no engine owns.
   - **WIDE is −100..+100 in all modes; the SIGN MIRRORS.** Haas: + delays the right, − the left
     (how a kit's leans are balanced). Comb: − flips the side's sign (the comb teeth mirror).
   - WMODE is a two-option enum, so the grid FLIPS it on click (`flipsOnClick`, any 2-option enum)

@@ -108,6 +108,11 @@ typedef struct {
      * character). Josh kept both: "I like both, and can see the use in each
      * depending on context". */
     int   wide_mode;
+    /* TIME: the widener's delay in ms, 0..12; 0 = Auto (Comb 8 ms, Disperse
+     * Wider's own law). Haas ignores it. COMP: trim the widened pad to hold
+     * its stereo loudness (1/sqrt(1+g^2)), costing the mono sum as much. */
+    float wide_time;
+    int   wide_comp;
 } dr32_pad;
 
 /** One TPT SVF stage's integrator state. */

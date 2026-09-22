@@ -45,7 +45,8 @@ typedef struct {
  * Haas, a one-sided delay (dr32_kit.c wide_run / haas_run). `buf` holds the
  * delayed signal. `tail` keeps a pad rendering after it stops sounding, so
  * the delayed signal's last ms are not cut off. */
-#define DR32_WIDE_BUF    1024    /* Haas mode's 15 ms needs 662 */
+#define DR32_WIDE_BUF    2048    /* Disperse: two 1024 rings (TIME 12 ms = 529); Haas 15 ms = 662 */
+#define DR32_WIDE_TIME_MAX 12.0f
 #define DR32_WIDE_MS     8.0f
 #define DR32_WIDE_HAAS_MS_MAX 15.0f
 #define DR32_WIDE_HZ_MAX 4000.0f

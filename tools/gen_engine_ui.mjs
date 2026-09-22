@@ -271,6 +271,17 @@ const NAV_AFTER = 'pad_shape';
  * their own is what keeps the served hierarchy well inside the 128 KB value channel
  * as engines are added. */
 const baseCopy = levels.pads.child_copy_keys.filter((k) => !isGenKey(k));
+/* ⚠ A STALE ENGINE KEY hides here. When an engine's prefix changes (FM's `fm_`
+ * became `fk_/fs_/fx_/fp_`, 2026-09-22), isGenKey stops recognising its old
+ * keys, so they read as BASE keys and are carried into every copy list for
+ * good — dead writes, and 11 KB of the served hierarchy before this caught it.
+ * An engine-shaped key (two letters and an underscore) that no engine owns and
+ * that is not one of DR32's own `fx_` playback fields is refused. */
+const OWN_FX = new Set(['fx_type', 'fx_p1', 'fx_p2']);
+const staleKeys = baseCopy.filter((k) => /^[a-z0-9]{2}_/.test(k) && !OWN_FX.has(k));
+if (staleKeys.length)
+    throw new Error(`pads.child_copy_keys holds engine-shaped keys no engine owns: ${staleKeys.join(', ')} — ` +
+                    'an engine was renamed; drop them from module.json');
 const withKeys = (keys) => {
     const base = baseCopy.slice();
     base.splice(base.indexOf('sample') + 1, 0, 'model', ...keys);
