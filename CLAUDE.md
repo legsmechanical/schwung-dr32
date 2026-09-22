@@ -52,8 +52,10 @@ Master   MASTR
     longer flips on click (host: only 2-option enums flip).
   - **TIME** (0–12 ms, 0 = Auto): the widener's delay, independent of WIDE (Josh: *"the
     independent delay time knob"*). Auto keeps each mode's own (Comb 8 ms; Disperse Wider's law),
-    so a fresh pad is unchanged. Haas ignores it (WIDE is its delay). The cell reads "0.0 ms"
-    for Auto — a float cell can only print its number.
+    so a fresh pad is unchanged. **Haas with TIME set** takes a Haas plugin's layout (Josh: *"let's
+    do that for haas"*): TIME the delay, |WIDE| the delayed side's MIX (dry → fully delayed), the
+    sign still the side; Auto keeps the curve. Not here: true time-intensity trading (a LOUDER late
+    side). The cell reads "0.0 ms" for Auto — a float cell can only print its number.
   - **COMP** (Off | On, flips on click): trims the pad by 1/√(1+g²) so stereo loudness holds as
     it widens (a mid/side widener adds up to +3 dB per ear), at the price of the MONO sum, which
     drops by as much. Off (default) keeps the mono sum exact, as Wider does. Haas is never trimmed

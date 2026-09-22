@@ -23,8 +23,8 @@
  *     Wider-%), and PER-CHANNEL processing (a left-only click leaves R silent)
  *   - WMODE Haas is the Haas delay, exactly: one side 15 ms x (Wide/100)^2
  *     late, the other untouched
- *   - TIME is the delay (Comb exactly; Disperse's whatever WIDE is); Haas
- *     ignores it. COMP trims by 1/sqrt(1+g^2): mono sum = dry x that, a
+ *   - TIME is the delay (Comb exactly; Disperse's whatever WIDE is); in Haas
+ *     TIME is the delay and |WIDE| the delayed side's mix. COMP trims by 1/sqrt(1+g^2): mono sum = dry x that, a
  *     full-width hat's ear energy holds; Haas is never trimmed
  *   - the knobs clamp, read back, and survive a state round trip
  */
@@ -366,10 +366,28 @@ int main(void) {
         CHECK(on[0] == on[1] && abs(on[0] - 220) <= 3, "Disperse TIME 5 ms: side starts at %d / %d frames, want both ~220",
               on[0], on[1]);
 
-        /* Haas ignores TIME. */
-        RENDER("fm/snare", "Haas", "60", "0", "Off", t1);
-        RENDER("fm/snare", "Haas", "60", "7", "Off", t2);
-        CHECK(!memcmp(t1, t2, sizeof t1), "Haas changed with TIME");
+        /* Haas with TIME: a plugin's layout — TIME the delay, |WIDE| the
+         * delayed side's mix: that side = (1 - m) dry + m dry(t - TIME), the
+         * other side untouched, the sign picking which. */
+        {
+            const int d5 = (int) (5.0f * 0.001f * SR + 0.5f);
+            struct { const char *wide; float m; int dch; } hs[] = {{"100", 1.0f, 1}, {"50", 0.5f, 1}, {"-30", 0.3f, 0}};
+            for (int t = 0; t < 3; t++) {
+                RENDER("fm/snare", "Haas", hs[t].wide, "5", "Off", t1);
+                float wo = 0, wd = 0;
+                for (int i = 0; i < LEN; i++) {
+                    const int c = hs[t].dch;
+                    const float dry = a[2 * i + c], late = i >= d5 ? a[2 * (i - d5) + c] : 0.0f;
+                    const float e = fabsf(t1[2 * i + c] - ((1.0f - hs[t].m) * dry + hs[t].m * late));
+                    if (e > wd) wd = e;
+                    const float o = fabsf(t1[2 * i + 1 - c] - a[2 * i + 1 - c]);
+                    if (o > wo) wo = o;
+                }
+                CHECK(wd < 1e-6f, "Haas TIME 5 WIDE %s: the delayed side is not the %.0f%% mix (worst %g)",
+                      hs[t].wide, hs[t].m * 100, wd);
+                CHECK(wo == 0.0f, "Haas TIME 5 WIDE %s: the other side changed (worst %g)", hs[t].wide, wo);
+            }
+        }
 
         /* COMP: the pad is trimmed by 1/sqrt(1 + g^2): the MONO sum is the dry
          * pad x that, exactly, and a hat's stereo energy per ear holds. */

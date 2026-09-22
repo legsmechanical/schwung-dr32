@@ -418,7 +418,10 @@ static void comb_run(dr32_wide *d, const dr32_pad *p, float pct, float *x, int f
  * this mode's character, and the sign is how a kit's leans are balanced.
  * Above Wide Freq only, each channel split LR4 so the two low bands stay in
  * phase. The curve: width comes on between 0 and ~3 ms; the 15 ms cap is
- * where a drum transient stops fusing and reads as a flam.
+ * where a drum transient stops fusing and reads as a flam. With TIME set, a
+ * plugin's layout instead: TIME the delay, |WIDE| the delayed side's MIX —
+ * less of it blends the dry back in on that side, easing lean and width
+ * together. (True time-intensity trading, a LOUDER late side, is not here.)
  */
 static inline void svf_split(const dr32_wide *d, float st[2], float v0, float *lp, float *hp) {
     float v3 = v0 - st[1];
@@ -435,7 +438,12 @@ static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     if (pct < -100.0f) pct = -100.0f;
     if (pct > 100.0f) pct = 100.0f;
     const float a = pct * 0.01f;
-    const float ms = DR32_WIDE_HAAS_MS_MAX * a * a;
+    /* TIME set: a standard Haas plugin's layout (Josh: "let's do that for
+     * haas") — TIME is the delay, |WIDE| the MIX on the delayed side (dry at
+     * 0, fully delayed at 100). Auto (TIME 0): the curve, fully delayed. */
+    const int manual = p->wide_time > 0.0f;
+    const float ms = manual ? p->wide_time : DR32_WIDE_HAAS_MS_MAX * a * a;
+    const float mix = manual ? fabsf(a) : 1.0f;
     const int dch = a < 0.0f ? 0 : 1;          /* + delays the RIGHT side, - the LEFT */
     if (dch != d->haas_side) {                 /* the other side now: start clean */
         memset(d->buf, 0, sizeof(d->buf));
@@ -465,7 +473,8 @@ static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
             }
             if (c == dch) {
                 d->buf[d->w] = hi;
-                hi = d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
+                const float late = d->buf[(d->w - dly) & (DR32_WIDE_BUF - 1)];
+                hi = mix >= 1.0f ? late : hi + mix * (late - hi);
                 d->w = (d->w + 1) & (DR32_WIDE_BUF - 1);
             }
             y[c] = lo + hi;

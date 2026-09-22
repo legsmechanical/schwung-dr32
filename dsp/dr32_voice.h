@@ -110,7 +110,9 @@ typedef struct {
     int   wide_mode;
     /* TIME: the widener's delay in ms, 0..12; 0 = Auto (Comb 8 ms, Disperse
      * Wider's own law). Haas ignores it. COMP: trim the widened pad to hold
-     * its stereo loudness (1/sqrt(1+g^2)), costing the mono sum as much. */
+     * its stereo loudness (1/sqrt(1+g^2)), costing the mono sum as much.
+     * In Haas, TIME set makes it a plugin's layout: TIME the delay, |WIDE|
+     * the delayed side's mix. */
     float wide_time;
     int   wide_comp;
 } dr32_pad;
