@@ -49,7 +49,7 @@ typedef struct {
 #define DR32_WIDE_MS     8.0f
 #define DR32_WIDE_HAAS_MS_MAX 15.0f
 #define DR32_WIDE_HZ_MAX 4000.0f
-#define DR32_WIDE_AP_STAGES 8   /* Disperse: the all-pass cascade (dr32_kit.c) */
+#define DR32_WIDE_AP_STAGES 5   /* Disperse: the all-pass cascade (dr32_kit.c) */
 typedef struct {
     float buf[DR32_WIDE_BUF];
     int   w;             // write index
@@ -60,7 +60,8 @@ typedef struct {
     float k, a1, a2, a3;
     float s[2][2];       // comb: SVF state [stage][ic1, ic2], the high-pass twice
     float hs[2][3][2];   // Haas: [channel][split, low 2nd, high 2nd][ic1, ic2]
-    float ap[DR32_WIDE_AP_STAGES][2];   // Disperse: each all-pass stage's SVF state
+    float dap[2][DR32_WIDE_AP_STAGES];  // Disperse: [channel][first-order all-pass state]
+    float dhp[2][2][2];  // Disperse: [channel][high-pass stage][ic1, ic2]
 } dr32_wide;
 
 typedef struct {

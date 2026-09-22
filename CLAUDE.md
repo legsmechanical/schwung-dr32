@@ -35,14 +35,21 @@ Master   MASTR
     split LR4 so the lows stay in phase. It LEANS toward the leading side (precedence effect) —
     that is its character; Josh called it "a lot more character". Curved because width comes on
     under ~3 ms; capped at 15 ms because past that a drum flams.
-  - **WMODE Disperse** (`disperse_run`, branch `wide-disperse`, A/B build): after Polyverse's
-    Wider, from two video transcripts only (Josh: *"try to get as close to wider as we can"*,
-    *"based on nothing but transcripts, of course"*). Comb's M/S shape with the delay swapped for
-    an 8-stage SVF ALL-PASS cascade, `side = g·AP(HP(mid))`: mono-safe, the side at the mid's
-    energy, arriving 0.25 ms after the hit (Comb: 8 ms), 13 broad peaks/dips per side 100 Hz–
-    15 kHz (Comb: 126). ⚠ The stage table (`DISPERSE_HZ`, `DISPERSE_Q`) is a GUESS; an impulse
-    response rendered through Wider itself would let it be fitted. +0.3–0.4 µs/pad (Mac).
-    With three options WMODE no longer flips on click (host: only 2-option enums flip).
+  - **WMODE Disperse** (`disperse_run`, branch `wide-disperse`): **Polyverse Wider, MEASURED** —
+    Josh rendered a click through Wider in Ableton (Width 0–200, a left-only input, Low Bypass
+    200 Hz; 32-bit float) and the responses were fitted. Model, every part to <0.3% before
+    interpolation: `L += F(L)`, `R −= F(R)` (PER CHANNEL), `F = g·AP5(delay(HP x))`,
+    `g = min(W/100, 1)`, `delay = 0.0300 ms·W` (the second half of Wider's knob only lengthens
+    the delay — video 1's "more all-pass stages above 100%" was wrong), AP5 = five FIXED
+    first-order all-passes (corners 4.4, 41.5, 232, 1281 Hz and one near Nyquist), Low Bypass =
+    LR4 (our WFREQ). WIDE spans Wider's 0–200% as `2·|WIDE|`. Measured against the renders:
+    0.3–1.5% complex error 20 Hz–8 kHz, level within 0.1 dB to 11 kHz, ≤ +1.6 dB brighter at
+    20 kHz (cubic interpolation; LINEAR was 1–3 dB darker than Wider up top). The comparison
+    tool lives only in the session scratchpad; the renders are in `temp/wider-test/renders/` and
+    are NOT in this repo (they are Wider's output). `test_wide.c` pins the laws (mid exact, −12/
+    −6/0 dB, the delay, the 200 Hz group delay, per-channel). Cost +0.23–0.29 µs/pad (Mac).
+    Named "Disperse", not "Wider": that is Polyverse's product name. With three options WMODE no
+    longer flips on click (host: only 2-option enums flip).
   - **WIDE is −100..+100 in all modes; the SIGN MIRRORS.** Haas: + delays the right, − the left
     (how a kit's leans are balanced). Comb: − flips the side's sign (the comb teeth mirror).
   - WMODE is a two-option enum, so the grid FLIPS it on click (`flipsOnClick`, any 2-option enum)

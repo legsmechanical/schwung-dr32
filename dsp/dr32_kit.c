@@ -353,7 +353,8 @@ static void wide_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
         memset(d->buf, 0, sizeof(d->buf));
         memset(d->s, 0, sizeof(d->s));
         memset(d->hs, 0, sizeof(d->hs));
-        memset(d->ap, 0, sizeof(d->ap));
+        memset(d->dap, 0, sizeof(d->dap));
+        memset(d->dhp, 0, sizeof(d->dhp));
         d->mode = p->wide_mode;
     }
     if (p->wide_mode == 1) { haas_run(d, p, x, frames); return; }
@@ -449,39 +450,50 @@ static void haas_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
 }
 
 /*
- * DISPERSE — the third Wide mode, after Polyverse's Wider (Josh: "try to get
- * as close to wider as we can" — from two video transcripts, not from the
- * plugin: "based on nothing but transcripts, of course").
+ * DISPERSE — the third Wide mode: Polyverse's Wider, MEASURED.
  *
- * What the videos agree on: Wider is MONO-SAFE (L + R is the dry signal),
- * each side shows peaks and dips that are each other's opposite, they are
- * "not quite" a comb, and a phase analyser shows all-pass ("Disperser")
- * signatures, many stages high and a little low. That is this structure:
+ * Josh: "try to get as close to wider as we can". Not from its code: from
+ * its OUTPUT. Josh rendered a single-sample click through Wider in Ableton at
+ * Width 0-200%, with a left-only input and with Low Bypass at 200 Hz
+ * (32-bit float, 44.1 kHz), and the responses were fitted. What came out,
+ * every part to within a fraction of a percent:
  *
- *     side = g * AP(HP(mid))      L = x_L + side      R = x_R - side
+ *     L_out = L + F(L)        R_out = R - F(R)      (each channel on its own)
+ *     F     = g * AP5( delay_D( HP(x) ) )
+ *     g     = min(W / 100, 1)          -12 dB at 25%, -6 at 50, 0 dB from 100 on
+ *     D     = 0.0300 ms * W            3 ms at 100%, 6 ms at 200%: the second
+ *                                      half of the knob only LENGTHENS the delay
+ *     AP5   = five first-order all-passes, FIXED whatever W is (the table)
+ *     HP    = Low Bypass: a 24 dB Linkwitz-Riley high-pass (our WFREQ)
  *
- * the same M/S shape as Comb with the DELAY swapped for an all-pass cascade.
- * An all-pass leaves every frequency's level alone and only turns its phase,
- * so each side's response is |1 +/- g e^(j phi(f))|: broad, irregular peaks
- * and dips where the comb has regular teeth, and no delayed copy — nothing
- * arrives after the hit, which is what should keep a drum transient tight.
+ * For a mono pad that is the M/S shape Comb has (side = F(mid), mono sum
+ * exact); for a stereo sample each side widens from itself, as Wider does.
+ * The delay makes the comb and the all-passes smear it — the manual's "a
+ * specialized array of all-pass and comb filters", exactly.
  *
- * ⚠ THE TUNING IS A GUESS FROM THE VIDEOS, and the one place to change it is
- * the table below: stage centres (Hz) and Q. Many stages high, few low (video
- * 1: "a really high frequency ... with a full amount ... and a one amount on
- * the lowest frequency"); Q low so a stage does not ring on a transient.
- * Measuring Wider's own impulse response would replace the guess.
+ * DR32's WIDE (-100..+100) spans Wider's 0-200%: |WIDE| x 2. The sign mirrors
+ * (which side gets +F). Not reproduced: a small treble droop that varies with
+ * W (-0.3 dB at 8 kHz, a few dB at 17-20 kHz), which reads as Wider's own
+ * fractional-delay interpolation; here the delay is cubic-interpolated.
+ * The fit and its method: memory `widening-module-goal`, DR32 CLAUDE.md.
  */
-static const float DISPERSE_HZ[DR32_WIDE_AP_STAGES] = {
-    180.0f, 1400.0f, 3200.0f, 5000.0f, 6800.0f, 8600.0f, 10500.0f, 12500.0f,
+static const float DISPERSE_A[DR32_WIDE_AP_STAGES] = {
+    /* (a + z^-1) / (1 + a z^-1); corners 4.4, 41.5, 232, 1281 Hz and one near
+     * Nyquist (a > 0), which is what makes the early taps alternate. */
+    -0.999374f, -0.994100f, -0.967481f, -0.832310f, 0.816475f,
 };
-#define DISPERSE_Q 0.55f
+#define DISPERSE_MS_PER_PCT 0.0300f
+#define DISPERSE_RING 512           /* per channel; 6 ms at 200% is 265 frames */
 
 static void disperse_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) {
     float pct = p->wide_pct;
     if (pct < -100.0f) pct = -100.0f;
     if (pct > 100.0f) pct = 100.0f;
-    const float g = pct * 0.01f;
+    const float W = 2.0f * fabsf(pct);                    /* Wider's 0..200 % */
+    const float g = (W < 100.0f ? W * 0.01f : 1.0f) * (pct < 0.0f ? -1.0f : 1.0f);
+    const float D = DISPERSE_MS_PER_PCT * W * 0.001f * DR32_SR;   /* frames, fractional */
+    const int   Di = (int)D;
+    const float Df = D - (float)Di;
     const int hp = p->wide_hz > 20.5f;
     if (hp && d->hz != p->wide_hz) {
         const float t = tanf(3.14159265f * p->wide_hz / DR32_SR);
@@ -491,35 +503,32 @@ static void disperse_run(dr32_wide *d, const dr32_pad *p, float *x, int frames) 
         d->a3 = t * d->a2;
         d->hz = p->wide_hz;
     }
-    /* The cascade's coefficients never change: computed once. */
-    static float c1[DR32_WIDE_AP_STAGES], c2[DR32_WIDE_AP_STAGES], c3[DR32_WIDE_AP_STAGES];
-    static const float ck = 1.0f / DISPERSE_Q;
-    static int ready = 0;
-    if (!ready) {
-        for (int j = 0; j < DR32_WIDE_AP_STAGES; j++) {
-            const float t = tanf(3.14159265f * DISPERSE_HZ[j] / DR32_SR);
-            c1[j] = 1.0f / (1.0f + t * (t + ck));
-            c2[j] = t * c1[j];
-            c3[j] = t * c2[j];
-        }
-        ready = 1;
-    }
     for (int i = 0; i < frames; i++) {
-        float m = 0.5f * (x[2 * i] + x[2 * i + 1]);
-        if (hp) m = svf_hp(d, d->s[1], svf_hp(d, d->s[0], m));
-        /* SVF all-pass: x - 2k * band. Unity at every frequency. */
-        for (int j = 0; j < DR32_WIDE_AP_STAGES; j++) {
-            float *st = d->ap[j];
-            const float v3 = m - st[1];
-            const float v1 = c1[j] * st[0] + c2[j] * v3;
-            const float v2 = st[1] + c2[j] * st[0] + c3[j] * v3;
-            st[0] = 2.0f * v1 - st[0];
-            st[1] = 2.0f * v2 - st[1];
-            m = m - 2.0f * ck * v1;
+        for (int c = 0; c < 2; c++) {
+            float v = x[2 * i + c];
+            if (hp) v = svf_hp(d, d->dhp[c][1], svf_hp(d, d->dhp[c][0], v));
+            float *ring = d->buf + c * DISPERSE_RING;
+            ring[d->w] = v;
+            /* 4-point cubic (Catmull-Rom) between the frames either side of
+             * the fractional delay: straight-line interpolation darkened the
+             * top 1-3 dB more than Wider does. */
+            const float ym = ring[(d->w - Di + 1) & (DISPERSE_RING - 1)];
+            const float y0 = ring[(d->w - Di) & (DISPERSE_RING - 1)];
+            const float y1 = ring[(d->w - Di - 1) & (DISPERSE_RING - 1)];
+            const float y2 = ring[(d->w - Di - 2) & (DISPERSE_RING - 1)];
+            const float c1 = 0.5f * (y1 - ym);
+            const float c2 = ym - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
+            const float c3 = 0.5f * (y2 - ym) + 1.5f * (y0 - y1);
+            float y = ((c3 * Df + c2) * Df + c1) * Df + y0;
+            for (int j = 0; j < DR32_WIDE_AP_STAGES; j++) {   /* first-order all-passes */
+                const float a = DISPERSE_A[j];
+                const float o = a * y + d->dap[c][j];
+                d->dap[c][j] = y - a * o;
+                y = o;
+            }
+            x[2 * i + c] += c ? -g * y : g * y;
         }
-        const float side = g * m;
-        x[2 * i]     += side;
-        x[2 * i + 1] -= side;
+        d->w = (d->w + 1) & (DISPERSE_RING - 1);
     }
 }
 
