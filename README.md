@@ -111,7 +111,7 @@ Jog moves between them.
 | **Tone · Noise** | the Simian voice *(Simian pads)* |
 | **Drum · Shell · Chop · Media / Cymbal · Chop · Media** | the Urchin voice, and its record: Vinyl/Tape noise, Sat, Rate, Bits *(Urchin pads)* |
 | **Voice** | Tune · Decay · the drum's own knob · Drive · Distortion · Velocity *(9W9, 6W6, 8W8, CW-78 pads)* |
-| **Pulse · Body · Noise** | ChowKick: the pulse (Width, Amp, Sustain, Decay, Vel Sense, Tone), the resonant body (Frequency, Q, Damping, Tight, Bounce, Mode, Portamento) and envelope-following noise *(ChowKick pads)* |
+| **Pulse · Body · Noise** | ChowKick: the pulse (Width, Amp, Decay, Sustain, Vel Sense, Tone), the resonant body (Frequency, Q, Damping, Tight, Bounce, Mode, Portamento) and envelope-following noise *(ChowKick pads)* |
 | **Mix** | Vel Vol · Volume · Pan · Link · Send A · Send B · Punch · Punch Time |
 | **Master** | level for the whole kit |
 

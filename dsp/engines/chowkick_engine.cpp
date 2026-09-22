@@ -229,11 +229,13 @@ inline float res_proc(int mode, float x, const Coefs &c, float (&z)[3], float d1
 
 /* ---- the parameter table ------------------------------------------------ */
 
-/* ⚠ ORDER IS THE PAGE ORDER AND THE STATE ORDER. Append; never insert.
+/* ⚠ ORDER IS THE PAGE ORDER. The state is saved by KEY, so reordering is
+ * safe for saved pads. Width, Amp, Decay, Sustain is ChowKick's own panel
+ * order (res/gui.xml; Josh: "sustain and decay knobs should be reversed").
  * Display units; percents are 0..100 here and 0..1 in the plugin. The
  * defaults are the plugin's own (its addParameters). */
 enum P {
-    P_WIDTH, P_AMP, P_SUSTAIN, P_DECAY, P_VELO, P_TONE,
+    P_WIDTH, P_AMP, P_DECAY, P_SUSTAIN, P_VELO, P_TONE,
     P_FREQ, P_Q, P_DAMP, P_TIGHT, P_BOUNCE, P_MODE, P_PORTA,
     P_NOISE, P_NDECAY, P_NCUT, P_NTYPE,
     NP
@@ -241,8 +243,8 @@ enum P {
 const dr32_eparam PARAMS[NP] = {
     {"ck_width",   "Width",       "WIDTH", 0.025f, 2.5f,   1.0f,  0.025f, "ms", "Pulse", nullptr},
     {"ck_amp",     "Amp",         "AMP",   0.0f,   100.0f, 100.0f, 1.0f,  "%",  "Pulse", nullptr},
-    {"ck_sustain", "Sustain",     "SUST",  0.0f,   100.0f, 50.0f, 1.0f,   "%",  "Pulse", nullptr},
     {"ck_decay",   "Decay",       "DECAY", 0.0f,   100.0f, 50.0f, 1.0f,   "%",  "Pulse", nullptr},
+    {"ck_sustain", "Sustain",     "SUST",  0.0f,   100.0f, 50.0f, 1.0f,   "%",  "Pulse", nullptr},
     {"ck_velo",    "Vel Sense",   "VSENS", 0.0f,   1.0f,   1.0f,  1.0f,   nullptr, "Pulse", "Off|On"},
     {"ck_tone",    "Tone",        "TONE",  300.0f, 7000.0f, 800.0f, 10.0f, "hz", "Pulse", nullptr},
     {"ck_freq",    "Frequency",   "FREQ",  30.0f,  500.0f, 100.0f, 1.0f,  "hz", "Body",  nullptr},
