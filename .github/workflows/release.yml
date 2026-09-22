@@ -52,7 +52,7 @@ jobs:
       - name: Test
         run: |
           docker run --rm -v "$PWD":/work -w /work debian:bookworm bash -c '
-            apt-get -qq update >/dev/null && apt-get -qq install -y gcc nodejs >/dev/null
+            apt-get -qq update >/dev/null && apt-get -qq install -y gcc g++ nodejs >/dev/null
             tests/run.sh'
 
       # build.sh builds its own toolchain image from scripts/Dockerfile when no

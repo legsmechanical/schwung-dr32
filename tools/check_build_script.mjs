@@ -190,6 +190,19 @@ if (isBuild) {
             `compiled, and the failure surfaces on the DEVICE at dlopen. Glob here too.`);
     }
 
+    /* The synth engines are the SAME hazard in C++: tests/run.sh globs
+     * `dsp/engines/*.cpp`, so the ship build must too. Without it every engine
+     * test passes and the device fails at dlopen on `dr32_engine_simian`. */
+    const cxx = code.find((l) => /^for src in /.test(l.text) && /dsp\/engines\//.test(l.text));
+    if (!cxx) {
+        errors.push(
+            `no \`for src in dsp/engines/*.cpp\` loop in ${path}\n` +
+            `        tests/run.sh compiles every synth engine from that glob; the ship build must ` +
+            `compile the same set or dsp.so is missing engines the suite tested.`);
+    } else if (!/dsp\/engines\/\*\.cpp/.test(cxx.text)) {
+        errors.push(`line ${cxx.n} lists engines explicitly: \`${cxx.text}\` — glob dsp/engines/*.cpp.`);
+    }
+
     /* ---- 3c. the shared link must refuse undefined symbols -------------------- */
 
     const nolink = code.find((l) => /-shared\b/.test(l.text) && /--no-undefined/.test(l.text));
@@ -199,7 +212,7 @@ if (isBuild) {
             `        A shared link is ALLOWED to be incomplete — an unresolved symbol is left for ` +
             `whoever dlopen's it — so the link cannot tell you a source file is missing. That is how ` +
             `a dsp.so without dr32_kits.o linked, exited 0 and installed, failing only on the device ` +
-            `at dlopen. DR32 resolves everything from libc/libm, so the flag costs nothing.`);
+            `at dlopen. DR32 resolves everything from libc, libm and libstdc++, so the flag costs nothing.`);
     }
 
     /* ---- 4. a failed assert must remove what install.sh READS ----------------- */

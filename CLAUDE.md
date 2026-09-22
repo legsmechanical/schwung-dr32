@@ -323,7 +323,7 @@ and picking wrong is invisible on whichever platform you happen to use.
 ⭑ **Verify a C change in the container, not just locally:**
 ```sh
 docker run --rm -v "$PWD":/work -w /work debian:bookworm bash -c \
-  'apt-get -qq update >/dev/null && apt-get -qq install -y gcc nodejs >/dev/null; tests/run.sh'
+  'apt-get -qq update >/dev/null && apt-get -qq install -y gcc g++ nodejs >/dev/null; tests/run.sh'
 ```
 ⚠ **The DISTRO also chooses whether code compiles**, not just the libc: Ubuntu enables
 `_FORTIFY_SOURCE` at `-O2` and Debian does not, which makes `system()` `warn_unused_result` on one

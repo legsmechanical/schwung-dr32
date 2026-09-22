@@ -144,10 +144,12 @@ echo "==> compiling with $CC / $CXX"
 rm -rf build/obj
 mkdir -p build/obj
 
-# DR32 is C11 throughout. It used to link with g++ because the FX bus was C++
-# (the vendored reverbs were C++ structs); that whole stage moved out with the
-# internal send/return framework, so there is no C++ translation unit left and
-# nothing here needs the C++ runtime.
+# DR32 is C11, plus ONE C++ translation unit per synth engine
+# (dsp/engines/*.cpp, Faust output). The engines are compiled after the C
+# sources and the whole thing is linked with g++, which is what pulls in the
+# C++ runtime they need (operator new). -O3 and no -ffast-math are the ports'
+# own flags (schwung-simian, schwung-urchin): their DSP depends on ordinary
+# IEEE rounding, and a denormal flush changes a tail.
 # ⚠⚠ GLOB, DO NOT LIST. This was an explicit list of nine files while
 # tests/run.sh globbed `dsp/*.c`, so the two builds compiled DIFFERENT SETS of
 # sources. Adding dsp/dr32_kits.c passed the whole suite and shipped a dsp.so
@@ -160,6 +162,14 @@ for src in dsp/*.c; do
     $CC -O2 -fPIC $ARCH -DNDEBUG -std=c11 -Wall -Wextra -Idsp \
         -c "$src" -o "build/obj/$(basename "${src%.c}").o"
 done
+# The same glob tests/run.sh uses, for the same reason as above. -fvisibility
+# =hidden keeps each engine's generated classes inside its own TU; the only
+# symbols they export are the extern "C" ops tables.
+for src in dsp/engines/*.cpp; do
+    $CXX -O3 -fPIC $ARCH -DNDEBUG -std=c++14 -Wall -Wextra -Wno-comment -Wno-unused-parameter \
+        -fno-exceptions -fno-rtti -fvisibility=hidden -Idsp -Idsp/engines \
+        -c "$src" -o "build/obj/eng_$(basename "${src%.cpp}").o"
+done
 
 # ⚠⚠ --no-undefined IS LOAD-BEARING, not tidiness.
 #
@@ -170,9 +180,9 @@ done
 # surfaced on the DEVICE as `dlopen failed: undefined symbol: dr32_kits_name`.
 #
 # Proven on the same objects with dr32_kits.o removed: without the flag the link
-# exits 0; with it, 12 errors naming the symbols. DR32 resolves everything from
-# libc/libm, so this costs nothing here.
-$CC -shared -Wl,--no-undefined -o build/dsp.so build/obj/*.o -lm
+# exits 0; with it, 12 errors naming the symbols. The C++ driver brings
+# libstdc++ for the engines; everything else resolves from libc/libm.
+$CXX -shared -Wl,--no-undefined -o build/dsp.so build/obj/*.o -lm
 
 echo "==> packaging dist/"
 rm -rf "dist/${MODULE_ID}"
