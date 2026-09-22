@@ -14,6 +14,10 @@
         "on the device sounds",
         "like itself here.",
         "",
+        "Any pad can also be",
+        "a synth drum: Simian",
+        "or Urchin.",
+        "",
         "DR32 opens empty.",
         "Load a kit from the",
         "Category page."
@@ -27,13 +31,16 @@
         "",
         "Category",
         " pick a kit",
-        "Sample",
+        "Pad",
         " what each pad",
         " plays, and where",
         " in the file",
         "Shape",
         " envelope and",
-        " filter",
+        " filter (samples)",
+        "Tone, Noise, Drum..",
+        " the synth voice",
+        " (synth pads)",
         "Mix",
         " level, pan, sends",
         " and punch",
@@ -111,12 +118,13 @@
           ]
         },
         {
-          "title": "Sample",
+          "title": "Pad",
           "lines": [
             "PAD   which pad",
-            "SMPL  open a",
-            " browser in that",
-            " pad's own folder",
+            "ENGN  pick what the",
+            " pad plays: a",
+            " sample, or a synth",
+            " drum",
             "STRT  start point",
             "END   end point",
             "TRSP  semitones",
@@ -124,9 +132,41 @@
             "CHOKE choke group.",
             " Pads sharing one",
             " cut each other off",
-            "BRWS  step through",
-            " the folder, one",
-            " sample per detent"
+            "VOL   the pad's level",
+            "",
+            "STRT and END are",
+            "for samples only."
+          ]
+        },
+        {
+          "title": "Synth pads",
+          "lines": [
+            "ENGN opens a picker:",
+            "",
+            "Sample",
+            " Move and User",
+            " libraries",
+            "Simian",
+            " a classic synth",
+            " drum voice",
+            "Urchin",
+            " modelled drums,",
+            " hats and cymbals",
+            "",
+            "Scroll to put a drum",
+            "on the pad, click to",
+            "take it and close.",
+            "",
+            "A synth pad gets its",
+            "engine's pages in",
+            "place of Shape. Mix,",
+            "sends, choke, Link",
+            "and Copy work the",
+            "same as on a sample.",
+            "",
+            "Vel Vol starts at 0:",
+            "the engine already",
+            "answers velocity."
           ]
         },
         {
@@ -315,7 +355,14 @@
         "set up for you.",
         "",
         "Browsing kits has no",
-        "undo."
+        "undo.",
+        "",
+        "A Move kit is only",
+        "samples, so loading",
+        "one turns every pad",
+        "back to a sample.",
+        "Synth pads are kept",
+        "in the Schwung set."
       ]
     }
   ]

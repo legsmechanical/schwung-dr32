@@ -15,8 +15,9 @@ loads fine, logs nothing, menu does nothing.
 ```
 Category <items>   Acoustic · Electronic · Hybrid · My Kits   <- first bank
   Kit    <preset>  a flat list of just that category
-Sample   PAD   SMPL  STRT  END   TRSP  DETN  CHOKE BRWS   <- level `pads`
-Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape`
+Pad      PAD   ENGN  STRT  END   TRSP  DETN  CHOKE VOL    <- level `pads` (STRT/END: samples)
+Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (samples only)
+<engine> the synth voice's pages, gated on ui_engine      <- levels `eng_*` (generated)
 Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  PUNCH PTIME  <- level `pad_mix`
 Master   MASTR
 ```
@@ -127,6 +128,86 @@ Master   MASTR
   that a fader would be about Pan.
 - ⚠ **A knob GAP cannot be declared.** `knobKeys` filters null entries out, so authored knobs are
   packed — an intended blank in a `knobs` array closes up rather than reserving a slot.
+
+## 🥁 Synth engines: any pad can be a SIMIAN or URCHIN voice (branch `multiengine`, 2026-09-21)
+
+Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a sample engine
+(what's there now) or a synthesis engine per pad."* Josh's rules:
+
+- **Sample pads: no change at all.** Proven, not claimed: a hash probe over filters, chokes,
+  envelopes, Punch and both render paths gives the SAME hash on `master` and on this branch, and a
+  1 Hz cutoff change moves it. **Re-run it after touching the kit or voice path.** The probe is a
+  throwaway, so rebuild it the same way: render a fixed scenario and FNV the floats.
+- **Synth pads get no DR32 Shape stage, neither envelope nor filter** (Josh: "neither - but i want to
+  keep the option open to having filter turned on for everything"). The engine renders MONO into
+  `kit->eng_mono` and `synth_render` pans it. A post-engine filter is one call between the two, at
+  the marked hook point.
+- **The Sample knob became the ENGINE picker** (`src/browser.js`): Sample ▸ libraries, then one
+  section per engine family listing its models.
+
+**Shape of it:**
+- `dsp/dr32_engine.h`: the C boundary. An ENGINE is a DSP class plus its param table
+  (`dr32_engine_ops`). A MODEL is a named starting row (a Kick, a Closed Hat) from the upstream
+  instrument's own init kit. A pad RUNS an engine; the picker offers MODELS.
+- `dsp/engines/`: one C++ TU per engine family. The Faust sources are vendored UNMODIFIED from
+  `schwung-simian` / `schwung-urchin`, and `generated/` is `scripts/gen_engines.sh` output. 🔴 **The
+  class names are the point:** both ports generate `DSP_Drum` with one include guard and the same
+  table names. Across TUs the linker merges the inline methods, so a SIMIAN voice can run URCHIN's
+  `compute`. Every class gets an engine-unique `-cn`. ⚠ Each engine keeps ITS OWN `.lib` files and
+  its own `--import-dir`; the two `shared.lib` files are different libraries with the same name.
+- A pad is a sample pad OR a synth pad, never both. `padN_model = <slug>` unloads the sample.
+  Loading a sample, a kit, or `clear` retires the engine (one-deep, like `retired`).
+- `ui_engine` is the gate: the FOCUSED pad's engine, derived and read-only. It is in
+  `chain_params` and on NO level (docs/MODULES.md, "The gate does not need a cell"). Every engine
+  page is a pad level with `visible_if ui_engine == id`. Shape, Start/End and Punch are gated
+  `== 0`. **Needs host #533** for the pages to follow a pad press. On an older host every engine's
+  pages show at once, which is cluttered and never wrong.
+- DR32 owns the mix. Each engine's own Gain, Pan and reverb send are pinned, and a model's gain and
+  pan become the pad's Volume and Pan. Velocity is the ENGINE's (SIMIAN's Vel Gain feeds its
+  saturation; URCHIN's velocity is strike energy), so a model starts the pad's `vel_vol` at 0.
+- The trigger edge is forced PER VOICE (`faust_voice.h`): one frame at 0, then the velocity.
+  Faust edge-detects `Trigger`, and a press and release inside one block would otherwise be no hit.
+- ⚠ **all-off / panic MUTES a synth pad; it does not stop it.** Stopping froze a ringing URCHIN
+  model mid-tail, and the frozen state resumed under the next hit (a measurably quieter, wrong
+  second hit). Muted, it rings out unheard until the engine's silence gate ends it. A choke does
+  the same, with DR32's own 3 ms ramp on top.
+- A synth pad's `sample` READS as its model's name, because the ENGN cell draws the basename of
+  that value. That name is never saved (`dr32_state.c` skips it) and a write of it is ignored, so
+  it is never taken for a path.
+
+**Rules that bite:**
+- 🔴 **`tools/gen_engine_ui.mjs` OWNS** the engine pages, their root nav entries, every pad level's
+  `child_copy_keys`, the `ui_engine` chain param and the picker's model list (between browser.js's
+  GENERATED markers). It builds them from the engine tables through `tools/dump_engines.c`.
+  **Change an engine param in its `.cpp` table and re-run it**; `--check` fails the suite until
+  you do.
+- **Copy/Clear act on the level you STAND on**, so every pad level carries the SAME
+  `child_copy_keys`, with `model` right after `sample` (written in order; the model must exist
+  before its knobs land). `check_module_json` pins it.
+- ⚠ **module.json is 53.7 KB of the host's 64 KB file cap.** The next engine family will not fit
+  as more generated levels in this file. Serve its levels from the DSP instead (the served
+  hierarchy is ours: `load_ui_hierarchy`), or compact the per-level copy lists. The SERVED
+  hierarchy is minified for the same reason (33.5 KB with names spliced into 13 pad levels).
+- **Both render paths** go through the one `pad_render` dispatch, so a synth pad cannot render on
+  one entry point and not the other. `tests/test_synth_pads.c` drives both; removing synth pads
+  from the split loop fails 4 checks.
+- Engine keys are prefixed per engine (`sm_`, `ud_`, `us_`, `uc_`) because one hierarchy holds
+  them all, and a repeated key makes the host's C loader drop ALL metadata (per-pad sends go
+  silent). The URCHIN snare is its own engine with its own keys for the same reason: a condition
+  cannot say "drum OR snare", and duplicating the drum pages would repeat their keys.
+- LINK spreads an engine param only to pads running the same engine (the key simply is not the
+  other pads'). `model` is never linked.
+- **The four forked engines** (`schwung-9W9`, `-6W6`, `-8W8`, `-cw-78`, all GPL-3.0) are the
+  planned next families. Known costs: 9W9's hats and cymbals need its WAVs; 8W8's metal voices
+  share one oscillator bank (per-pad banks change their tuning); 9W9 and CW-78 voices each need a
+  private noise source.
+- **Licence:** GPL-3.0-or-later since the engines (they are GPL; the combined `dsp.so` is too).
+  `NOTICES.md` carries the MIT notice for the earlier code, including Charles's two PRs.
+
+Tests: `tests/test_engine.c` (every model sounds, is a hit, is deterministic, starts in its own
+block, retriggers, goes quiet; tune; key uniqueness) and `tests/test_synth_pads.c` (ui_engine,
+params, both render paths, level/pan, choke across kinds, panic, back to sample, kit load, LINK,
+state round trip, plugin names/split/state).
 
 ## 🎛 The UI is the host's param-pages grid — DR32 ships no UI of its own (since 0.2.0, 2026-09-05)
 

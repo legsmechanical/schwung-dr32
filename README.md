@@ -32,9 +32,25 @@ you land on, so you can hear your way through a category.
 choke groups, two envelope modes (A-H-D and A-S-R), four filter types, velocity response, pan,
 level and Punch. Pad names follow the sample, so the header tells you which drum you're on.
 
-**Sample swapping without leaving the page.** **SMPL** opens a browser already in the folder that
-pad's sample came from; **BRWS** steps through its neighbours one at a time, so you can try the
-other snare without opening anything.
+**Any pad can be a synthesised drum instead.** The **ENGN** knob opens a picker with a section per
+engine: **Sample** (the Move and User libraries, as always), **Simian** and **Urchin**. Pick a
+drum, such as *Kick*, *Closed Hat* or *Rimshot*, and that pad stops being a sampler and plays that
+engine's voice. Mix and match freely: a sampled kick, a Simian clap and an Urchin ride can sit in
+one kit. Everything around the voice stays DR32's: volume, pan, velocity, choke groups, the sends,
+Link, Copy and Delete, and the per-pad buses all treat a synth pad the same as a sample pad.
+
+| engine | what it is | its pages |
+|---|---|---|
+| **Simian** | [OneTrick SIMIAN 2](https://punklabs.com/ot-simian)'s voice: a tuned oscillator that morphs from triangle to cymbal, resonant-filtered noise and a click, all swept by one envelope. The early-80s electronic drum. | Tone · Noise |
+| **Urchin** | OneTrick URCHIN's physically modelled drums: a struck shell with a resonant head for kicks, toms and snares (with Rim), and a bank of inharmonic partials for hats and cymbals (with Closed, the hat pedal) | Drum · Shell · Chop, or Cymbal · Chop |
+
+Each drum starts from the engine's own factory values and is yours to change from there. The pages
+follow the pad: hit a Simian pad and you get its Tone and Noise pages, hit a sample pad and you get
+Shape. A synth pad has no Start/End, Shape or Punch, because those belong to the sampler.
+
+**Sample swapping without leaving the page.** On a sample pad, **ENGN** opens straight into the folder
+that pad's sample came from, with the cursor on it. Scrolling puts each sample on the pad as you land
+on it, so you can hit the pad to hear the next snare along, and clicking one takes it and closes.
 
 **Route pads to their own buses, with their own effects.** DR32 publishes all 32 pads to Schwung's
 **module bus** framework, so the host can group any subset of them onto a bus that renders into its
@@ -77,13 +93,16 @@ Jog moves between them.
 |---|---|
 | **Category** | Acoustic · Electronic · Hybrid · My Kits — click one to open its kits |
 | **Kit** | the kits in that category |
-| **Sample** | Pad · Sample · Start · End · Transpose · Detune · Choke · Browse |
-| **Shape** | Attack · Decay · Hold · Envelope · Cutoff · Reso · Type · Filter |
+| **Pad** | Pad · Engine · Start · End · Transpose · Detune · Choke · Volume |
+| **Shape** | Attack · Decay · Hold · Envelope · Cutoff · Reso · Type · Filter *(sample pads)* |
+| **Tone · Noise** | the Simian voice *(Simian pads)* |
+| **Drum · Shell · Chop / Cymbal · Chop** | the Urchin voice *(Urchin pads)* |
 | **Mix** | Vel Vol · Volume · Pan · Link · Send A · Send B · Punch · Punch Time |
 | **Master** | level for the whole kit |
 
-**Sample, Shape and Mix are three views of one pad** — pick the pad on any of them and it's picked
-on all three.
+**The pad pages are all views of one pad.** Pick the pad on any of them and it's picked on all of
+them. Which ones you see depends on what the pad is: a sample pad shows Pad, Shape and Mix, and a
+synth pad swaps Shape for its engine's pages. Start/End and Punch appear only on sample pads.
 
 There's no custom interface to learn: every page is Schwung's own knob grid, so the sample waveform,
 the envelope, the filter curve and the pad map all draw the way they do everywhere else. Help is on
@@ -100,15 +119,26 @@ the device too, under Module Help.
   modified.
 - **Per-pad playback effects are not played back.** They're read and written back untouched, so kits
   stay lossless and reopen correctly on Move; DR32 just plays the plain sampler.
+- **Synth pads are saved in the Schwung set, not in a kit file.** A Move kit is samples only, so
+  loading one turns every pad back into a sample pad. A mixed kit lives in your set.
+- **Synth pads need Schwung with the page-gating fix
+  ([#533](https://github.com/charlesvestal/schwung/pull/533))** for the pages to follow the pad.
+  On an older host every engine's pages show at once. That's cluttered but it still works.
+- A synth pad's velocity response is the engine's own, so its **Vel Vol** starts at 0. Turn it up to
+  add DR32's velocity-to-volume on top.
 - **Return-chain effects saved inside a kit are preserved but not set up for you** — a kit's send
   *amounts* are imported, but what sits on the return is yours to choose.
 
 ## Credits and licence
 
-MIT. Built on [Schwung](https://github.com/charlesvestal/schwung) by Charles Vestal.
-Not affiliated with Ableton.
+**GPL-3.0-or-later** (MIT before the synth engines arrived). Built on
+[Schwung](https://github.com/charlesvestal/schwung) by Charles Vestal. Not affiliated with Ableton.
 
-The drum engine is a **reconstruction, not a design** — its behaviour comes from analysis of and
+The synth engines are Punk Labs' **OneTrick SIMIAN 2** and **OneTrick URCHIN**, GPL-3.0-or-later
+and unmodified. They are *free as in rights, not as in beer*: if you play them, buy them from
+[Punk Labs](https://punklabs.com). [`NOTICES.md`](NOTICES.md) has the full breakdown.
+
+The sample engine is a **reconstruction, not a design** — its behaviour comes from analysis of and
 measurement against Move's own, which means any audible deviation is a bug even when it sounds
 nicer.
 
