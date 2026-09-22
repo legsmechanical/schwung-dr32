@@ -253,13 +253,35 @@ static char *load_ui_hierarchy(const char *module_dir, int *out_len) {
     }
     if (depth != 0) { free(json); return NULL; }
 
+    /* Copy it MINIFIED: whitespace outside strings dropped.
+     *
+     * ⚠ SIZE, NOT TIDINESS. The served hierarchy crosses a 64 KB value
+     * channel, and dr32_refresh_hierarchy then splices 32 pad names into EVERY
+     * pad level — thirteen of them since the synth engines each got their own
+     * pages. module.json is pretty-printed for people (and itself sits under
+     * the host's 64 KB file cap); indented, it would leave no room for the
+     * names, and the refresh falls back to serving no names at all. Minified,
+     * it is about 60% of the file. JSON is unchanged by this: whitespace
+     * outside a string is not part of any value. */
     int len = (int)(end - start);
     char *out = (char *)malloc((size_t)len + 1);
     if (!out) { free(json); return NULL; }
-    memcpy(out, start, (size_t)len);
-    out[len] = '\0';
+    int m = 0, in_str = 0;
+    for (const char *c = start; c < end; c++) {
+        if (in_str) {
+            out[m++] = *c;
+            if (*c == '\\' && c + 1 < end) out[m++] = *++c;   /* keep the escaped char */
+            else if (*c == '"') in_str = 0;
+        } else if (*c == '"') {
+            out[m++] = *c;
+            in_str = 1;
+        } else if (*c != ' ' && *c != '\n' && *c != '\r' && *c != '\t') {
+            out[m++] = *c;
+        }
+    }
+    out[m] = '\0';
     free(json);
-    if (out_len) *out_len = len;
+    if (out_len) *out_len = m;
     return out;
 }
 

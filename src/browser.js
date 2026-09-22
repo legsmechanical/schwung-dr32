@@ -30,6 +30,72 @@
 
 import * as os from 'os';
 
+/*
+ * ⭐ THIS IS THE ENGINE PICKER NOW, AND THE SAMPLE BROWSER IS ONE SECTION OF IT
+ * (Josh, 2026-09-21: "the sample knob becomes an engine knob. it takes you to a
+ * picker that has multiple sections, e.g., Sample (items are Move Library, User
+ * Library - each pointing to the browser), Simian (items are each of the
+ * distinct simian drum models), urchin ...").
+ *
+ *   ENGINES        Sample ▸ | Simian ▸ | Urchin ▸        <- the top menu
+ *     Sample       Move Library | User Library            <- as before
+ *       ...        the file browser, unchanged
+ *     Simian       .. | Kick | Snare | ...                <- models
+ *
+ * A model row behaves exactly as a sample row does: scrolling onto it puts it
+ * on the pad (`pad<N>_model`), clicking it takes it and leaves. The DSP makes
+ * the pad a synth pad and names it; nothing here knows what a model sounds
+ * like. The model list is GENERATED from the engines' own tables — see the
+ * block below and tools/gen_engine_ui.mjs.
+ */
+
+/* BEGIN GENERATED MODELS — tools/gen_engine_ui.mjs writes this; do not edit. */
+const FAMILIES = [
+    { id: "simian", label: "Simian", models: [
+        { slug: "simian/kick", name: "Kick" },
+        { slug: "simian/snare", name: "Snare" },
+        { slug: "simian/rimshot", name: "Rimshot" },
+        { slug: "simian/clap", name: "Clap" },
+        { slug: "simian/low_tom", name: "Low Tom" },
+        { slug: "simian/mid_tom", name: "Mid Tom" },
+        { slug: "simian/high_tom", name: "High Tom" },
+        { slug: "simian/hat_closed", name: "Closed Hat" },
+        { slug: "simian/hat_open", name: "Open Hat" },
+        { slug: "simian/cymbal", name: "Cymbal" },
+    ] },
+    { id: "urchin", label: "Urchin", models: [
+        { slug: "urchin/kick", name: "Kick" },
+        { slug: "urchin/snare", name: "Snare" },
+        { slug: "urchin/rimshot", name: "Rimshot" },
+        { slug: "urchin/low_tom", name: "Low Tom" },
+        { slug: "urchin/mid_tom", name: "Mid Tom" },
+        { slug: "urchin/high_tom", name: "High Tom" },
+        { slug: "urchin/hat_closed", name: "Closed Hat" },
+        { slug: "urchin/hat_open", name: "Open Hat" },
+        { slug: "urchin/cymbal", name: "Cymbal" },
+    ] },
+];
+/* END GENERATED MODELS */
+
+/* The top menu: samples, then one section per engine family. */
+const SAMPLE_SECTION = 'sample';
+function sections() {
+    const out = [{ label: 'Sample', section: SAMPLE_SECTION }];
+    for (let i = 0; i < FAMILIES.length; i++)
+        out.push({ label: FAMILIES[i].label, section: FAMILIES[i].id });
+    return out;
+}
+function familyOf(id) {
+    for (let i = 0; i < FAMILIES.length; i++) if (FAMILIES[i].id === id) return FAMILIES[i];
+    return null;
+}
+/* "simian/kick" -> the Simian family. */
+function familyOfSlug(slug) {
+    const s = String(slug || '');
+    const cut = s.indexOf('/');
+    return cut > 0 ? familyOf(s.slice(0, cut)) : null;
+}
+
 /* The two libraries, in display order. */
 const ROOTS = [
     { label: 'Move Library', path: '/data/CoreLibrary/Samples' },
@@ -185,8 +251,33 @@ function focusedPad(ctx) {
     return isFinite(n) && n >= 1 ? n : 1;
 }
 
+/** The top menu — the sections — with the cursor on `cursorOn`. */
+function seatTop(st, cursorOn) {
+    st.section = '';
+    st.dir = '';
+    st.rows = sections();
+    st.cursor = 0;
+    st.top = 0;
+    for (let i = 0; i < st.rows.length; i++) if (st.rows[i].label === cursorOn) st.cursor = i;
+    clampScroll(st);
+}
+
+/** One engine family's models, with the cursor on the model `slug`. */
+function seatFamily(st, fam, slug) {
+    st.section = fam.id;
+    st.dir = '';
+    st.rows = [{ label: '..', path: '', dir: true }];
+    for (let i = 0; i < fam.models.length; i++)
+        st.rows.push({ label: fam.models[i].name, model: fam.models[i].slug });
+    st.cursor = 0;
+    st.top = 0;
+    for (let i = 0; i < st.rows.length; i++) if (slug && st.rows[i].model === slug) st.cursor = i;
+    clampScroll(st);
+}
+
 /** Show `dir`, with the cursor on `cursorOn` if that row is there. */
 function seat(st, dir, cursorOn) {
+    st.section = SAMPLE_SECTION;
     st.dir = rootOf(dir || '') ? dir : '';
     st.rows = listDir(st.dir);
     st.cursor = 0;
@@ -216,7 +307,14 @@ function clampScroll(st) {
  */
 function audition(ctx, st) {
     const row = st.rows[st.cursor];
-    if (!row || row.dir) return;           /* a folder must not clear the pad */
+    if (!row || row.dir || row.section) return;   /* a folder must not clear the pad */
+    if (row.model) {
+        /* A model: the same one-write rule, on the model key. */
+        if (row.model === st.loaded) return;
+        ctx.setParam('pad' + st.pad + '_model', row.model);
+        st.loaded = row.model;
+        return;
+    }
     if (row.path === st.loaded) return;    /* already there; skip the write */
     ctx.setParam('pad' + st.pad + '_sample', row.path);
     st.loaded = row.path;
@@ -237,6 +335,11 @@ function audition(ctx, st) {
 function enterRow(ctx, st) {
     const row = st.rows[st.cursor];
     if (!row) return;
+    if (row.section) {
+        if (row.section === SAMPLE_SECTION) seat(st, '', null);
+        else seatFamily(st, familyOf(row.section), st.loaded);
+        return;
+    }
     if (!row.dir) {
         audition(ctx, st);
         if (typeof ctx.close === 'function') ctx.close();
@@ -254,7 +357,13 @@ function enterRow(ctx, st) {
  * out of menus and folders".
  */
 function goUp(st) {
-    if (!st.dir) return false;                     /* already at the menu */
+    if (!st.section) return false;                 /* already at the top menu */
+    if (st.section !== SAMPLE_SECTION) {           /* a family: back to the sections */
+        const fam = familyOf(st.section);
+        seatTop(st, fam ? fam.label : null);
+        return true;
+    }
+    if (!st.dir) { seatTop(st, 'Sample'); return true; }   /* libraries -> sections */
     const child = baseName(st.dir);
     if (isRoot(st.dir)) { seat(st, '', child); return true; }
     const parent = dirName(st.dir);
@@ -455,7 +564,10 @@ function drawHeader(ctx, st) {
     const leftEnd = HDR_PAD + textW(ctx, left);
     if (midX >= leftEnd + HDR_GAP) printSmall(ctx, midX, HDR_Y, mid, 1);
 
-    const where = st.dir ? baseName(st.dir) : 'LIBRARIES';
+    const fam = st.section && st.section !== SAMPLE_SECTION ? familyOf(st.section) : null;
+    const where = st.dir ? baseName(st.dir)
+                : fam ? fam.label
+                : st.section === SAMPLE_SECTION ? 'LIBRARIES' : 'ENGINES';
     const rightRoom = ctx.width - HDR_PAD - (midX + midW + HDR_GAP);
     const r = fitSmall(ctx, where.toUpperCase(), Math.max(0, rightRoom));
     if (r) printSmall(ctx, ctx.width - HDR_PAD - textW(ctx, r), HDR_Y, r, 1);
@@ -477,7 +589,7 @@ function drawHints(ctx, st) {
      * from the type actually drawn. */
     const h = FONT_H + 2;
     const y = ctx.height - h;
-    const back = st.dir ? 'UP' : 'EXIT';
+    const back = st.section ? 'UP' : 'EXIT';
     drawHint(ctx, ctx.width - hintWidth(ctx, 'BACK', back) - 1, y, h, 'BACK', back);
     /* ⚠ ASK THE HOST, do not watch CC 49. The host reads Shift from the shim's
      * shared memory; the CC does not reliably reach a canvas. Watching the byte
@@ -486,6 +598,27 @@ function drawHints(ctx, st) {
     if (typeof ctx.shiftHeld === 'function' && ctx.shiftHeld()) {
         drawHint(ctx, 1, y, h, 'JOG', 'PAGES');
     }
+}
+
+/*
+ * Point the browser at what the pad already holds: a synth pad opens on its
+ * engine's models with the cursor on its own; a sample pad on its sample's
+ * folder, as it always has. An empty pad has nowhere of its own — on OPEN it
+ * lands on the top menu, and on a pad PRESS the listing stays exactly where it
+ * is, so one folder (or one model list) can fill empty pad after empty pad.
+ */
+function seatForPad(ctx, st, opening) {
+    const model = ctx.getParam('pad' + st.pad + '_model') || '';
+    const fam = familyOfSlug(model);
+    if (fam) {
+        st.loaded = model;
+        seatFamily(st, fam, model);
+        return;
+    }
+    const cur = ctx.getParam('pad' + st.pad + '_sample') || '';
+    st.loaded = cur;
+    if (cur && rootOf(dirName(cur))) seat(st, dirName(cur), baseName(cur));
+    else if (opening) seatTop(st, null);
 }
 
 globalThis.canvas_overlay = {
@@ -516,13 +649,7 @@ globalThis.canvas_overlay = {
          * the cursor on it. An empty pad has nowhere of its own, so it opens on
          * the two libraries.
          */
-        const cur = ctx.getParam('pad' + st.pad + '_sample') || '';
-        if (cur && rootOf(dirName(cur))) {
-            st.loaded = cur;
-            seat(st, dirName(cur), baseName(cur));
-        } else {
-            seat(st, '', null);
-        }
+        seatForPad(ctx, st, true);
     },
 
     /*
@@ -622,9 +749,7 @@ globalThis.canvas_overlay = {
             }
             if (pad === st.pad) return;
             st.pad = pad;
-            const cur = ctx.getParam('pad' + pad + '_sample') || '';
-            st.loaded = cur;
-            if (cur && rootOf(dirName(cur))) seat(st, dirName(cur), baseName(cur));
+            seatForPad(ctx, st, false);
             return;
         }
 

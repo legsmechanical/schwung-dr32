@@ -93,6 +93,14 @@ const pad      = (n) => ov.onMidi(ctx, { data: [0x90, 68 + n, 100] });  /* n = g
 const goUpVia = (f) => f();
 const rows = () => ctx.state.rows.map((r) => r.label);
 const here = () => ctx.state.dir;
+/* '' = the top menu (the engine sections), 'sample' = the libraries and the
+ * file tree, else an engine family's model list. */
+const sect = () => ctx.state.section;
+/* From anywhere in the sample section, back up to the two libraries. */
+const toLibraries = () => {
+    while (here()) navLeft();
+    if (!sect()) { cursorTo('Sample'); navRight(); }
+};
 const at   = () => rows()[ctx.state.cursor];
 
 let fail = 0;
@@ -121,10 +129,15 @@ function cursorTo(label) {
     return true;
 }
 
-/* ── 1. an empty pad opens on the two libraries ────────────────────────── */
+/* ── 1. an empty pad opens on the ENGINE menu; Sample leads to the two
+ *      libraries (Josh: "the sample knob becomes an engine knob. it takes
+ *      you to a picker that has multiple sections") ───────────────────── */
 params = { ui_current_pad: '3' };
 ov.onOpen(ctx);
-check('empty pad opens at the menu', here(), '');
+check('empty pad opens at the top menu', sect(), '');
+check('the top menu is the sections', rows().join(','), 'Sample,Simian,Urchin');
+cursorTo('Sample'); navRight();
+check('Sample opens the libraries', sect(), 'sample');
 check('the menu is the two libraries', rows().join(','), 'Move Library,User Library');
 
 /* ── 2. the click walks in ─────────────────────────────────────────────── */
@@ -231,7 +244,7 @@ check('…back onto that pad\'s folder', here(), '/data/UserData/UserLibrary/Min
  * forever would hold the button on its own screen; one that answered false too
  * early would drop the user out of a folder they were still in. */
 /* Back to the picker first -- section 7 left us inside the user library. */
-while (here()) goUpVia(navLeft);
+toLibraries();
 cursorTo('Move Library'); navRight(); cursorTo('Drums/'); navRight(); cursorTo('Kicks/'); navRight();
 check('three deep', here(), '/data/CoreLibrary/Samples/Drums/Kicks');
 check('Back climbs one', ov.handleBack(ctx), true);
@@ -240,8 +253,12 @@ check('Back climbs again', ov.handleBack(ctx), true);
 check('...to the library root', here(), '/data/CoreLibrary/Samples');
 check('Back leaves the root', ov.handleBack(ctx), true);
 check('...to the picker', here(), '');
-check('Back at the picker declines', ov.handleBack(ctx), false);
-check('...and stays put, for the host to close', here(), '');
+check('...which is still the sample section', sect(), 'sample');
+check('Back at the libraries climbs to the sections', ov.handleBack(ctx), true);
+check('...the top menu', sect(), '');
+check('...with the cursor on the section we left', at(), 'Sample');
+check('Back at the top menu declines', ov.handleBack(ctx), false);
+check('...and stays put, for the host to close', sect(), '');
 
 /* ── 9. clicking a sample takes it AND leaves ─────────────────────────── */
 /* The scroll already put it on the pad, so the click is "this one, I'm done".
@@ -250,7 +267,7 @@ check('...and stays put, for the host to close', here(), '');
 {
     let closed = 0;
     ctx.close = () => { closed++; };
-    while (here()) navLeft();
+    toLibraries();
     cursorTo('Move Library'); click(); cursorTo('Drums/'); click();
     cursorTo('Kicks/'); click(); cursorTo('kick2.wav');
     /* Whichever pad the browser is filling -- section 7 leaves it wherever the
@@ -300,8 +317,8 @@ check('...and stays put, for the host to close', here(), '');
     const pills = () => boxes.filter((b) => b.h === FONT_H_EXPECTED + 2);
     const ink = () => boxes.filter((b) => b.h === 1);
 
-    /* --- at the picker: BACK EXIT, alone, pinned right --- */
-    while (here()) navLeft();
+    /* --- at the top menu: BACK EXIT, alone, pinned right --- */
+    while (sect() || here()) navLeft();
     draw();
     check('one pill on the row', pills().length, 1);
     const atTop = pills()[0];
@@ -316,7 +333,7 @@ check('...and stays put, for the host to close', here(), '');
     /* --- inside a library: BACK UP. "UP" is narrower than "EXIT", so the
      *     right-pinned row starts FURTHER RIGHT. That difference is the only
      *     way to see which word was drawn, now that no string is printed. --- */
-    cursorTo('Move Library'); click();
+    toLibraries(); cursorTo('Move Library'); click();
     draw();
     check('still one pill', pills().length, 1);
     check('UP is narrower than EXIT, so the row sits further right',
@@ -354,7 +371,7 @@ check('...and stays put, for the host to close', here(), '');
     });
     const drawHdr = () => { ink.length = 0; ov.draw(hctx); return ink; };
 
-    while (here()) navLeft();
+    toLibraries();
     drawHdr();
     check('the header is blitted from our own glyph table', ink.length > 20, true);
 
@@ -384,6 +401,52 @@ check('...and stays put, for the host to close', here(), '');
     cursorTo('Move Library'); click();
     const shallow = drawHdr().length;
     check('a folder name adds ink on the right', shallow > 0, true);
+}
+
+/* ── 12. the engine sections: models behave like samples ──────────────── */
+/* A model row is a row like a sample: scrolling onto it puts it on the pad
+ * (one write, `pad<N>_model`), clicking takes it and leaves, '..' and Back
+ * return to the sections. The model list is GENERATED into browser.js from
+ * the engines' own tables. */
+{
+    let closed = 0;
+    ctx.close = () => { closed++; };
+    ctx.setParam = (k, v) => { params[k] = String(v); return true; };
+    params = { ui_current_pad: '5' };
+    ov.onOpen(ctx);
+    check('an empty pad opens at the sections', sect(), '');
+    cursorTo('Simian'); navRight();
+    check('a family lists its models', sect(), 'simian');
+    check('...after a way back up', rows()[0], '..');
+    check('...Kick first', rows()[1], 'Kick');
+    check('...every model', rows().length, 11);
+    check('landing on .. writes nothing', params.pad5_model, undefined);
+    cursorTo('Snare');
+    check('scrolling onto a model puts it on the pad', params.pad5_model, 'simian/snare');
+    const writes = Object.keys(params).length;
+    jog(0);
+    check('...and nothing else was written', Object.keys(params).length, writes);
+    navLeft();
+    check('Back from a family returns to the sections', sect(), '');
+    check('...onto that family', at(), 'Simian');
+    cursorTo('Urchin'); navRight(); cursorTo('..'); click();
+    check('the .. row does the same', sect(), '');
+    check('...onto its family', at(), 'Urchin');
+
+    /* A pad already running a model opens ON it. */
+    params = { ui_current_pad: '6', pad6_model: 'urchin/hat_open', pad6_sample: 'Open Hat' };
+    ov.onOpen(ctx);
+    check('a synth pad opens on its family', sect(), 'urchin');
+    check('...with the cursor on its model', at(), 'Open Hat');
+    cursorTo('Closed Hat');
+    check('...and scrolling changes it', params.pad6_model, 'urchin/hat_closed');
+    click();
+    check('clicking a model takes it and closes', closed, 1);
+
+    /* A synth pad's `sample` reads as its model's NAME — never a path the
+     * browser should try to open. */
+    check('a model name is not taken for a folder', here(), '');
+    delete ctx.close;
 }
 
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');

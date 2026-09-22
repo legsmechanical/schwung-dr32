@@ -33,6 +33,14 @@ done
 # whole hierarchy, so this is not cosmetic)
 node tools/check_module_json.mjs src/module.json || fail=1
 
+# The synth engines' pages and the picker's model list are GENERATED from the
+# engines' own tables; a stale copy is a knob that addresses nothing.
+node tools/gen_engine_ui.mjs --check || fail=1
+
+# The engine picker / sample browser, driven over a fake tree. It was only ever
+# run by hand; the picker's new top menu made it worth running every time.
+node tools/check_browser_nav.mjs >/dev/null || { node tools/check_browser_nav.mjs | grep FAIL; fail=1; }
+
 # build.sh's two-pass shape: the outer pass must not fall through past its
 # `docker run`, or every line below the guard silently runs twice on the same
 # mounted volume. Greps a shell script; no Docker, no toolchain, milliseconds.

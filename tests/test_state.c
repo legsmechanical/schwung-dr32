@@ -320,9 +320,13 @@ int main(void) {
             static char h[65536];
             int n = api->get_param(inst, "ui_hierarchy", h, (int)sizeof(h));
             CHECK(n > 2, "ui_hierarchy not served (%d bytes)", n);
-            CHECK(strstr(h, "\"pad_layout\": \"drums\"") != NULL, "pad_layout missing");
-            CHECK(strstr(h, "\"child_index_param\": \"ui_current_pad\"") != NULL,
+            /* SERVED MINIFIED (dr32.c load_ui_hierarchy): thirteen pad levels
+             * of names have to fit the 64 KB value channel beside it. */
+            CHECK(strstr(h, "\"pad_layout\":\"drums\"") != NULL, "pad_layout missing");
+            CHECK(strstr(h, "\"child_index_param\":\"ui_current_pad\"") != NULL,
                   "child_index_param missing — the splice anchor is gone");
+            CHECK(strstr(h, "\n") == NULL && strstr(h, "\": \"drums") == NULL,
+                  "the served hierarchy is not minified");
             /* ⭑ ONCE PER PAD BANK. Sample / Shape / Mix are three sibling
              * child levels, each naming the pads it draws, and a splice that
              * stopped at the first anchor left two of the three banks reading
@@ -337,6 +341,10 @@ int main(void) {
                       "pad names wrong at splice %d: %.80s", spliced, q);
             }
             CHECK(anchors >= 3, "only %d child_index_param anchors — the three pad banks are gone", anchors);
+            /* Three base banks plus the synth engines' pages (13 today). An
+             * engine page that loses its names reads "Pad 7" over a pad the
+             * Pad bank calls "Kick". */
+            CHECK(anchors == 13, "%d pad levels; expected 13 (3 banks + 10 engine pages)", anchors);
             CHECK(spliced == anchors,
                   "child_names spliced %d times for %d anchors — every pad bank needs its own names",
                   spliced, anchors);
