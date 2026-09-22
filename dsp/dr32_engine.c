@@ -23,6 +23,7 @@ const dr32_engine_ops *dr32_engine_get(int id) {
         case DR32_ENG_URCHIN_DRUM:   return &dr32_engine_urchin_drum;
         case DR32_ENG_URCHIN_SNARE:  return &dr32_engine_urchin_snare;
         case DR32_ENG_URCHIN_CYMBAL: return &dr32_engine_urchin_cymbal;
+        case DR32_ENG_CHOWKICK:      return &dr32_engine_chowkick;
         default: break;
     }
     for (int p = 0; p < N_PORTS; p++) {
@@ -57,6 +58,7 @@ typedef const dr32_model *(*family_fn)(int *count);
 static const family_fn FAMILIES[] = {
     dr32_simian_models, dr32_urchin_models,
     dr32_9w9_models, dr32_6w6_models, dr32_8w8_models, dr32_cw78_models,
+    dr32_chowkick_models,
 };
 #define N_FAMILIES ((int)(sizeof(FAMILIES) / sizeof(FAMILIES[0])))
 

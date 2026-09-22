@@ -129,8 +129,13 @@ function paramEntry(p) {
         return { key: p.key, name: p.name, short_name: p.short_name, type: 'enum',
                  options, default: options[p.def] };
     }
-    const e = { key: p.key, name: p.name, short_name: p.short_name, type: 'int',
+    /* A knob with a fractional step (ChowKick's Q, its pulse Width) is a
+     * float; everything else stays an int, as it always was. */
+    const isFloat = !Number.isInteger(p.step) || !Number.isInteger(p.min) ||
+                    !Number.isInteger(p.max) || !Number.isInteger(p.def);
+    const e = { key: p.key, name: p.name, short_name: p.short_name, type: isFloat ? 'float' : 'int',
                 min: p.min, max: p.max, default: p.def };
+    if (isFloat) e.step = p.step;
     if (p.unit) e.unit = p.unit;
     if (VIZ_OFF.test(p.key)) e.viz = false;
     return e;
@@ -309,7 +314,7 @@ const outEu = JSON.stringify({
 
 /* ---- browser.js model list -------------------------------------------- */
 /* A section's label, where capitalising its slug prefix is not the name. */
-const FAMILY_LABEL = { '9w9': '9W9', '6w6': '6W6', '8w8': '8W8', cw78: 'CW-78' };
+const FAMILY_LABEL = { '9w9': '9W9', '6w6': '6W6', '8w8': '8W8', cw78: 'CW-78', chowkick: 'ChowKick' };
 const fams = [];
 for (const m of models) {
     const id = m.slug.split('/')[0];

@@ -259,6 +259,32 @@ machines' reverb, delay, master distortion, glue and CW-78's rhythm player are N
 - Velocity is the MACHINE's (per-pad `*_vel` = its master velocity depth; on 8W8/CW-78 it is a
   trigger voltage, i.e. timbre), so `vel_vol` starts at 0 as for the Faust engines.
 
+### 🥁 ChowKick (2026-09-22)
+
+Josh: *"port it over as a dr32 engine"*, then *"we definitely need it optimized as possible"*.
+One engine (`DR32_ENG_CHOWKICK`, prefix `ck_`, pages Pulse · Body · Noise); its five factory
+presets are the models. Local clone: `schwung-chowkick` (with submodules JUCE, chowdsp_utils,
+chowdsp_wdf, tuning-library).
+
+- **A SCALAR REWRITE, not vendored**: ChowKick is JUCE (too heavy for a module, and GPLv3-only),
+  so `chowkick_engine.cpp` ports its `src/dsp/` line for line; chowdsp_wdf (BSD) is vendored
+  unmodified and runs the diode circuit. JUCE behaviours are reimplemented, never copied.
+- ⭐ **Proven against ChowKick itself**: `tools/chowkick_ref/` builds ChowKick's OWN DSP classes
+  against the JUCE/chowdsp it pins (a console app, ~a minute) and `make_golden.sh` writes
+  `tests/fixtures/chowkick/*.golden`. `test_chowkick.c` holds the port to them: attack within
+  -40 dB, envelope within 0.5 dB every 100 ms for 2 s, pitch exact. NOT bit-identical by choice
+  (xsimd 4-lane math vs std::; bit-exact would cost ~4x) — the error is phase drift in long tails.
+  ⚠ **zsh does not word-split `$var`**: pass the preset arguments from bash or they arrive as ONE
+  argument and only the first parameter is set (every preset rendered identically until caught).
+- ⭑ **The optimisation**: the diode circuit is 60-70% of the cost and only shapes the pulse; after
+  it, with zero input, it sits at a float FIXED POINT (not 0). Once a zero-input block repeats one
+  value it is held until the next pulse — bit-identical (`test_chowkick.c` runs 20 s with and
+  without, via `dr32_chowkick_no_hold`). 10-13 -> 3.4-5.2 us/block sounding.
+- Link-to-note, MTS, polyphony and Level are dropped (DR32 transpose drives the filter through
+  `freqMult`, as ChowKick's own hook allows). Wonky Synth is linked in the plugin; here it sits at
+  its saved 80 Hz, and its golden is rendered unlinked to match. It rings ~30 s by design.
+- Engine params may now be FLOATS (`step` < 1): `gen_engine_ui` emits `type: float` with a step.
+
 - **Licence:** GPL-3.0-or-later since the engines (they are GPL; the combined `dsp.so` is too).
   `NOTICES.md` carries the MIT notice for the earlier code, including Charles's two PRs.
 

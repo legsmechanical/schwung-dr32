@@ -121,6 +121,7 @@ static void machine(int base, int lane, void *pad, float *out, int n) {
 }
 
 static int port_base(int engine) {
+    if (engine >= DR32_ENG_CW78_BASE + 14) return -1;          /* not a kit port */
     if (engine >= DR32_ENG_CW78_BASE) return DR32_ENG_CW78_BASE;
     if (engine >= DR32_ENG_8W8_BASE)  return DR32_ENG_8W8_BASE;
     if (engine >= DR32_ENG_6W6_BASE)  return DR32_ENG_6W6_BASE;

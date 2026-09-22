@@ -23,6 +23,9 @@ them is a combined work under the GPL. Earlier releases stay MIT.
 | **606-Inspired-Synth-Drums**: `dsp/engines/6w6/*.hpp` | Copyright (c) 2026 **Matthew Fecher / AudioKit Pro**, **MIT**. [Upstream](https://github.com/analogcode/606-Inspired-Synth-Drums). The licence text is `dsp/engines/6w6/LICENSE.606.MIT`, and the notice is reproduced below. These are 6W6's drum voices, unmodified. |
 | **8W8** (TR-808 style): `dsp/engines/8w8/` | By **athousanddetails**, GPL-3.0. Unmodified, vendored from [schwung-8W8](https://github.com/athousanddetails/schwung-8W8) at `94aa271`. Its rim shot is a transcription of **sc808** from [Sonic Pi](https://github.com/sonic-pi-net/sonic-pi)'s synth designs, which are **MIT** (Samuel Aaron and contributors; notice below). Sonic Pi adapted sc808 from **Yoshinosuke Horiuchi**'s SC-808, which he released free of charge for free use with no formal licence text. `sc_ugens.h` reimplements SuperCollider UGen behaviour; it copies no code (8W8's THIRD_PARTY.md). |
 | **CW-78** (CR-78 style): `dsp/engines/cw78/` | By **athousanddetails**, GPL-3.0. Unmodified, vendored from [schwung-cw-78](https://github.com/athousanddetails/schwung-cw-78) at `17681a0`. Modelled from the Roland CR-78 service notes, which are not included. |
+| **ChowKick**: `dsp/engines/chowkick_engine.cpp` | A scalar port of [ChowKick](https://github.com/Chowdhury-DSP/ChowKick)'s DSP (`src/dsp/`, at `4a11869`) by **Jatin Chowdhury / Chowdhury DSP**, **BSD-3-Clause** (notice below). The five models are its factory presets, `dsp/engines/chowkick/presets/`. |
+| **chowdsp_wdf**: `dsp/engines/chowkick/chowdsp_wdf/` | Copyright (c) 2022 **Chowdhury-DSP**, **BSD-3-Clause** (notice below). Unmodified, at `36b5775` (v1.0.0). ChowKick's wave-digital pulse circuit. |
+| **chowdsp_utils** (followed, not vendored) | The port's state-variable filter and noise generators follow chowdsp_utils' `chowdsp_filters` and `chowdsp_sources` modules (at `898d649`), which are **GPLv3**. GPL-3.0-or-later code may be combined with them; the combined work is distributed under GPLv3. JUCE behaviours the DSP relies on (parameter smoothing, a fast tan, the random generator) are reimplemented, and no JUCE code is included. |
 | **The engine adapters**: `dsp/engines/*.cpp`, `dsp/engines/*.c`, `kit_port.h`, `faust_voice.h`, `faust_shim.h` | Copyright (c) 2026 Josh Gaines / legsmechanical, GPL-3.0-or-later. |
 
 SIMIAN's cymbal wavetable (`dsp/engines/simian/faust/samples/`) is a sample by **Kevin Hall**,
@@ -111,4 +114,72 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+## BSD notice for ChowKick
+
+```
+BSD 3-Clause License
+
+Copyright (c) 2020, jatinchowdhury18
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+## BSD notice for chowdsp_wdf
+
+```
+BSD 3-Clause License
+
+Copyright (c) 2022, Chowdhury-DSP
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```

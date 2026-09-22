@@ -42,7 +42,8 @@ enum {
     DR32_ENG_6W6_BASE      = 16,    /*  8 lanes: 16..23 */
     DR32_ENG_8W8_BASE      = 24,    /* 16 lanes: 24..39 */
     DR32_ENG_CW78_BASE     = 40,    /* 14 lanes: 40..53 */
-    DR32_ENG_COUNT         = 54,
+    DR32_ENG_CHOWKICK      = 54,
+    DR32_ENG_COUNT         = 55,
 };
 
 /* ui_family values: which INSTRUMENT the focused pad's engine comes from.
@@ -58,6 +59,7 @@ enum {
     DR32_FAM_6W6    = 4,
     DR32_FAM_8W8    = 5,
     DR32_FAM_CW78   = 6,
+    DR32_FAM_CHOWKICK = 7,
 };
 
 #define DR32_ENG_MAX_PARAMS 32
@@ -136,6 +138,7 @@ extern const dr32_engine_ops dr32_engine_simian;
 extern const dr32_engine_ops dr32_engine_urchin_drum;
 extern const dr32_engine_ops dr32_engine_urchin_snare;
 extern const dr32_engine_ops dr32_engine_urchin_cymbal;
+extern const dr32_engine_ops dr32_engine_chowkick;
 /* The kit ports: each family's lane engines, in id order from its BASE. */
 const dr32_engine_ops *dr32_9w9_engine(int lane, int *count);
 const dr32_engine_ops *dr32_6w6_engine(int lane, int *count);
@@ -148,6 +151,7 @@ const dr32_model *dr32_9w9_models(int *count);
 const dr32_model *dr32_6w6_models(int *count);
 const dr32_model *dr32_8w8_models(int *count);
 const dr32_model *dr32_cw78_models(int *count);
+const dr32_model *dr32_chowkick_models(int *count);
 void dr32_simian_class_init(int sample_rate);
 void dr32_urchin_class_init(int sample_rate);
 void dr32_9w9_class_init(int sample_rate);

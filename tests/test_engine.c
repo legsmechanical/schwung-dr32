@@ -111,9 +111,11 @@ static void test_model(const dr32_model *m) {
           m->slug, again, tail);
     e->destroy(d2);
 
-    /* The silence gate: eventually the voice stops. */
+    /* The silence gate: eventually the voice stops. Two minutes, because some
+     * models are MEANT to ring: ChowKick's Wonky Synth sits at 14.5% damping
+     * and is still about -52 dBFS 25 s after a hit (its preset's sound). */
     int stopped = 0;
-    for (int blk = 0; blk < (SR * 12) / 128 && !stopped; blk++)
+    for (int blk = 0; blk < (SR * 120) / 128 && !stopped; blk++)
         stopped = !e->render(a, buf2, 128);
     CHECK(stopped, "%s: never went quiet", m->slug);
 
@@ -154,8 +156,9 @@ int main(void) {
     dr32_engines_init(SR);      /* idempotent */
 
     int n = dr32_model_count();
-    /* SIMIAN 10, URCHIN 9, then one per lane: 9W9 11, 6W6 8, 8W8 16, CW-78 14. */
-    CHECK(n == 68, "model count %d", n);
+    /* SIMIAN 10, URCHIN 9, then one per lane: 9W9 11, 6W6 8, 8W8 16, CW-78 14;
+     * ChowKick's five factory presets. */
+    CHECK(n == 73, "model count %d", n);
 
     /* Engines: keys prefixed, and a key is ONE knob wherever it appears (one
      * hierarchy holds them all, and a repeated key kills the host's metadata

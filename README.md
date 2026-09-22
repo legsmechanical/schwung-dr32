@@ -34,7 +34,7 @@ level and Punch. Pad names follow the sample, so the header tells you which drum
 
 **Any pad can be a synthesised drum instead.** The **ENGN** knob opens a picker with a section per
 engine: **Sample** (the Move and User libraries, as always), **Simian**, **Urchin**, **9W9**, **6W6**,
-**8W8** and **CW-78**. Pick a drum, such as *Kick*, *Closed Hat* or *Rimshot*, and that pad stops
+**8W8**, **CW-78** and **ChowKick**. Pick a drum, such as *Kick*, *Closed Hat* or *Rimshot*, and that pad stops
 being a sampler and plays that engine's voice. Mix and match freely: a sampled kick, an 8W8 cowbell,
 a Simian clap and an Urchin ride can sit in one kit. Everything around the voice stays DR32's: volume, pan, velocity, choke groups, the sends,
 Link, Copy and Delete, and the per-pad buses all treat a synth pad the same as a sample pad.
@@ -47,6 +47,7 @@ Link, Copy and Delete, and the per-pad buses all treat a synth pad the same as a
 | **6W6** | [6W6](https://github.com/athousanddetails/schwung-6W6)'s TR-606 style voices, built on AudioKit's 606-Inspired-Synth-Drums. 8 drums | Voice |
 | **8W8** | [8W8](https://github.com/athousanddetails/schwung-8W8)'s TR-808 style circuit models, congas, claves, maracas and cowbell included. 16 drums | Voice |
 | **CW-78** | [CW-78](https://github.com/athousanddetails/schwung-cw-78)'s CR-78 style voices, modelled from the service notes: bongos, guiro, tambourine and metal beat among them. 14 drums | Voice |
+| **ChowKick** | [ChowKick](https://github.com/Chowdhury-DSP/ChowKick), Chowdhury DSP's kick synth: a pulse shaped by a modelled diode circuit, rung through a nonlinear resonant filter. Its five factory presets are the models | Pulse · Body · Noise |
 
 Each drum starts from the engine's own factory values and is yours to change from there. The pages
 follow the pad: hit a Simian pad and you get its Tone and Noise pages, hit a sample pad and you get
@@ -110,6 +111,7 @@ Jog moves between them.
 | **Tone · Noise** | the Simian voice *(Simian pads)* |
 | **Drum · Shell · Chop · Media / Cymbal · Chop · Media** | the Urchin voice, and its record: Vinyl/Tape noise, Sat, Rate, Bits *(Urchin pads)* |
 | **Voice** | Tune · Decay · the drum's own knob · Drive · Distortion · Velocity *(9W9, 6W6, 8W8, CW-78 pads)* |
+| **Pulse · Body · Noise** | ChowKick: the pulse (Width, Amp, Sustain, Decay, Vel Sense, Tone), the resonant body (Frequency, Q, Damping, Tight, Bounce, Mode, Portamento) and envelope-following noise *(ChowKick pads)* |
 | **Mix** | Vel Vol · Volume · Pan · Link · Send A · Send B · Punch · Punch Time |
 | **Master** | level for the whole kit |
 
@@ -157,6 +159,7 @@ and unmodified. They are *free as in rights, not as in beer*: if you play them, 
 [Punk Labs](https://punklabs.com). The drum machines are **athousanddetails**' 9W9, 6W6, 8W8 and
 CW-78 (GPL-3.0), unmodified, with the work they build on: ER-99 by Matthew Cieplak (9W9's cymbal
 samples), AudioKit's 606-Inspired-Synth-Drums (6W6's voices, MIT) and sc808 (8W8's rim shot, MIT).
+**ChowKick** is Chowdhury DSP's (BSD-3-Clause).
 [`NOTICES.md`](NOTICES.md) has the full breakdown.
 
 The sample engine is a **reconstruction, not a design** — its behaviour comes from analysis of and

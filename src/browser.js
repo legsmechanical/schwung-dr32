@@ -131,6 +131,13 @@ const FAMILIES = [
         { slug: "cw78/guiro", name: "Guiro" },
         { slug: "cw78/metal_beat", name: "Metal Beat" },
     ] },
+    { id: "chowkick", label: "ChowKick", models: [
+        { slug: "chowkick/default", name: "Default" },
+        { slug: "chowkick/tight", name: "Tight" },
+        { slug: "chowkick/tonal", name: "Tonal" },
+        { slug: "chowkick/bouncy", name: "Bouncy" },
+        { slug: "chowkick/wonky", name: "Wonky Synth" },
+    ] },
 ];
 /* END GENERATED MODELS */
 
