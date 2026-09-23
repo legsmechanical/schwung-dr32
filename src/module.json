@@ -579,10 +579,22 @@
         },
         "resample": {
           "name": "Resample",
+          "items_param": "rs_items",
+          "select_param": "rs_mode",
+          "navigate_to": "resample_dlg",
+          "params": [
+            {
+              "level": "resample_dlg",
+              "label": "Confirm"
+            }
+          ]
+        },
+        "resample_dlg": {
+          "name": "Confirm",
           "params": [
             {
               "key": "resample",
-              "name": "Resample",
+              "name": "Confirm",
               "type": "canvas",
               "canvas_script": "resample.js",
               "as_page": true,

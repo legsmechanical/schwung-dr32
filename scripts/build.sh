@@ -203,7 +203,7 @@ cp src/module.json  "dist/${MODULE_ID}/"
 # module directory (module.json's canvas_script). It is plain JS running in the
 # host's QuickJS, so it is copied, not compiled.
 cp src/browser.js   "dist/${MODULE_ID}/"
-# The Resample page: a module-drawn PAGE (as_page), loaded by the same name.
+# The Resample dialog: a module-drawn PAGE (as_page), loaded by the same name.
 cp src/resample.js  "dist/${MODULE_ID}/"
 # The PAD cell's big number: a per-cell widget, loaded by the host from the
 # module root because ui_current_pad declares viz.kind "custom:padnum". Without

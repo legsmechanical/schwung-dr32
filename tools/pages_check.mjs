@@ -94,17 +94,20 @@ for (const p of pages) {
     console.log(`    ${String(p.level ?? "-").padEnd(8)} ${what}`);
 }
 
-/* The Resample page (Josh: "it should go at the very end after master"): the
- * LAST page, module-drawn, and a door you click into. Checked only against a
- * host whose planner knows enterable canvas pages (PR #520 and later). */
+/* Resample (Josh: "it should go at the very end after master"): the host's
+ * own items page, like Category, then the dialog it leads to — a module-drawn
+ * door, which navigate_to arrives at already entered. Enterability is checked
+ * only against a planner that knows enterable canvas pages (PR #520 on). */
 {
-    const last = pages[pages.length - 1];
-    if (!last || last.level !== "resample" || !last.canvas)
-        bad(`the last page is ${last ? `${last.level} (${last.kind}${last.canvas ? ", canvas" : ""})` : "missing"}, want the Resample canvas page`);
-    else if ("enterable" in last.canvas && last.canvas.enterable !== true)
-        bad("the Resample page is not enterable — it could be looked at and never used");
-    else console.log(`  Resample page: last of ${pages.length}, canvas ${last.canvas.script}, ` +
-                     ("enterable" in last.canvas ? "enterable" : "enterable NOT KNOWN to this host's planner"));
+    const n = pages.length, list = pages[n - 2], dlg = pages[n - 1];
+    if (!list || list.level !== "resample" || list.kind !== "items" || list.navigateTo !== "resample_dlg")
+        bad(`the last-but-one page is ${list ? `${list.level} (${list.kind})` : "missing"}, want the Resample list leading to resample_dlg`);
+    if (!dlg || dlg.level !== "resample_dlg" || !dlg.canvas)
+        bad(`the last page is ${dlg ? `${dlg.level} (${dlg.kind})` : "missing"}, want the Resample dialog canvas`);
+    else if ("enterable" in dlg.canvas && dlg.canvas.enterable !== true)
+        bad("the Resample dialog is not enterable — it could be looked at and never answered");
+    else console.log(`  Resample: list then dialog, last of ${n}; dialog ` +
+                     ("enterable" in dlg.canvas ? "enterable" : "enterable NOT KNOWN to this host's planner"));
 }
 
 // ---- a fixture for upstream's preview tools

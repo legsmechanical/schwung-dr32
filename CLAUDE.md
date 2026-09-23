@@ -21,27 +21,32 @@ Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (
 Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  PUNCH PTIME  <- level `pad_mix`
 Stereo   WMODE WIDE  WFREQ                              <- level `pad_stereo`
 Master   MASTR
-Resample <canvas page>  Resample pad | Resample kit        <- level `resample` (src/resample.js)
+Resample <items>  Resample Pad · Resample Kit            <- level `resample` (host list, like Category)
+  Confirm <canvas> the dialog, [Resample] [Cancel]        <- level `resample_dlg` (src/resample.js)
 ```
 
-- ⭑ **Resample** (Josh, 2026-09-22; spec with every decision: `_worklogs/dr32-resample-spec.md` in the
-  workspace). The LAST page, *"at the very end after master"*, and a page you CLICK INTO, *"like you
-  click into the categories page"* — a canvas with `as_page` + `enterable`, which the host plans as a
-  DOOR (needs schwung PR #520's canvas pages; the device's 1.4.0 host has them). 🔴 A module-drawn
-  PAGE is declared in the SERVED `chain_params` (`src/chain_params.json`, appended by
-  `gen_engine_ui.mjs`) — declared only inline, the planner makes it a plain CELL (measured with the
-  device's own `page_plan.mjs`). The draw cannot read params, so the DSP's `rs_status` JSON comes in
-  as the page's `extra_keys`. DSP: `dsp/dr32_resample.c` — snapshot on the audio thread, render on a
-  pthread (its own engine instance / its own decode; the live pad is never touched), 24-bit WAV to
-  `UserLibrary/Samples/DR32 Resample/`, then the pad is SWITCHED in `dr32_service_resample` (BOTH
-  render paths) by handing it the buffer (`dr32_kit_adopt_sample`), never reading the file back.
+- ⭑ **Resample** (Josh, 2026-09-22; his screen spec, verbatim, heads `_worklogs/dr32-resample-spec.md`
+  in the workspace). TWO pages, as Category and Kit are two (Josh: *"we've already made a page like
+  this for dr32 - categories"*): `resample` is the HOST's items page — rows from `rs_items`, the host
+  draws the list, the highlight and the corner brackets — and choosing writes `rs_mode` and
+  `navigate_to` lands in `resample_dlg`, an `as_page` + `enterable` canvas (a DOOR; a navigate_to
+  arrives entered) drawing the dialog with dAVEBOx SA's button widgets; `[Resample]` writes `rs_go`,
+  OK/Cancel/Back write `rs_mode -1`. 🔴 A module-drawn PAGE is declared in the SERVED `chain_params`
+  (`src/chain_params.json`, appended by `gen_engine_ui.mjs`) — inline only, the planner makes it a
+  plain CELL (measured with the device's own `page_plan.mjs`). 🔴 A module cannot learn whether the
+  host has ENTERED its canvas page (the entering click is the host's), which is why the list is the
+  host's and only the dialog — always arrived at entered — is ours. The draw cannot read params, so
+  `rs_status` JSON comes in as the dialog's `extra_keys`. DSP: `dsp/dr32_resample.c` — snapshot on
+  the audio thread, render on a pthread (its own engine instance / its own decode; the live pad is
+  never touched), 24-bit WAV to `UserLibrary/Samples/DR32 Resample/`, then the pad is SWITCHED in
+  `dr32_service_resample` (BOTH render paths) by handing it the buffer (`dr32_kit_adopt_sample`).
   Baked then neutral: engine, knobs, Start/End, Shape, filter, Punch/effects, Transpose, Detune, Gain,
   cell volume. Live: Volume (level-matched: peak -0.3 dBFS, Volume moved the other way), Pan, sends,
-  Stereo page, Choke, note, Mute; Vel Vol kept on a sample pad, 0 on a synth pad. Stops after 1 s
-  under -80 dB of its peak, or at 20 s. A pad changed mid-render is not switched (file still written).
-  `tests/test_resample.c` proves every one of the 87 models resamples to itself (< 1e-4 of peak after
-  the sampler's own 0.1 ms attack ramp, which no resample can avoid); `tools/check_resample_page.mjs`
-  drives the page as the host does.
+  Stereo page, Choke, note, Mute, and module-bus FX (the host's, after DR32 — never captured). Vel
+  Vol kept on a sample pad, 0 on a synth pad. Kit = synth pads, velocity 100. Stops after 1 s under
+  -80 dB of its peak, or at 20 s. A pad changed mid-render is not switched (file still written).
+  `tests/test_resample.c` proves all 87 models resample to themselves (< 1e-4 of peak after the
+  sampler's own 0.1 ms attack ramp); `tools/check_resample_page.mjs` drives the dialog as the host does.
 
 - ⭑ **The Stereo page: WMODE · WIDE · WFREQ · TIME · COMP · LATE** (Josh, 2026-09-22: *"a haas stereo spread to each
   drum's mix page ... and a knob to set a crossover below which the sound is not spread"*; then,

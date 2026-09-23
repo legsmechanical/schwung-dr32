@@ -53,6 +53,8 @@
 /* The pad Volume's own range; a match that would leave it is clamped. */
 #define DR32_RS_VOL_MIN     (-36.0f)
 #define DR32_RS_VOL_MAX     12.0f
+/* "Resample Kit" plays every synth pad at this (Josh: kit velocity "yep", 100). */
+#define DR32_RS_KIT_VEL     100
 
 /** Everything the render needs, copied from the pad. */
 typedef struct {
