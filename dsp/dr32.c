@@ -543,6 +543,9 @@ static void on_midi(void *instance, const uint8_t *msg, int len, int source) {
  * goes through here, so the marker is a kit wherever a path is: the browser, a
  * saved set restoring it, a cancelled preview returning to it. */
 static int load_kit_any(dr32_instance *in, const char *path, dr32_preset_report *rep) {
+    /* A tap on the old kit is not a tap on this one (Resample's "last tapped
+     * pad" would offer a pad nobody hit here). */
+    in->kit.tap_pad = -1;
     if (!strcmp(path, DR32_KIT_INIT_PATH)) {
         dr32_kit_reset(&in->kit);
         memset(rep, 0, sizeof(*rep));

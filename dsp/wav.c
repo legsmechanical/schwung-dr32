@@ -295,6 +295,11 @@ static void put32(unsigned char *p, uint32_t v) { for (int i = 0; i < 4; i++) p[
 
 int dr32_wav_write24(const char *path, const float *data, size_t frames,
                      int channels, int sample_rate) {
+    return dr32_wav_write24_ex(path, data, frames, channels, sample_rate, NULL);
+}
+
+int dr32_wav_write24_ex(const char *path, const float *data, size_t frames,
+                        int channels, int sample_rate, volatile const int *abort) {
     if (!path || !path[0] || (!data && frames) || channels < 1 || channels > 2 || sample_rate <= 0) return -1;
     const uint64_t bytes = (uint64_t)frames * (uint64_t)channels * 3u;
     if (bytes > 0xFFFFFFF0u - 36u) return -1;
@@ -317,6 +322,7 @@ int dr32_wav_write24(const char *path, const float *data, size_t frames,
     unsigned char buf[3 * 2 * 1024];
     const size_t n = frames * (size_t)channels;
     for (size_t i = 0; ok && i < n; ) {
+        if (abort && *abort) { ok = 0; break; }
         size_t m = 0;
         for (; i < n && m + 3 <= sizeof(buf); i++, m += 3) {
             const uint32_t v = (uint32_t)q24_int(data[i]);

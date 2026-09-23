@@ -431,6 +431,21 @@ static void test_taps(void) {
     /* ...unless a host vouches for it, just after (the canvas's live press). */
     dr32_apply_param(&k, "ui_live_press", "1");
     CHECK(k.tap_pad == 9 && k.tap_vel == 30, "a vouched note is a tap: pad %d vel %d", k.tap_pad, k.tap_vel);
+    /* dAVEBOx NAMES the note first and forwards it after (Fable, from its
+     * ui_sound.mjs): the tap is pending until the note brings its velocity. */
+    k.block += 100;                                  /* well clear of the last hit */
+    dr32_apply_param(&k, "ui_live_note", "50");      /* 36 + 14 */
+    CHECK(k.tap_pad == 14 && k.tap_vel == 0, "named before its note: pad %d vel %d, want 14 / pending", k.tap_pad, k.tap_vel);
+    dr32_kit_note_on(&k, 50, 77);
+    CHECK(k.tap_pad == 14 && k.tap_vel == 77, "the named note's velocity: %d, want 77", k.tap_vel);
+    /* ...and the stock order (note first, then named) still takes the note's. */
+    k.block += 100;
+    dr32_kit_note_on(&k, 51, 64);
+    dr32_apply_param(&k, "ui_live_note", "51");
+    CHECK(k.tap_pad == 15 && k.tap_vel == 64, "note then name: pad %d vel %d", k.tap_pad, k.tap_vel);
+    /* A new kit forgets the tap: it was a tap on something else. */
+    dr32_kit_reset(&k);
+    CHECK(k.tap_pad == -1, "a kit reset kept the tap");
     dr32_kit_free(&k);
 }
 
@@ -471,6 +486,19 @@ static void test_abort(const char *dir) {
     dr32_kit_set_model(&k, 1, "chowkick/wonky");
     dr32_rs_snapshot(&k, 1, 100, &s);
     CHECK(dr32_rs_render_abortable(&s, &t, &stop) != 0 && t.data == NULL, "a synth render with abort raised made a take");
+    /* The file write stops too, leaving nothing behind. */
+    char wp[600];
+    snprintf(wp, sizeof(wp), "%s/aborted.wav", dir);   /* a folder that exists */
+    float probe[8] = { 0 };
+    CHECK(dr32_wav_write24_ex(wp, probe, 8, 1, 44100, NULL) == 0, "the same write, not aborted, works");
+    remove(wp);
+    float buf[4096] = { 0.1f };
+    volatile int halt = 1;
+    CHECK(dr32_wav_write24_ex(wp, buf, 4096, 1, 44100, &halt) != 0, "an aborted write succeeded");
+    struct stat stb;
+    char part[620];
+    snprintf(part, sizeof(part), "%s.part", wp);
+    CHECK(stat(wp, &stb) != 0 && stat(part, &stb) != 0, "an aborted write left a file");
     dr32_kit_free(&k);
 }
 

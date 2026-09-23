@@ -28,6 +28,12 @@
  *   - leaving is seen: Back via handleBack; Shift+jog leaves silently, but the
  *     page is not DRAWN while you are elsewhere (the host redraws the visible
  *     page every tick), so a gap in draws means you came back, and it resets.
+ *     ⚠ Known and accepted (Fable): the host can also stop drawing a page it
+ *     keeps ENTERED — the section picker, a trip to Help or the Modules list
+ *     and back. The page then shows un-entered (brackets) while the host is
+ *     still inside, so the next click opens "Resample Pad" rather than
+ *     entering. Harmless (Cancel), and making the first click after an
+ *     inferred un-entered state inert would cost every normal visit a click.
  *   - the draw cannot read params. The DSP's `rs_status` arrives on the host's
  *     read rotation as this page's `extra_keys` — which the host only runs
  *     for a page WITH a knob, so the level carries Master's knob (knob 1
@@ -282,7 +288,12 @@ globalThis.canvas_overlay = {
         const now = info && typeof info.nowMs === 'number' ? info.nowMs : Date.now();
         if (S.lastDraw < 0 || now - S.lastDraw > AWAY_MS) reset();       /* arrived */
         S.lastDraw = now;
-        const st = parseStatus(info && info.values ? info.values.rs_status : null) || S.status;
+        let st = parseStatus(info && info.values ? info.values.rs_status : null) || S.status;
+        /* Never go BACKWARDS: the host's cached value can predate a
+         * synchronous read made by a click (it is re-read every few ticks),
+         * and `jobs` only ever grows — an older answer would flash "Could not
+         * start" right after a start that worked (Fable). */
+        if (st && S.status && st.jobs < S.status.jobs) st = S.status;
         if (st) S.status = st;
 
         if (S.view !== 'list') {

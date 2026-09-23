@@ -92,6 +92,14 @@ eq(inverted(), undefined, 'an empty pad cannot be resampled');
 dsp.st.empty = 0;
 click();
 eq(dsp.writes, [['rs_go', 'pad']], 'Resample writes rs_go=pad');
+/* The host's cached value is a few ticks old: it must not undo the start. */
+{
+    const stale = JSON.stringify(Object.assign({}, dsp.st, { jobs: dsp.st.jobs - 1, busy: 0 }));
+    const out = [];
+    ov.drawPage({ width: 128, height: 48, print: (x, y, t) => out.push(String(t)), fillRect: () => {}, setPixel: () => {} },
+                { values: { rs_status: stale }, nowMs: (clock += 16), width: 128, height: 48 });
+    eq(out, ['Resampling 0/1', 'OK'], 'a stale cached status does not flash "Could not start"');
+}
 eq(texts(), ['Resampling 0/1', 'OK'], 'running, in place');
 Object.assign(dsp.st, { busy: 0, done: 1, switched: 1, last: 'Kick 707 v110 2026-09-22' });
 eq(texts(), ['Done', 'Kick 707 v110', '2026-09-22', 'OK'], 'done, with the file');

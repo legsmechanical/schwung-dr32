@@ -53,6 +53,11 @@ void dr32_wav_free(dr32_wav *w);
  *  0, or -1 (errno says why). NEVER on the audio thread. */
 int dr32_wav_write24(const char *path, const float *data, size_t frames,
                      int channels, int sample_rate);
+/** The same, giving up (and leaving no file) within one 2 KB chunk of
+ *  `*abort` going non-zero — so closing an instance never waits on a card
+ *  write. `abort` may be NULL. */
+int dr32_wav_write24_ex(const char *path, const float *data, size_t frames,
+                        int channels, int sample_rate, volatile const int *abort);
 
 /** One float as the 24-bit writer will store it, read back as the loader will
  *  decode it — so an in-memory buffer can be made bit-identical to the file. */

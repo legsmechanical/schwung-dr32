@@ -166,7 +166,8 @@ typedef struct {
      * velocity from any source; `last_hit_vel` goes with last_hit_pad, for the
      * vouch that arrives after its note. */
     int           tap_pad;
-    int           tap_vel;
+    int           tap_vel;          /* 0 = named, its note not here yet */
+    unsigned      tap_block;        /* when tap_pad was set */
     int           pad_vel[DR32_PADS];
     int           last_hit_vel;
 

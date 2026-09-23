@@ -379,6 +379,7 @@ struct dr32_rs_job {
     atomic_int     state[DR32_PADS];
     atomic_int     busy;            /* a job is posted or rendering */
     atomic_int     abort;
+    volatile int   abort_w;         /* the same, for the WAV writer (wav.c is atomic-free) */
     atomic_int     last;            /* index of the last file written, -1 = none */
     atomic_int     jobs;            /* jobs started, ever: the page's "did it start" */
     int            clamped;         /* audio thread only */
@@ -410,7 +411,7 @@ static void rs_run(dr32_rs_job *j) {
         struct stat st;
         if (atomic_load(&j->abort) ||
             dr32_rs_unique_path(j->dir, j->base[i], j->path[i], sizeof(j->path[i])) != 0 ||
-            dr32_wav_write24(j->path[i], t->data, t->frames, t->channels, DR32_RS_SR) != 0 ||
+            dr32_wav_write24_ex(j->path[i], t->data, t->frames, t->channels, DR32_RS_SR, &j->abort_w) != 0 ||
             stat(j->path[i], &st) != 0) {
             dr32_rs_take_free(t);
             atomic_store(&j->state[i], RS_FAILED);
@@ -455,6 +456,7 @@ dr32_rs_job *dr32_rs_job_create(const char *dir) {
 void dr32_rs_job_destroy(dr32_rs_job *j) {
     if (!j) return;
     atomic_store(&j->abort, 1);             /* the render checks it every block */
+    j->abort_w = 1;                         /* ...and the write every chunk */
     if (j->started) {
         pthread_mutex_lock(&j->mu);
         j->quit = 1;
@@ -474,11 +476,25 @@ int dr32_rs_job_start(dr32_rs_job *j, const dr32_kit *k, const int *pads, int n,
     if (atomic_load(&j->busy)) return -1;
     for (int i = 0; i < j->n; i++)
         if (atomic_load(&j->state[i]) == RS_READY) return -1;     /* not switched yet */
+    if (!j->started) {
+        /* Once per instance, before anything is touched: the only thread
+         * creation Resample ever does. A failure leaves the last job as it
+         * was. */
+        if (pthread_create(&j->th, NULL, rs_worker, j) != 0) return -1;
+        j->started = 1;
+    }
+    /* NEVER block here — this is the audio callback. The worker holds `mu`
+     * only for a few instructions (starting up, or between waking and taking
+     * the job), so a bounded retry of trylock always wins in practice; if it
+     * somehow does not, say busy rather than wait. */
+    int locked = 0;
+    for (int tries = 0; tries < 4096 && !locked; tries++) locked = pthread_mutex_trylock(&j->mu) == 0;
+    if (!locked) return -1;
     /* Anything a finished job still holds goes to the worker to free. */
     for (int i = 0; i < DR32_PADS; i++) {
         if (j->take[i].data) {
             if (!j->trash[i]) { j->trash[i] = j->take[i].data; j->take[i].data = NULL; }
-            else return -1;                                  /* cannot happen; never leak */
+            else { pthread_mutex_unlock(&j->mu); return -1; }   /* cannot happen; never leak */
         }
     }
     int m = 0;
@@ -488,19 +504,14 @@ int dr32_rs_job_start(dr32_rs_job *j, const dr32_kit *k, const int *pads, int n,
         atomic_store(&j->state[m], RS_WAIT);
         m++;
     }
-    if (!m) return 0;
-    if (!j->started) {
-        /* Once per instance: the only thread creation Resample ever does. */
-        if (pthread_create(&j->th, NULL, rs_worker, j) != 0) return -1;
-        j->started = 1;
-    }
+    if (!m) { pthread_mutex_unlock(&j->mu); return 0; }
     j->n = m;
     j->clamped = 0;
     atomic_store(&j->last, -1);
     atomic_store(&j->abort, 0);
+    j->abort_w = 0;
     atomic_store(&j->busy, 1);
     atomic_fetch_add(&j->jobs, 1);
-    pthread_mutex_lock(&j->mu);             /* the worker holds it only to wait */
     j->posted = 1;
     pthread_cond_signal(&j->cv);
     pthread_mutex_unlock(&j->mu);

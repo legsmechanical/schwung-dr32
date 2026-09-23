@@ -36,6 +36,7 @@ void dr32_kit_reset(dr32_kit *k) {
         memset(&k->pads[i].wide, 0, sizeof(k->pads[i].wide));
     }
     k->master_gain = 1.0f;
+    k->tap_pad = -1;              /* a tap on the old kit is not one on this */
     k->link_all = 0;
     k->link_sub[0] = '\0';
     k->ui_current_pad = 0;
@@ -745,6 +746,11 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
     k->last_hit_block = k->block;
     k->pad_vel[pad] = velocity;
     k->last_hit_vel = velocity;
+    /* A host that NAMES the note (ui_live_note, dAVEBOx) names it BEFORE
+     * forwarding it (Fable, from davebox's ui_sound.mjs): the tap is already
+     * recorded and this is its velocity. */
+    if (pad == k->tap_pad && k->block - k->tap_block <= DR32_LIVE_MATCH_BLOCKS)
+        k->tap_vel = velocity;
     if (k->ui_auto_select_pad && !k->transport_running && !k->host_vouches) {
         /* Nothing is sequencing, so this note came from a hand. Follow it
          * outright — no vouch needed, on any host. (See transport_running in
@@ -752,12 +758,14 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
          * consumed too, so it cannot re-arm for the next sequenced note. */
         k->ui_current_pad = pad;
         k->tap_pad = pad; k->tap_vel = velocity;     /* a hand: see tap_pad */
+        k->tap_block = k->block;
         k->live_armed = 0;
         k->last_hit_pad = -1;
     } else if (k->live_armed && k->ui_auto_select_pad &&
                (k->block - k->live_arm_block) <= DR32_LIVE_MATCH_BLOCKS) {
         k->ui_current_pad = pad;
         k->tap_pad = pad; k->tap_vel = velocity;
+        k->tap_block = k->block;
         k->live_armed = 0;
         k->last_hit_pad = -1;   /* consumed — see the note in dr32_params.c */
     }
