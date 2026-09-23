@@ -129,6 +129,8 @@ the device too, under Module Help.
 
 - 🔴 **Browsing kits has no undo.** Moving the cursor loads what you land on, and the kit you were on
   is gone. Save your work before you go shopping.
+- **A sample you pick plays to its end.** Picking one sets the pad's envelope to A-H-D with Hold at
+  Inf, so a tap plays the whole file. Turn Hold down on the Shape page for a shorter hit.
 - **Pads 17–32 sit outside Move's 4×4 pad map**, so the small map in the header doesn't light for
   them.
 - **Your edits live in the Schwung set**, on top of the kit that was loaded — so a set remembers

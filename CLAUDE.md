@@ -131,6 +131,11 @@ Resample <canvas> Resample Pad · Resample Kit, dialogs in place  <- level `resa
   in column 126 only when the list scrolls (Josh: *"scroll bar and 5th line"*, like Modules / My
   Presets). Transcribed from `menu_layout.mjs` / `list_geometry.mjs`, not imported — a canvas
   cannot rely on the host's measurer. `check_browser_nav` §13 pins it.
+- **A PICKED SAMPLE PLAYS WHOLE** (Josh, 2026-09-23: *"if you pick a sample to put on a pad, you
+  should hear the whole sample when you tap the pad by default"*). `browser.js` `audition()` writes
+  `env_mode = A-H-D` and `hold = 60` (Inf) after every `sample` write, replacing what the pad had.
+  ⚠ In the UI, NOT the DSP's `sample` write: state restore replays through that write and the blob
+  is a delta, so a user's Hold equal to the baseline would never be saved and would restore as Inf.
 - **DR32 opens EMPTY** (Josh, 2026-09-09). No default kit — it used to load the 707.
   `create_instance` is on the SPI callback and a kit load reads up to 32 WAVs there, so this is
   also the faster start. ⚠ The state BASELINE is still captured: an empty kit is a fine baseline,
