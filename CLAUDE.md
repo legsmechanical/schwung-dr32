@@ -21,32 +21,39 @@ Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (
 Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  PUNCH PTIME  <- level `pad_mix`
 Stereo   WMODE WIDE  WFREQ                              <- level `pad_stereo`
 Master   MASTR
-Resample <items>  Resample Pad · Resample Kit            <- level `resample` (host list, like Category)
-  Confirm <canvas> the dialog, [Resample] [Cancel]        <- level `resample_dlg` (src/resample.js)
+Resample <canvas> Resample Pad · Resample Kit, dialogs in place  <- level `resample` (src/resample.js)
 ```
 
 - ⭑ **Resample** (Josh, 2026-09-22; his screen spec, verbatim, heads `_worklogs/dr32-resample-spec.md`
-  in the workspace). TWO pages, as Category and Kit are two (Josh: *"we've already made a page like
-  this for dr32 - categories"*): `resample` is the HOST's items page — rows from `rs_items`, the host
-  draws the list, the highlight and the corner brackets — and choosing writes `rs_mode` and
-  `navigate_to` lands in `resample_dlg`, an `as_page` + `enterable` canvas (a DOOR; a navigate_to
-  arrives entered) drawing the dialog with dAVEBOx SA's button widgets; `[Resample]` writes `rs_go`,
-  OK/Cancel/Back write `rs_mode -1`. 🔴 A module-drawn PAGE is declared in the SERVED `chain_params`
-  (`src/chain_params.json`, appended by `gen_engine_ui.mjs`) — inline only, the planner makes it a
-  plain CELL (measured with the device's own `page_plan.mjs`). 🔴 A module cannot learn whether the
-  host has ENTERED its canvas page (the entering click is the host's), which is why the list is the
-  host's and only the dialog — always arrived at entered — is ours. The draw cannot read params, so
-  `rs_status` JSON comes in as the dialog's `extra_keys`. DSP: `dsp/dr32_resample.c` — snapshot on
-  the audio thread, render on a pthread (its own engine instance / its own decode; the live pad is
-  never touched), 24-bit WAV to `UserLibrary/Samples/DR32 Resample/`, then the pad is SWITCHED in
+  in the workspace). ONE page, last after Master — Josh rejected a second (dialog) page in the
+  rotation, and host changes ("no host changes"). `resample` is an `as_page` + `enterable` canvas (a
+  DOOR) that draws EVERYTHING: the list in the host's own geometry and corner brackets
+  (list_geometry / page_controller numbers, in band coordinates: the band starts at screen row 9),
+  and the Pad/Kit dialogs in place with dAVEBOx SA's button widgets. 🔴 Three host facts shape it
+  (device page_controller.mjs / shadow_ui.js, confirmed by Fable): (1) the ENTERING click is the
+  host's and nothing tells the page — so "entered" is inferred from the first gesture that reaches
+  `onMidi`, and the highlight lands one gesture late; a draw GAP (> 250 ms; the visible page is
+  redrawn every tick) means you left by Shift+jog, and the page resets; (2) the host reads a page's
+  `extra_keys` only if the page has KNOBS — so the level borrows Master's knob (`knobs: ["master"]`,
+  allowed by check_module_json as a canvas page's borrow; the planner's duplicate-signature rule
+  folds the would-be second grid away) and `rs_status` stays live; (3) a module-drawn page is
+  declared in the SERVED `chain_params` (appended by `gen_engine_ui.mjs`), or the planner makes it a
+  cell. Hidden/second-page designs are DEAD: an items-page commit navigates synchronously to pages
+  that already exist. `[Resample]` writes `rs_go = pad|kit`. DSP: `dsp/dr32_resample.c` — snapshot
+  on the audio thread, ONE worker thread per instance (created on first use, then parked on a
+  condvar; the audio thread only posts, never creates/joins/frees), render aborts within a block,
+  24-bit WAV to `UserLibrary/Samples/DR32 Resample/`, then the pad is SWITCHED in
   `dr32_service_resample` (BOTH render paths) by handing it the buffer (`dr32_kit_adopt_sample`).
-  Baked then neutral: engine, knobs, Start/End, Shape, filter, Punch/effects, Transpose, Detune, Gain,
-  cell volume. Live: Volume (level-matched: peak -0.3 dBFS, Volume moved the other way), Pan, sends,
-  Stereo page, Choke, note, Mute, and module-bus FX (the host's, after DR32 — never captured). Vel
-  Vol kept on a sample pad, 0 on a synth pad. Kit = synth pads, velocity 100. Stops after 1 s under
-  -80 dB of its peak, or at 20 s. A pad changed mid-render is not switched (file still written).
-  `tests/test_resample.c` proves all 87 models resample to themselves (< 1e-4 of peak after the
-  sampler's own 0.1 ms attack ramp); `tools/check_resample_page.mjs` drives the dialog as the host does.
+  "Last tapped pad" = `tap_pad`/`tap_vel`, set only where a hit is classified as a HAND (no
+  transport, a vouched press, a named note) — never a sequenced note. Baked then neutral: engine,
+  knobs, Start/End, Shape, filter, Punch/effects, Transpose, Detune, Gain, cell volume. Live: Volume
+  (level-matched: peak -0.3 dBFS, Volume moved the other way), Pan, sends, Stereo page, Choke, note,
+  Mute, and module-bus FX (the host's, after DR32 — never captured). Vel Vol kept on a sample pad,
+  0 on a synth pad. Kit = synth pads, velocity 100. Stops after 1 s under -80 dB of its peak (once
+  the sound has started), or at 20 s. A pad changed mid-render is not switched (file still
+  written). `tests/test_resample.c` proves all 87 models resample to themselves (< 1e-4 of peak
+  after the sampler's own 0.1 ms attack ramp); `tools/check_resample_page.mjs` drives the page as
+  the host does.
 
 - ⭑ **The Stereo page: WMODE · WIDE · WFREQ · TIME · COMP · LATE** (Josh, 2026-09-22: *"a haas stereo spread to each
   drum's mix page ... and a knob to set a crossover below which the sound is not spread"*; then,

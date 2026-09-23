@@ -459,6 +459,18 @@ static void test_abort(const char *dir) {
     for (struct dirent *e; dd && (e = readdir(dd)); ) if (e->d_name[0] != '.') files++;
     if (dd) closedir(dd);
     CHECK(files == 0, "an aborted render left %d files", files);
+    /* ...and the render itself stops on the flag, block by block, however
+     * long the sound would have run (on the device a 20 s render is not
+     * instant; here it is, so the flag is raised before it starts). */
+    atomic_int stop;
+    atomic_init(&stop, 1);
+    dr32_rs_src s;
+    dr32_rs_snapshot(&k, 0, 100, &s);
+    dr32_rs_take t;
+    CHECK(dr32_rs_render_abortable(&s, &t, &stop) != 0 && t.data == NULL, "a render with abort raised made a take");
+    dr32_kit_set_model(&k, 1, "chowkick/wonky");
+    dr32_rs_snapshot(&k, 1, 100, &s);
+    CHECK(dr32_rs_render_abortable(&s, &t, &stop) != 0 && t.data == NULL, "a synth render with abort raised made a take");
     dr32_kit_free(&k);
 }
 
