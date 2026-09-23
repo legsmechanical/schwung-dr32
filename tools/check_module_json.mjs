@@ -86,10 +86,20 @@ for (const [lname, level] of Object.entries(levels)) {
 //
 // ⚠ Do not "tidy" an empty entry out of a knobs array. It is load-bearing
 // layout, and removing one silently pulls every knob after it one slot earlier.
+// ONE deliberate exception: a module-drawn PAGE (a canvas with `as_page`) may
+// BORROW a knob another level declares. The host reads a page's extra_keys
+// only on a page with knobs, and the Resample page needs its rs_status live,
+// so it carries Master's knob; re-declaring `master` there would be a
+// DUPLICATE key, which the host's C loader rejects outright (rule 2).
+const declaredAnywhere = new Set();
+for (const lv of Object.values(levels))
+    for (const p of lv.params || []) if (p && p.key) declaredAnywhere.add(p.key);
 for (const [lname, level] of Object.entries(levels)) {
     const keys = new Set((level.params || []).filter(p => p && p.key).map(p => p.key));
+    const isCanvasPage = (level.params || []).some(p => p && p.type === "canvas" && p.as_page === true);
     for (const k of level.knobs || []) {
         if (k === "") continue;                      // a deliberate gap — see above
+        if (!keys.has(k) && isCanvasPage && declaredAnywhere.has(k)) continue;   // a borrowed knob — see above
         if (!keys.has(k)) errors.push(`level "${lname}" maps knob "${k}" which is not one of its params`);
     }
 }

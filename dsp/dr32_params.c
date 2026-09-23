@@ -633,6 +633,10 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         int pad = kit->note_to_pad[n];
         if (pad < 0 || pad >= DR32_PADS) return 1;   /* unmapped: not our note */
         kit->ui_current_pad = pad;
+        /* The host named a HAND's note (see tap_pad in dr32_kit.h); its
+         * velocity is that pad's latest note-on, which this names. */
+        kit->tap_pad = pad;
+        kit->tap_vel = kit->pad_vel[pad];
         /* Consume any vouch state. Under co-run BOTH mechanisms fire — the
          * canvas still observes the press and vouches — and last writer wins.
          * Clearing here stops a vouch that resolves later from crediting a
@@ -667,6 +671,8 @@ int dr32_apply_param(dr32_kit *kit, const char *key, const char *val) {
         if (kit->last_hit_pad >= 0 &&
             (kit->block - kit->last_hit_block) <= DR32_LIVE_MATCH_BLOCKS) {
             kit->ui_current_pad = kit->last_hit_pad;
+            kit->tap_pad = kit->last_hit_pad;         /* vouched: a hand */
+            kit->tap_vel = kit->last_hit_vel;
             kit->live_armed = 0;
             /* Consume it. A note may vouch for ONE press: leaving it claimable
              * let a second press inside the window re-match the same note, so a

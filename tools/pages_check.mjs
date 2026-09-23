@@ -94,20 +94,25 @@ for (const p of pages) {
     console.log(`    ${String(p.level ?? "-").padEnd(8)} ${what}`);
 }
 
-/* Resample (Josh: "it should go at the very end after master"): the host's
- * own items page, like Category, then the dialog it leads to — a module-drawn
- * door, which navigate_to arrives at already entered. Enterability is checked
- * only against a planner that knows enterable canvas pages (PR #520 on). */
+/* Resample (Josh: "it should go at the very end after master"): ONE page,
+ * module-drawn, a door you click into — the list and its dialogs are all on
+ * it (src/resample.js). It must carry a knob: the host reads a page's
+ * extra_keys (rs_status, which makes the pad lines live) only on a page with
+ * knobs, and the level borrows Master's so no second grid page appears.
+ * Enterability is checked only against a planner that knows enterable canvas
+ * pages (PR #520 on). */
 {
-    const n = pages.length, list = pages[n - 2], dlg = pages[n - 1];
-    if (!list || list.level !== "resample" || list.kind !== "items" || list.navigateTo !== "resample_dlg")
-        bad(`the last-but-one page is ${list ? `${list.level} (${list.kind})` : "missing"}, want the Resample list leading to resample_dlg`);
-    if (!dlg || dlg.level !== "resample_dlg" || !dlg.canvas)
-        bad(`the last page is ${dlg ? `${dlg.level} (${dlg.kind})` : "missing"}, want the Resample dialog canvas`);
-    else if ("enterable" in dlg.canvas && dlg.canvas.enterable !== true)
-        bad("the Resample dialog is not enterable — it could be looked at and never answered");
-    else console.log(`  Resample: list then dialog, last of ${n}; dialog ` +
-                     ("enterable" in dlg.canvas ? "enterable" : "enterable NOT KNOWN to this host's planner"));
+    const n = pages.length, last = pages[n - 1];
+    if (pages.filter((p) => p.level === "resample").length !== 1)
+        bad(`the resample level plans ${pages.filter((p) => p.level === "resample").length} pages, want exactly 1`);
+    if (!last || last.level !== "resample" || !last.canvas)
+        bad(`the last page is ${last ? `${last.level} (${last.kind})` : "missing"}, want the Resample canvas page`);
+    else if (!(last.keys || []).length)
+        bad("the Resample page has no knob — the host would never read its rs_status");
+    else if ("enterable" in last.canvas && last.canvas.enterable !== true)
+        bad("the Resample page is not enterable");
+    else console.log(`  Resample: one page, last of ${n}, knob ${last.keys.join(",")}; ` +
+                     ("enterable" in last.canvas ? "enterable" : "enterable NOT KNOWN to this host's planner"));
 }
 
 // ---- a fixture for upstream's preview tools

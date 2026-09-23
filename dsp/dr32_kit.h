@@ -158,11 +158,17 @@ typedef struct {
     unsigned      live_arm_block;  // block it was signalled on
     int           last_hit_pad;    // pad of the most recent note-on, -1 = none
     unsigned      last_hit_block;  // block that note-on landed on
-    /* Resample (dr32_resample.c): the velocity of each pad's most recent
-     * note-on (0 = never hit), and a count of every note-on, so the Resample
-     * page can tell a tap made AFTER it opened from one made before. */
+    /* Resample (dr32_resample.c): the LAST TAPPED pad and the velocity it
+     * was tapped with (Josh: "the last tapped pad"), -1 = none yet. Set only
+     * where a note is classified as a HAND — the same places focus follows a
+     * hit — never by a sequenced note, so a pattern playing cannot change what
+     * the Resample Pad screen offers. `pad_vel` is each pad's latest note-on
+     * velocity from any source; `last_hit_vel` goes with last_hit_pad, for the
+     * vouch that arrives after its note. */
+    int           tap_pad;
+    int           tap_vel;
     int           pad_vel[DR32_PADS];
-    unsigned      hit_seq;
+    int           last_hit_vel;
 
     // Is a transport running? Mirrored from the host every render block
     // (host_api get_beat_position / get_clock_status; dr32.c). While it is NOT,

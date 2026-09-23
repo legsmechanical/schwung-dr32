@@ -24,6 +24,7 @@ void dr32_kit_init(dr32_kit *k) {
     k->live_arm_block = 0;
     k->last_hit_pad = -1;
     k->last_hit_block = 0;
+    k->tap_pad = -1;
 }
 
 void dr32_kit_reset(dr32_kit *k) {
@@ -743,18 +744,20 @@ void dr32_kit_note_on(dr32_kit *k, int note, int velocity) {
     k->last_hit_pad = pad;
     k->last_hit_block = k->block;
     k->pad_vel[pad] = velocity;
-    k->hit_seq++;
+    k->last_hit_vel = velocity;
     if (k->ui_auto_select_pad && !k->transport_running && !k->host_vouches) {
         /* Nothing is sequencing, so this note came from a hand. Follow it
          * outright — no vouch needed, on any host. (See transport_running in
          * dr32_kit.h.) A vouch that is still in flight for this same press is
          * consumed too, so it cannot re-arm for the next sequenced note. */
         k->ui_current_pad = pad;
+        k->tap_pad = pad; k->tap_vel = velocity;     /* a hand: see tap_pad */
         k->live_armed = 0;
         k->last_hit_pad = -1;
     } else if (k->live_armed && k->ui_auto_select_pad &&
                (k->block - k->live_arm_block) <= DR32_LIVE_MATCH_BLOCKS) {
         k->ui_current_pad = pad;
+        k->tap_pad = pad; k->tap_vel = velocity;
         k->live_armed = 0;
         k->last_hit_pad = -1;   /* consumed — see the note in dr32_params.c */
     }

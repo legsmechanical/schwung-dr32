@@ -34,6 +34,7 @@
 #define DR32_RESAMPLE_H
 
 #include <stddef.h>
+#include <stdatomic.h>
 #include <time.h>
 #include "dr32_kit.h"
 
@@ -87,6 +88,9 @@ int dr32_rs_is_synth(const dr32_kit *k, int pad);
 /** Render, trim, fade, normalise. Returns 0 on success; -1 when the pad made
  *  no sound, the sample would not load, or memory ran out. Worker only. */
 int dr32_rs_render(const dr32_rs_src *src, dr32_rs_take *out);
+/** The same, stopping (and failing) within one 128-frame block of `*abort`
+ *  going non-zero — what lets an instance close without waiting for a pad. */
+int dr32_rs_render_abortable(const dr32_rs_src *src, dr32_rs_take *out, atomic_int *abort);
 void dr32_rs_take_free(dr32_rs_take *t);
 
 /** The file's name, without folder or extension: "<source> v<vel> <date>",
@@ -121,21 +125,23 @@ typedef struct {
     int  failed;        /* nothing written */
     int  clamped;       /* switched, with Volume clamped to its range */
     char last[160];     /* the last file's name, no folder/extension */
+    int  jobs;          /* jobs ever started: a start that did not happen leaves it */
 } dr32_rs_status;
 
 /** `dir` is where files go (DR32_RS_DIR on the device). Host thread. */
 dr32_rs_job *dr32_rs_job_create(const char *dir);
 /** Stops after the pad in hand, waits for the worker, frees. */
 void dr32_rs_job_destroy(dr32_rs_job *j);
-/** Snapshot `pads` (0-based) at `velocity` and start. Returns the number of
- *  pads taken (empty ones are skipped), 0 if none, -1 if a job is still busy
- *  or the thread would not start. Audio thread. */
+/** Snapshot `pads` (0-based) at `velocity` and post them to the worker.
+ *  Returns the number of pads taken (empty ones are skipped), 0 if none, -1 if
+ *  a job is still busy or the thread would not start. Audio thread: the first
+ *  call creates the worker; every later one only signals it. */
 int  dr32_rs_job_start(dr32_rs_job *j, const dr32_kit *k, const int *pads, int n, int velocity);
 /** Switch every pad whose file is written. Returns how many switched. Audio
  *  thread — call it once per block from BOTH render paths. */
 int  dr32_rs_job_service(dr32_rs_job *j, dr32_kit *k);
 void dr32_rs_job_status(dr32_rs_job *j, dr32_rs_status *out);
-/** Test hook: wait for the worker to finish rendering (not to be switched). */
+/** Test hook: wait until the worker has finished (not until the switch). */
 void dr32_rs_job_wait(dr32_rs_job *j);
 
 #endif

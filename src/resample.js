@@ -1,38 +1,66 @@
 /*
- * resample.js — the Resample DIALOG, drawn by the module.
+ * resample.js — the Resample page: a list you click into, and its dialogs,
+ * all on ONE page, drawn by the module.
  *
  * Josh (2026-09-22): "<header> Resample Pad / Resample kit. clicking pad pulls
  * up a screen that displays the last tapped pad name and number on one line
  * and velocity level on the next (and updates as you hit pads) under that are
  * standard dialog boxes like we use in davebox sa - [Resample] [Cancel].
  * clicking kit pulls up a screen that says 'Resample all non-sample pads in
- * kit?' and under it [Resample] [Cancel]"
+ * kit?' and under it [Resample] [Cancel]" — one page, last after Master,
+ * clicked into like Category, with Category's corner brackets, and "no host
+ * changes".
  *
- * ⭐ TWO PAGES, AS CATEGORY AND KIT ARE TWO. The list ("Resample Pad",
- * "Resample Kit") is the HOST's items page — level `resample` — so it looks
- * and behaves exactly like Category, brackets and all. Choosing a row writes
- * `rs_mode` and the host moves on to level `resample_dlg`, this page, a canvas
- * `as_page` + `enterable`: a DOOR, which a navigate_to arrives at already
- * entered, so the jog and the click are ours at once. Back, Cancel or the
- * last OK hands the door back.
+ * ⭐ WHAT THE HOST GIVES THIS PAGE, AND THE ONE THING IT DOES NOT (measured in
+ * the device's page_controller.mjs / shadow_ui.js, and reviewed by Fable):
+ *   - a canvas `as_page` + `enterable` is a DOOR: un-entered, the jog pages
+ *     past it and a click ENTERS; entered, jog and click come here as CC 14 /
+ *     CC 3, Back asks handleBack (true = stay inside), ctx.close() leaves.
+ *   - the host draws NO brackets on a canvas page, so this draws them — the
+ *     host's own geometry (list_geometry.mjs / page_controller.mjs), not a
+ *     look-alike.
+ *   - 🔴 the ENTERING click is the host's and nothing tells us it happened
+ *     (no hook, no draw field). So "entered" is INFERRED: any gesture that
+ *     reaches onMidi proves it (un-entered gestures never arrive). Until the
+ *     first one, the page is drawn un-entered — the highlight lands on the
+ *     first jog or click after the click that entered. Every gesture still
+ *     means exactly what it means on the host's own list.
+ *   - leaving is seen: Back via handleBack; Shift+jog leaves silently, but the
+ *     page is not DRAWN while you are elsewhere (the host redraws the visible
+ *     page every tick), so a gap in draws means you came back, and it resets.
+ *   - the draw cannot read params. The DSP's `rs_status` arrives on the host's
+ *     read rotation as this page's `extra_keys` — which the host only runs
+ *     for a page WITH a knob, so the level carries Master's knob (knob 1
+ *     turns Master here as on the Master page; the planner folds the
+ *     duplicate grid away). That is how the pad lines follow your taps.
  *
- * ⚠ THE DRAW CANNOT READ. A page's draw gets values, not accessors, so the
- * DSP's `rs_status` (a JSON object) arrives through the host's read rotation
- * as this page's `extra_keys` — which is also how the pad lines follow your
- * taps. The hooks CAN read, and do, so a click acts on what is true now.
- *
- * The render is the DSP's (dsp/dr32_resample.c), on its own thread; this only
- * asks. Leaving does not stop it.
+ * The render is the DSP's (dsp/dr32_resample.c), on its own thread; this
+ * only asks. Leaving the page does not stop it.
  */
 
 const CC_JOG = 14;
 const CC_CLICK = 3;
 
 /*
- * The host face's glyph widths, space (32) to '~' (126), from the host's own
- * font table (scripts/generate_font.py, trimmed the way load_font trims), with
- * the 1px spacing load_font("font.png", 1) adds. A page ctx has no
- * textWidth, and dAVEBOx's buttons centre by MEASURING — so do these.
+ * THE HOST'S LIST, in this page's band. The band starts at screen row 9
+ * (render_page_movy: the first knob row), so Category's rows at y 10/19/...
+ * with labels at x 9 (MENU_LIST_X/Y), a highlight one row above its text and
+ * 9 tall across the screen (menu_layout drawMenuList), and the bracket frame
+ * at x 4, rows 9..53, arms 4 long (page_controller MENU_FRAME_*,
+ * render_page_movy drawBrackets) are here at y 1 / x 9 / y 0 / 4,0,120x45.
+ */
+const ROW_H = 9, LIST_Y = 1, LIST_X = 9, HI_OFF = 1;
+const FRAME_X = 4, FRAME_Y = 0, FRAME_W = 120, FRAME_H = 45, ARM = 4;
+const ROWS = ['Resample Pad', 'Resample Kit'];
+
+/* A page that has not been drawn for this long was not on screen. */
+const AWAY_MS = 250;
+
+/*
+ * The host face's glyph widths, space (32) to '~' (126), from its font table
+ * (scripts/generate_font.py, trimmed as load_font trims), 1px spacing
+ * (load_font("font.png", 1)). A page ctx has no textWidth, and dAVEBOx's
+ * buttons centre by MEASURING — so do these.
  */
 const GLYPH_W = '51355552335525255355555555224545555555555355555555555555555353553554555553443555555555555553135';
 function textW(t) {
@@ -51,11 +79,17 @@ const FONT_H = 7;
  * drawDialogButton / drawDialogButtonRow — "the NORMATIVE dialog convention"),
  * transcribed for a frame ctx: 6px label padding, 4px gaps, the row spread to
  * fill x0..x1, the selected button FILLED with the label knocked out, the
- * others OUTLINED; labels centred by measured width and by glyph height.
- * dAVEBOx places the row at y 46, h 13, x 6..122 on the full screen; this
- * page's band starts at screen row 9 and is 48 tall, so the same row is 33.
+ * others OUTLINED; labels centred by measured width and glyph height. dAVEBOx
+ * puts the row at y 46, h 13, x 6..122 on the screen: y 33 in this band.
  */
 const BTN_Y = 33, BTN_H = 13, BTN_X0 = 6, BTN_X1 = 122, BTN_PAD = 6, BTN_GAP = 4;
+
+function outline(ctx, x, y, w, h) {
+    ctx.fillRect(x, y, w, 1, 1);
+    ctx.fillRect(x, y + h - 1, w, 1, 1);
+    ctx.fillRect(x, y, 1, h, 1);
+    ctx.fillRect(x + w - 1, y, 1, h, 1);
+}
 
 function drawButton(ctx, x, y, w, h, sel, label, off) {
     const lx = x + Math.round((w - textW(label)) / 2);
@@ -65,18 +99,10 @@ function drawButton(ctx, x, y, w, h, sel, label, off) {
         ctx.print(lx, ly, label, 0);
         return;
     }
-    ctx.fillRect(x, y, w, 1, 1);
-    ctx.fillRect(x, y + h - 1, w, 1, 1);
-    ctx.fillRect(x, y, 1, h, 1);
-    ctx.fillRect(x + w - 1, y, 1, h, 1);
-    if (sel && off) {
-        /* Selected but not possible yet (no pad tapped): a second, inner
-         * outline says "you are here" without offering the click. */
-        ctx.fillRect(x + 2, y + 2, w - 4, 1, 1);
-        ctx.fillRect(x + 2, y + h - 3, w - 4, 1, 1);
-        ctx.fillRect(x + 2, y + 2, 1, h - 4, 1);
-        ctx.fillRect(x + w - 3, y + 2, 1, h - 4, 1);
-    }
+    outline(ctx, x, y, w, h);
+    /* Selected but not possible yet (no pad tapped): a second, inner outline
+     * says "you are here" without offering the click. */
+    if (sel && off) outline(ctx, x + 2, y + 2, w - 4, h - 4);
     ctx.print(lx, ly, label, 1);
 }
 
@@ -85,7 +111,7 @@ function drawButtonRow(ctx, buttons) {
     if (!n) return;
     const widths = buttons.map((b) => textW(b.label) + BTN_PAD * 2);
     const span = BTN_X1 - BTN_X0 - BTN_GAP * (n - 1);
-    let used = widths.reduce((a, b) => a + b, 0);
+    const used = widths.reduce((a, b) => a + b, 0);
     if (used < span) {
         const extra = Math.floor((span - used) / n);
         for (let i = 0; i < n; i++) widths[i] += extra;
@@ -97,9 +123,9 @@ function drawButtonRow(ctx, buttons) {
     }
 }
 
-/* Body lines, centred, one 10px pitch apart in the space above the buttons —
- * dAVEBOx's dlgLines, minus its capitals (this face has lowercase). Wrapped by
- * MEASURED width, never by a guessed break. */
+/* Body lines, centred, 10px apart, in the space above the buttons —
+ * dAVEBOx's dlgLines (wrapped by MEASURED width), minus its capitals: this
+ * face has lowercase. */
 function drawLines(ctx, lines) {
     const out = [];
     for (const raw of lines) {
@@ -119,13 +145,33 @@ function drawLines(ctx, lines) {
         ctx.print(Math.max(0, Math.floor((128 - textW(out[i])) / 2)), top + i * pitch, out[i], 1);
 }
 
+/* The host's frame corners (drawBrackets): an arm along each edge. */
+function drawBrackets(ctx) {
+    const x = FRAME_X, y = FRAME_Y, w = FRAME_W, h = FRAME_H;
+    for (let i = 0; i < ARM; i++) {
+        ctx.fillRect(x + i, y, 1, 1, 1);
+        ctx.fillRect(x + w - 1 - i, y, 1, 1, 1);
+        ctx.fillRect(x + i, y + h - 1, 1, 1, 1);
+        ctx.fillRect(x + w - 1 - i, y + h - 1, 1, 1, 1);
+    }
+    for (let i = 0; i < ARM - 1; i++) {
+        ctx.fillRect(x, y + i, 1, 1, 1);
+        ctx.fillRect(x + w - 1, y + i, 1, 1, 1);
+        ctx.fillRect(x, y + h - 1 - i, 1, 1, 1);
+        ctx.fillRect(x + w - 1, y + h - 1 - i, 1, 1, 1);
+    }
+}
+
 /* ------------------------------------------------------------ state */
 
 const S = {
-    sel: 1,          /* 0 Resample, 1 Cancel: dAVEBOx's destructive default */
-    started: false,  /* Resample was clicked on this visit */
-    mode: -1,        /* the mode this visit is for */
+    entered: false,   /* inferred — see the header */
+    view: 'list',     /* list | pad | kit | run */
+    cursor: 0,        /* the list row */
+    sel: 1,           /* dialog button: 0 Resample, 1 Cancel (dAVEBOx's destructive default) */
+    jobs0: -1,        /* the DSP's job count when Resample was pressed */
     status: null,
+    lastDraw: -1,
 };
 
 function parseStatus(raw) {
@@ -140,94 +186,117 @@ function readStatus(ctx) {
     return S.status;
 }
 
-/* A new visit (the mode changed under us): start from the default button. */
-function sync(st) {
-    const mode = st ? st.mode : -1;
-    if (mode !== S.mode) {
-        S.mode = mode;
-        S.sel = 1;
-        S.started = false;
-    }
+function toList() {
+    S.view = 'list';
+    S.sel = 1;
+}
+
+function reset() {
+    S.entered = false;
+    S.view = 'list';
+    S.cursor = 0;
+    S.sel = 1;
 }
 
 function canGo(st) {
     if (!st || st.busy) return false;
-    if (st.mode === 0) return st.vel > 0 && !st.empty;
-    if (st.mode === 1) return st.synths > 0;
+    if (S.view === 'pad') return st.pad > 0 && st.vel > 0 && !st.empty;
+    if (S.view === 'kit') return st.synths > 0;
     return false;
 }
 
-/* What the dialog shows: { lines, buttons } */
-function screen(st) {
+/* A dialog: { lines, buttons }. */
+function dialog(st) {
     if (!st) return { lines: ['...'], buttons: [] };
-    if (S.started || (st.busy && st.mode >= 0)) {
-        if (st.busy) return { lines: ['Resampling ' + st.done + '/' + st.total], buttons: [{ label: 'OK', sel: true }] };
+    const ok = [{ label: 'OK', sel: true }];
+    if (S.view === 'run') {
+        if (!(st.jobs > S.jobs0)) return { lines: ['Could not start', 'Try again'], buttons: ok };
+        if (st.busy) return { lines: ['Resampling ' + st.done + '/' + st.total], buttons: ok };
         const l = ['Done'];
         if (st.failed) l.push(st.failed + ' failed');
-        else if (st.saved) l.push(st.saved + ' changed, file saved only');
+        else if (st.saved) l.push(st.saved + ' file saved only');
         else if (st.clamped) l.push('level clamped');
         else if (st.last) l.push(st.last);
-        return { lines: l, buttons: [{ label: 'OK', sel: true }] };
+        return { lines: l, buttons: ok };
     }
-    const go = canGo(st);
-    const buttons = [{ label: 'Resample', sel: S.sel === 0, off: !go }, { label: 'Cancel', sel: S.sel === 1 }];
-    if (st.mode === 0) {
+    /* A job from an earlier visit still running: show it, start nothing. */
+    if (st.busy) return { lines: ['Resampling ' + st.done + '/' + st.total], buttons: ok };
+    const buttons = [{ label: 'Resample', sel: S.sel === 0, off: !canGo(st) },
+                     { label: 'Cancel', sel: S.sel === 1 }];
+    if (S.view === 'pad') {
+        if (!(st.pad > 0)) return { lines: ['Tap a pad'], buttons };
         if (st.empty) return { lines: ['Pad ' + st.pad + ' is empty', 'Tap another pad'], buttons };
-        if (!(st.vel > 0)) return { lines: ['Pad ' + st.pad + '  ' + (st.name || ''), 'Tap a pad'], buttons };
         return { lines: ['Pad ' + st.pad + '  ' + (st.name || ''), 'Velocity ' + st.vel], buttons };
     }
-    if (st.mode === 1) {
-        if (!st.synths) return { lines: ['No non-sample pads in kit'], buttons: [{ label: 'Resample', sel: S.sel === 0, off: true }, { label: 'Cancel', sel: S.sel === 1 }] };
-        return { lines: ['Resample all non-sample pads in kit?'], buttons };
-    }
-    /* No dialog open — you paged here rather than chose a row. */
-    if (st.busy) return { lines: ['Resampling ' + st.done + '/' + st.total], buttons: [] };
-    return { lines: ['Choose Resample Pad', 'or Resample Kit'], buttons: [] };
-}
-
-/* Tell the DSP no dialog is open, and (from a click) hand the door back. On
- * Back the host is already leaving, so only the first half. */
-function finish(ctx, close) {
-    ctx.setParam('rs_mode', '-1');
-    S.mode = -1;
-    S.sel = 1;
-    S.started = false;
-    if (close && typeof ctx.close === 'function') ctx.close();
+    if (!st.synths) return { lines: ['No non-sample pads in kit'], buttons };
+    return { lines: ['Resample all non-sample pads in kit?'], buttons };
 }
 
 globalThis.canvas_overlay = {
     onMidi(ctx, msg) {
         const d = msg && msg.data;
         if (!d || d.length < 3 || (d[0] & 0xF0) !== 0xB0) return;
-        const st = readStatus(ctx);
-        sync(st);
-        const sc = screen(st);
+        /* Only an ENTERED door is handed gestures: this one proves it. */
+        S.entered = true;
         if (d[1] === CC_JOG) {
-            if (sc.buttons.length < 2) return;
             const v = d[2];
             const delta = v === 0 ? 0 : (v <= 63 ? v : -(128 - v));
-            if (delta) S.sel = delta > 0 ? 1 : 0;
+            if (!delta) return;
+            if (S.view === 'list') {
+                /* From row 0, exactly as the host's list after its entering
+                 * click — the highlight simply becomes visible now. */
+                S.cursor = Math.max(0, Math.min(ROWS.length - 1, S.cursor + (delta > 0 ? 1 : -1)));
+                return;
+            }
+            const sc = dialog(readStatus(ctx));
+            if (sc.buttons.length >= 2) S.sel = delta > 0 ? 1 : 0;
             return;
         }
         if (d[1] !== CC_CLICK || d[2] === 0) return;
-        if (sc.buttons.length < 2 || S.sel === 1) { finish(ctx, true); return; }  /* OK, Cancel */
-        if (!canGo(st)) return;                                  /* Resample, not yet */
-        ctx.setParam('rs_go', '1');
-        S.started = true;
+        if (S.view === 'list') {
+            /* The row under the cursor, as the host's entered list's click. */
+            S.view = S.cursor === 0 ? 'pad' : 'kit';
+            S.sel = 1;
+            readStatus(ctx);
+            return;
+        }
+        const st = readStatus(ctx);
+        const sc = dialog(st);
+        if (sc.buttons.length < 2 || S.sel === 1) { toList(); return; }   /* OK, Cancel */
+        if (!canGo(st)) return;                                          /* Resample, not yet */
+        S.jobs0 = st.jobs;
+        ctx.setParam('rs_go', S.view === 'pad' ? 'pad' : 'kit');
+        readStatus(ctx);                   /* synchronous: it started, or it did not */
+        S.view = 'run';
     },
 
-    /* Back is Cancel (or OK), and leaves: the dialog has no level to go up. */
+    /* true = "I went up a level, keep me here"; anything else = the host
+     * leaves the door (and the brackets come back). */
     handleBack(ctx) {
-        finish(ctx, false);
+        if (S.view !== 'list') { toList(); return true; }
+        S.entered = false;
         return false;
     },
 
     drawPage(ctx, info) {
+        const now = info && typeof info.nowMs === 'number' ? info.nowMs : Date.now();
+        if (S.lastDraw < 0 || now - S.lastDraw > AWAY_MS) reset();       /* arrived */
+        S.lastDraw = now;
         const st = parseStatus(info && info.values ? info.values.rs_status : null) || S.status;
         if (st) S.status = st;
-        sync(st);
-        const sc = screen(st);
-        drawLines(ctx, sc.lines);
-        drawButtonRow(ctx, sc.buttons);
+
+        if (S.view !== 'list') {
+            const sc = dialog(st);
+            drawLines(ctx, sc.lines);
+            drawButtonRow(ctx, sc.buttons);
+            return;
+        }
+        for (let i = 0; i < ROWS.length; i++) {
+            const y = LIST_Y + i * ROW_H;
+            const on = S.entered && i === S.cursor;
+            if (on) ctx.fillRect(0, y - HI_OFF, ctx.width, ROW_H, 1);
+            ctx.print(LIST_X, y, ROWS[i], on ? 0 : 1);
+        }
+        if (!S.entered) drawBrackets(ctx);
     },
 };

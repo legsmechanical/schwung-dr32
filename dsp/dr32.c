@@ -88,7 +88,6 @@ typedef struct {
     /* RESAMPLE (dr32_resample.h): renders on its own thread; switched pads
      * land in dr32_service_resample, from both render paths. */
     dr32_rs_job *rs;
-    int          rs_mode;         /* the dialog open: 0 pad, 1 kit, -1 none */
 } dr32_instance;
 
 /** Capture the freshly-loaded kit as the state baseline. Called after every
@@ -453,7 +452,6 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     in->kits = dr32_kits_create();
     in->kit_pending = -1;
     in->rs = dr32_rs_job_create(DR32_RS_DIR);
-    in->rs_mode = -1;
     in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
     {
         char path[DR32_MAX_PATH];
@@ -729,29 +727,25 @@ static void set_param(void *instance, const char *key, const char *val) {
      *    are standard dialog boxes like we use in davebox sa - [Resample]
      *    [Cancel]. clicking kit pulls up a screen that says 'Resample all
      *    non-sample pads in kit?' and under it [Resample] [Cancel]"
-     * Two pages, as Category and Kit are two: `resample` is the host's items
-     * page (rows from rs_items; the host draws it, brackets and all) and its
-     * click writes rs_mode and lands in `resample_dlg`, DR32's own dialog
-     * (src/resample.js), which writes rs_go. Starting only snapshots and
-     * spawns a thread — the render is never on this callback.
+     * One page, drawn by src/resample.js; its [Resample] writes this:
+     *   rs_go = "pad"   the last TAPPED pad (tap_pad, dr32_kit.h), at the
+     *                   velocity it was tapped with
+     *   rs_go = "kit"   every synth pad, at DR32_RS_KIT_VEL
+     * Starting only snapshots and signals the worker — the render is never
+     * on this callback.
      */
-    if (!strcmp(key, "rs_mode")) {
-        int v = atoi(val);
-        in->rs_mode = (v == 0 || v == 1) ? v : -1;
-        return;
-    }
     if (!strcmp(key, "rs_go")) {
-        if (in->rs_mode == 0) {
-            int p0 = in->kit.ui_current_pad;
-            if (in->kit.pad_vel[p0] > 0) dr32_rs_job_start(in->rs, &in->kit, &p0, 1, in->kit.pad_vel[p0]);
-        } else if (in->rs_mode == 1) {
+        if (!strcmp(val, "pad")) {
+            int p0 = in->kit.tap_pad;
+            if (p0 >= 0 && p0 < DR32_PADS && in->kit.tap_vel > 0)
+                dr32_rs_job_start(in->rs, &in->kit, &p0, 1, in->kit.tap_vel);
+        } else if (!strcmp(val, "kit")) {
             int pads[DR32_PADS], n = 0;
             for (int i = 0; i < DR32_PADS; i++) if (dr32_rs_is_synth(&in->kit, i)) pads[n++] = i;
             if (n) dr32_rs_job_start(in->rs, &in->kit, pads, n, DR32_RS_KIT_VEL);
         }
         return;
     }
-
     if (!strcmp(key, "state")) {
         // Schwung restoring a saved slot. The kit is loaded through the same
         // path set_param("kit") uses (via the callback below) so preset loading
@@ -828,12 +822,6 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
         return snprintf(buf, buf_len, "0");
     }
 
-    /* The Resample page's two rows. Static, but served (an items page reads
-     * its list from the module), and the dialog's mode is the row chosen. */
-    if (!strcmp(key, "rs_items"))
-        return snprintf(buf, buf_len, "[{\"index\":0,\"label\":\"Resample Pad\"},"
-                                      "{\"index\":1,\"label\":\"Resample Kit\"}]");
-    if (!strcmp(key, "rs_mode")) return snprintf(buf, buf_len, "%d", in->rs_mode);
     /*
      * The dialog's one read (its `extra_keys`, on the host's read rotation — a
      * draw may not read; its hooks read it directly). The focused pad, its
@@ -841,18 +829,20 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
      * your taps — the synth-pad count, and the job's progress.
      */
     if (!strcmp(key, "rs_status")) {
-        const int cp = in->kit.ui_current_pad;
+        /* The last TAPPED pad (-1 before any tap: shown as pad 0). */
+        const int tp = in->kit.tap_pad;
+        const int cp = (tp >= 0 && tp < DR32_PADS) ? tp : 0;
         const dr32_pad_slot *s = &in->kit.pads[cp];
         int synths = 0;
         for (int i = 0; i < DR32_PADS; i++) synths += dr32_rs_is_synth(&in->kit, i);
         dr32_rs_status st;
         dr32_rs_job_status(in->rs, &st);
-        int n = snprintf(buf, buf_len, "{\"mode\":%d,\"pad\":%d,\"vel\":%d,\"empty\":%d,\"synths\":%d,"
+        int n = snprintf(buf, buf_len, "{\"pad\":%d,\"vel\":%d,\"empty\":%d,\"synths\":%d,\"jobs\":%d,"
                          "\"busy\":%d,\"total\":%d,\"done\":%d,\"switched\":%d,\"saved\":%d,"
                          "\"failed\":%d,\"clamped\":%d,\"name\":",
-                         in->rs_mode, cp + 1, in->kit.pad_vel[cp],
+                         tp >= 0 ? cp + 1 : 0, tp >= 0 ? in->kit.tap_vel : 0,
                          !(s->engine || (s->sample && s->path[0])), synths,
-                         st.busy, st.total, st.done, st.switched, st.saved_only, st.failed, st.clamped);
+                         st.jobs, st.busy, st.total, st.done, st.switched, st.saved_only, st.failed, st.clamped);
         if (n <= 0 || n >= buf_len) return 0;
         int m = (s->engine || s->path[0]) ? append_pad_name(s, buf + n, buf_len - n)
                                           : snprintf(buf + n, buf_len - n, "\"\"");

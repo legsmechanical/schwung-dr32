@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 #define RS_BLOCK 128
 
@@ -64,7 +65,9 @@ static int acc_push(rs_acc *a, const float *x, int frames) {
         float v = fabsf(x[i * a->ch]);
         if (a->ch == 2 && fabsf(x[i * 2 + 1]) > v) v = fabsf(x[i * 2 + 1]);
         if (v > a->peak) a->peak = v;
-        if (v <= a->peak * a->floor_lin) a->quiet++;
+        /* Silence only counts once the sound has STARTED: a sample that
+         * opens with a second of digital zero is not finished (Fable). */
+        if (a->peak > 0.0f && v <= a->peak * a->floor_lin) a->quiet++;
         else a->quiet = 0;
     }
     a->n += (size_t)frames;
@@ -78,6 +81,10 @@ void dr32_rs_take_free(dr32_rs_take *t) {
 }
 
 int dr32_rs_render(const dr32_rs_src *src, dr32_rs_take *out) {
+    return dr32_rs_render_abortable(src, out, NULL);
+}
+
+int dr32_rs_render_abortable(const dr32_rs_src *src, dr32_rs_take *out, atomic_int *abort) {
     if (!src || !out) return -1;
     memset(out, 0, sizeof(*out));
     const size_t cap = (size_t)(DR32_RS_MAX_S * DR32_RS_SR);
@@ -108,9 +115,11 @@ int dr32_rs_render(const dr32_rs_src *src, dr32_rs_take *out) {
         float m[RS_BLOCK];
         while (a.n < cap) {
             int k = (int)((cap - a.n) < RS_BLOCK ? (cap - a.n) : RS_BLOCK);
+            if (abort && atomic_load(abort)) { err = 1; break; }
             int alive = e->render(inst, m, k);
             if (acc_push(&a, m, k)) { err = 1; break; }
             if (!alive || a.quiet >= quiet_need) { stopped = 1; break; }
+            if (a.peak <= 0.0f && a.n >= 5 * (size_t)DR32_RS_SR) break;    /* 5 s of nothing: give up */
         }
         e->destroy(inst);
     } else {
@@ -137,10 +146,12 @@ int dr32_rs_render(const dr32_rs_src *src, dr32_rs_take *out) {
         float st[2 * RS_BLOCK];
         while (a.n < cap) {
             int k = (int)((cap - a.n) < RS_BLOCK ? (cap - a.n) : RS_BLOCK);
+            if (abort && atomic_load(abort)) { err = 1; break; }
             memset(st, 0, sizeof(float) * 2 * (size_t)k);
             int alive = dr32_voice_render(&v, st, k);
             if (acc_push(&a, st, k)) { err = 1; break; }
             if (!alive || a.quiet >= quiet_need) { stopped = 1; break; }
+            if (a.peak <= 0.0f && a.n >= 5 * (size_t)DR32_RS_SR) break;    /* 5 s of nothing: give up */
         }
         dr32_wav_free(&w);
     }
@@ -263,7 +274,11 @@ void dr32_rs_basename(const dr32_rs_src *src, const struct tm *date, char *out, 
     /* Keep the name a name: no path separators or characters a FAT card or a
      * browser chokes on; bounded, so a long sample name leaves room. */
     size_t len = strlen(name);
-    if (len > 80) name[len = 80] = '\0';
+    if (len > 80) {
+        len = 80;                                   /* never mid-way through a UTF-8 character */
+        while (len > 0 && ((unsigned char)name[len] & 0xC0) == 0x80) len--;
+        name[len] = '\0';
+    }
     while (len > 0 && name[len - 1] == ' ') name[--len] = '\0';
     for (size_t i = 0; i < len; i++) {
         unsigned char c = (unsigned char)name[i];
@@ -344,6 +359,14 @@ int dr32_rs_apply(dr32_kit *k, const dr32_rs_src *src, dr32_rs_take *take,
 
 enum { RS_WAIT = 0, RS_READY, RS_SWITCHED, RS_SAVED_ONLY, RS_FAILED };
 
+/*
+ * ONE worker thread per instance, started on the first Resample and then
+ * PARKED on a condition variable (Fable's review: creating and joining a
+ * thread per job put a clone, an 8 MB stack map and a join on the audio
+ * callback). The audio thread only posts; the worker renders, writes, and
+ * frees what the audio thread hands back (`trash`), so no free() of a take
+ * ever runs on the callback either.
+ */
 struct dr32_rs_job {
     char           dir[DR32_MAX_PATH];
     int            n;
@@ -352,27 +375,41 @@ struct dr32_rs_job {
     char           path[DR32_PADS][DR32_MAX_PATH];
     long           size[DR32_PADS], mtime[DR32_PADS];
     char           base[DR32_PADS][160];
+    float         *trash[DR32_PADS];   /* takes the pad did not adopt; the worker frees */
     atomic_int     state[DR32_PADS];
-    atomic_int     running;        /* the worker has not returned yet */
+    atomic_int     busy;            /* a job is posted or rendering */
     atomic_int     abort;
-    atomic_int     last;           /* index of the last file written, -1 = none */
-    int            clamped;        /* audio thread only */
-    int            joinable;
+    atomic_int     last;            /* index of the last file written, -1 = none */
+    atomic_int     jobs;            /* jobs started, ever: the page's "did it start" */
+    int            clamped;         /* audio thread only */
+    int            started;         /* the thread exists */
+    int            posted;          /* under `mu`: a job is waiting for the worker */
+    int            quit;            /* under `mu` */
     pthread_t      th;
+    pthread_mutex_t mu;
+    pthread_cond_t  cv;
 };
 
-static void *rs_worker(void *arg) {
-    dr32_rs_job *j = (dr32_rs_job *)arg;
+static void rs_take_trash(dr32_rs_job *j) {
+    for (int i = 0; i < DR32_PADS; i++) { free(j->trash[i]); j->trash[i] = NULL; }
+}
+
+static void rs_run(dr32_rs_job *j) {
+    rs_take_trash(j);
     for (int i = 0; i < j->n; i++) {
         if (atomic_load(&j->abort)) { atomic_store(&j->state[i], RS_FAILED); continue; }
         dr32_rs_take *t = &j->take[i];
-        if (dr32_rs_render(&j->src[i], t) != 0) { atomic_store(&j->state[i], RS_FAILED); continue; }
+        if (dr32_rs_render_abortable(&j->src[i], t, &j->abort) != 0) {
+            atomic_store(&j->state[i], RS_FAILED);
+            continue;
+        }
         time_t now = time(NULL);
         struct tm tmv;
         localtime_r(&now, &tmv);
         dr32_rs_basename(&j->src[i], &tmv, j->base[i], sizeof(j->base[i]));
         struct stat st;
-        if (dr32_rs_unique_path(j->dir, j->base[i], j->path[i], sizeof(j->path[i])) != 0 ||
+        if (atomic_load(&j->abort) ||
+            dr32_rs_unique_path(j->dir, j->base[i], j->path[i], sizeof(j->path[i])) != 0 ||
             dr32_wav_write24(j->path[i], t->data, t->frames, t->channels, DR32_RS_SR) != 0 ||
             stat(j->path[i], &st) != 0) {
             dr32_rs_take_free(t);
@@ -387,13 +424,22 @@ static void *rs_worker(void *arg) {
         atomic_store(&j->last, i);
         atomic_store_explicit(&j->state[i], RS_READY, memory_order_release);
     }
-    atomic_store(&j->running, 0);
-    return NULL;
 }
 
-static void rs_reap(dr32_rs_job *j) {
-    if (j->joinable) { pthread_join(j->th, NULL); j->joinable = 0; }
-    for (int i = 0; i < DR32_PADS; i++) dr32_rs_take_free(&j->take[i]);
+static void *rs_worker(void *arg) {
+    dr32_rs_job *j = (dr32_rs_job *)arg;
+    pthread_mutex_lock(&j->mu);
+    for (;;) {
+        while (!j->posted && !j->quit) pthread_cond_wait(&j->cv, &j->mu);
+        if (j->quit) break;
+        j->posted = 0;
+        pthread_mutex_unlock(&j->mu);
+        rs_run(j);
+        atomic_store(&j->busy, 0);
+        pthread_mutex_lock(&j->mu);
+    }
+    pthread_mutex_unlock(&j->mu);
+    return NULL;
 }
 
 dr32_rs_job *dr32_rs_job_create(const char *dir) {
@@ -401,40 +447,64 @@ dr32_rs_job *dr32_rs_job_create(const char *dir) {
     if (!j) return NULL;
     snprintf(j->dir, sizeof(j->dir), "%s", dir ? dir : DR32_RS_DIR);
     atomic_store(&j->last, -1);
+    pthread_mutex_init(&j->mu, NULL);
+    pthread_cond_init(&j->cv, NULL);
     return j;
 }
 
 void dr32_rs_job_destroy(dr32_rs_job *j) {
     if (!j) return;
-    atomic_store(&j->abort, 1);
-    rs_reap(j);
+    atomic_store(&j->abort, 1);             /* the render checks it every block */
+    if (j->started) {
+        pthread_mutex_lock(&j->mu);
+        j->quit = 1;
+        pthread_cond_signal(&j->cv);
+        pthread_mutex_unlock(&j->mu);
+        pthread_join(j->th, NULL);
+    }
+    for (int i = 0; i < DR32_PADS; i++) dr32_rs_take_free(&j->take[i]);
+    rs_take_trash(j);
+    pthread_cond_destroy(&j->cv);
+    pthread_mutex_destroy(&j->mu);
     free(j);
 }
 
 int dr32_rs_job_start(dr32_rs_job *j, const dr32_kit *k, const int *pads, int n, int velocity) {
     if (!j || !k) return -1;
-    if (atomic_load(&j->running)) return -1;
+    if (atomic_load(&j->busy)) return -1;
     for (int i = 0; i < j->n; i++)
         if (atomic_load(&j->state[i]) == RS_READY) return -1;     /* not switched yet */
-    rs_reap(j);                    /* the last worker has returned: this join is immediate */
-    j->n = 0;
+    /* Anything a finished job still holds goes to the worker to free. */
+    for (int i = 0; i < DR32_PADS; i++) {
+        if (j->take[i].data) {
+            if (!j->trash[i]) { j->trash[i] = j->take[i].data; j->take[i].data = NULL; }
+            else return -1;                                  /* cannot happen; never leak */
+        }
+    }
+    int m = 0;
+    for (int i = 0; i < n && m < DR32_PADS; i++) {
+        if (!dr32_rs_snapshot(k, pads[i], velocity, &j->src[m])) continue;
+        memset(&j->take[m], 0, sizeof(j->take[m]));
+        atomic_store(&j->state[m], RS_WAIT);
+        m++;
+    }
+    if (!m) return 0;
+    if (!j->started) {
+        /* Once per instance: the only thread creation Resample ever does. */
+        if (pthread_create(&j->th, NULL, rs_worker, j) != 0) return -1;
+        j->started = 1;
+    }
+    j->n = m;
     j->clamped = 0;
     atomic_store(&j->last, -1);
     atomic_store(&j->abort, 0);
-    for (int i = 0; i < n && j->n < DR32_PADS; i++) {
-        if (!dr32_rs_snapshot(k, pads[i], velocity, &j->src[j->n])) continue;
-        atomic_store(&j->state[j->n], RS_WAIT);
-        j->n++;
-    }
-    if (!j->n) return 0;
-    atomic_store(&j->running, 1);
-    if (pthread_create(&j->th, NULL, rs_worker, j) != 0) {
-        atomic_store(&j->running, 0);
-        j->n = 0;
-        return -1;
-    }
-    j->joinable = 1;
-    return j->n;
+    atomic_store(&j->busy, 1);
+    atomic_fetch_add(&j->jobs, 1);
+    pthread_mutex_lock(&j->mu);             /* the worker holds it only to wait */
+    j->posted = 1;
+    pthread_cond_signal(&j->cv);
+    pthread_mutex_unlock(&j->mu);
+    return m;
 }
 
 int dr32_rs_job_service(dr32_rs_job *j, dr32_kit *k) {
@@ -447,7 +517,7 @@ int dr32_rs_job_service(dr32_rs_job *j, dr32_kit *k) {
             atomic_store(&j->state[i], RS_SWITCHED);
             switched++;
         } else {
-            /* Left for rs_reap to free, off this thread. */
+            /* Not adopted: the next job hands it to the worker to free. */
             atomic_store(&j->state[i], RS_SAVED_ONLY);
         }
     }
@@ -457,8 +527,10 @@ int dr32_rs_job_service(dr32_rs_job *j, dr32_kit *k) {
 void dr32_rs_job_status(dr32_rs_job *j, dr32_rs_status *o) {
     memset(o, 0, sizeof(*o));
     if (!j) return;
+    o->jobs = atomic_load(&j->jobs);
+    if (!o->jobs) return;
     o->total = j->n;
-    o->busy = atomic_load(&j->running);
+    o->busy = atomic_load(&j->busy);
     for (int i = 0; i < j->n; i++) {
         switch (atomic_load(&j->state[i])) {
             case RS_READY:      o->busy = 1; break;
@@ -474,6 +546,8 @@ void dr32_rs_job_status(dr32_rs_job *j, dr32_rs_status *o) {
 }
 
 void dr32_rs_job_wait(dr32_rs_job *j) {
-    if (!j) return;
-    if (j->joinable) { pthread_join(j->th, NULL); j->joinable = 0; }
+    while (j && atomic_load(&j->busy)) {
+        struct timespec ts = { 0, 1000000 };
+        nanosleep(&ts, NULL);
+    }
 }

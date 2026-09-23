@@ -22,6 +22,7 @@
 #include "../dsp/dr32_resample.h"
 #include "../dsp/dr32_kit.h"
 #include "../dsp/wav.h"
+#include "../dsp/dr32_params.h"
 
 #include <dirent.h>
 #include <math.h>
@@ -29,6 +30,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 static int failures = 0, checks = 0;
@@ -414,6 +416,75 @@ static void test_all_models(const char *dir) {
     printf("  all %d models resample to themselves\n", dr32_model_count());
 }
 
+/* "The last TAPPED pad": a hand, never the sequencer (Fable's review). With
+ * no transport a hit is a hand; with one running and nothing vouching, it is
+ * not, and the Resample Pad screen must not follow it. */
+static void test_taps(void) {
+    dr32_kit k;
+    dr32_kit_init(&k);
+    CHECK(k.tap_pad == -1, "a new kit has no tapped pad");
+    dr32_kit_note_on(&k, 36 + 4, 90);
+    CHECK(k.tap_pad == 4 && k.tap_vel == 90, "a hit with no transport is a tap: pad %d vel %d", k.tap_pad, k.tap_vel);
+    k.transport_running = 1;
+    dr32_kit_note_on(&k, 36 + 9, 30);
+    CHECK(k.tap_pad == 4 && k.tap_vel == 90, "a sequenced note moved the tap to pad %d vel %d", k.tap_pad, k.tap_vel);
+    /* ...unless a host vouches for it, just after (the canvas's live press). */
+    dr32_apply_param(&k, "ui_live_press", "1");
+    CHECK(k.tap_pad == 9 && k.tap_vel == 30, "a vouched note is a tap: pad %d vel %d", k.tap_pad, k.tap_vel);
+    dr32_kit_free(&k);
+}
+
+/* Destroy mid-render returns promptly: the render checks abort every block
+ * (Fable: it used to finish the pad, up to a 20 s cap, first). */
+static void test_abort(const char *dir) {
+    char src[512], out[512];
+    snprintf(src, sizeof(src), "%s/long2.wav", dir);
+    write_tone(src, 1, 25.0f, 220.0f, 0.0f);
+    snprintf(out, sizeof(out), "%s/abort", dir);
+    dr32_kit k;
+    dr32_kit_init(&k);
+    dr32_kit_load_sample(&k, 0, src);
+    k.pads[0].params.hold = DR32_HOLD_MAX;
+    dr32_rs_job *j = dr32_rs_job_create(out);
+    int p0 = 0;
+    CHECK(dr32_rs_job_start(j, &k, &p0, 1, 100) == 1, "start");
+    struct timespec a, b;
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    dr32_rs_job_destroy(j);
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    double ms = (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6;
+    CHECK(ms < 100.0, "destroy mid-render took %.1f ms", ms);
+    DIR *dd = opendir(out);
+    int files = 0;
+    for (struct dirent *e; dd && (e = readdir(dd)); ) if (e->d_name[0] != '.') files++;
+    if (dd) closedir(dd);
+    CHECK(files == 0, "an aborted render left %d files", files);
+    dr32_kit_free(&k);
+}
+
+/* A sample that opens with 1.5 s of digital zero is not "silent": the
+ * silence stop only counts once the sound has started. */
+static void test_leading_silence(const char *dir) {
+    char src[512];
+    snprintf(src, sizeof(src), "%s/late.wav", dir);
+    size_t n = (size_t)(3 * FR);
+    float *d = (float *)calloc(n, sizeof(float));
+    for (size_t i = (size_t)(1.5f * FR); i < n; i++) d[i] = 0.4f * sinf(6.2831853f * 200.0f * (float)i / FR);
+    dr32_wav_write24(src, d, n, 1, FR);
+    free(d);
+    dr32_kit k;
+    dr32_kit_init(&k);
+    dr32_kit_load_sample(&k, 0, src);
+    k.pads[0].params.hold = DR32_HOLD_MAX;
+    dr32_rs_src s;
+    dr32_rs_snapshot(&k, 0, 100, &s);
+    dr32_rs_take t;
+    CHECK(dr32_rs_render(&s, &t) == 0 && t.frames > (size_t)(2.9f * FR),
+          "a late-starting sample was cut: %zu frames", t.frames);
+    dr32_rs_take_free(&t);
+    dr32_kit_free(&k);
+}
+
 int main(void) {
     printf("test_resample\n");
     char tmpl[] = "/tmp/dr32rsXXXXXX";
@@ -429,6 +500,9 @@ int main(void) {
     test_changed_pad(dir);
     test_job(dir);
     test_all_models(dir);
+    test_taps();
+    test_abort(dir);
+    test_leading_silence(dir);
     char cmd[600];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
     if (system(cmd) != 0) printf("  (could not remove %s)\n", dir);
