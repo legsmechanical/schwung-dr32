@@ -491,7 +491,11 @@ int main(void) {
             buf[0] = 0; api->get_param(inst, "is_loading", buf, sizeof buf);
             CHECK(!strcmp(buf, "1"), "a model change pulses is_loading (%s)", buf);
             api->get_param(inst, "split_voices", buf, sizeof buf);
-            CHECK(strstr(buf, "{\"id\":\"pad7\",\"label\":\"Open Hat\"}") != NULL, "split_voices names the model");
+            CHECK(strstr(buf, "{\"id\":\"pad7\",\"label\":\"Open Hat\",\"notes\":[42]}") != NULL, "split_voices names the model, with its note (%.120s)", buf);
+            /* Every voice says which note plays it — first and last pad. */
+            CHECK(strstr(buf, "{\"id\":\"pad1\",") != NULL && strstr(buf, "\"notes\":[36]}") != NULL,
+                  "pad1 declares note 36");
+            CHECK(strstr(buf, "\"notes\":[67]}]") != NULL, "pad32 declares note 67, last in the list");
             api->get_param(inst, "ui_hierarchy", buf, sizeof buf);
             CHECK(strstr(buf, "\"Open Hat\"") != NULL, "child_names name the model");
             /* state through the plugin keeps it */

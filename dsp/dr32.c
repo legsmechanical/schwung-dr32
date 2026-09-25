@@ -928,6 +928,19 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
                   : snprintf(buf + n, buf_len - n, "\"Pad %d\"", i + 1);
             if (m <= 0 || n + m >= buf_len) return 0;
             n += m;
+            /* The note that plays this pad, so a host can find the voice a
+             * pad press sounds (the optional `notes` key of the module-bus
+             * contract; dAVEBOx's bus voice picker jumps its cursor with it).
+             * Kit-dependent — a kit may route a pad to another receivingNote —
+             * so it is read live. An unrouted pad declares none. */
+            {
+                const int nt = in->kit.pads[i].note;
+                if (nt >= 0 && nt <= 127) {
+                    w = snprintf(buf + n, buf_len - n, ",\"notes\":[%d]", nt);
+                    if (w <= 0 || n + w >= buf_len) return 0;
+                    n += w;
+                }
+            }
             if (n + 1 >= buf_len) return 0;
             buf[n++] = '}';
         }
