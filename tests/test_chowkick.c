@@ -81,7 +81,9 @@ static void test_preset(const char *slug) {
     void *v = e->create(SR);
     for (int k = 0; k < e->nparams; k++) e->set(v, k, m->values[k]);
     e->note_on(v, 100 / 127.0f, 0.0f);
-    for (int at = 0; at < SR * 2; at += 128) e->render(v, port + at, 128);
+    /* The last block is short (2 s is not whole blocks): see test_hold_is_exact. */
+    for (int at = 0; at < SR * 2; at += 128)
+        e->render(v, port + at, SR * 2 - at < 128 ? SR * 2 - at : 128);
     e->destroy(v);
 
     const float a = err_db(g, port, 0, 2205), b = err_db(g, port, 2205, 4410);
@@ -113,9 +115,14 @@ static void test_hold_is_exact(const char *slug) {
         void *v = e->create(SR);
         for (int k = 0; k < e->nparams; k++) e->set(v, k, m->values[k]);
         e->note_on(v, 100 / 127.0f, 0.0f);
+        /* ⚠ 20 s is not a whole number of 128-frame blocks: the last one is
+         * short. Rendering a full 128 there wrote 48 floats past `with` —
+         * over `checks` and `failures` on x86_64 GCC, which is how the
+         * release CI reported ~10^9 failures and not one FAIL line. */
         for (int at = 0; at < SR * 20; at += 128) {
+            const int n = SR * 20 - at < 128 ? SR * 20 - at : 128;
             if (at == SR * 5 - (SR * 5) % 128) e->note_on(v, 60 / 127.0f, 0.0f);
-            e->render(v, out + at, 128);
+            e->render(v, out + at, n);
         }
         e->destroy(v);
     }
