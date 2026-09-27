@@ -556,7 +556,10 @@ int main(void) {
             if (kf) {
                 fputs("{\n  \"kind\": \"instrumentRack\",\n", kf);
                 for (int j = 0; j < 30; j++) fputs("  \"pad\": 0,\n", kf);
-                fputs("  \"drumZoneSettings\": { \"receivingNote\": 36 }\n}\n", kf);
+                /* A real (one-pad, sample-less) drum rack: the kit must LOAD,
+                 * or "the debt was paid" cannot be told from "it failed". */
+                fputs("  \"devices\": [ { \"kind\": \"drumRack\", \"chains\": [\n"
+                      "    { \"drumZoneSettings\": { \"receivingNote\": 36 } } ] } ]\n}\n", kf);
                 fclose(kf);
             }
         }
@@ -602,7 +605,12 @@ int main(void) {
              * catalogue is empty, so nothing can actually load — what is
              * asserted is that the DEBT is cleared rather than owed forever. */
             static int16_t out[2 * 128];
-            for (int b = 0; b < 200; b++) api->render_block(inst, out, 128);
+            /* The load is read on a worker (dsp/dr32_kitjob.h) and lands on a
+             * later block: keep rendering, giving it time. */
+            for (int b = 0; b < 400; b++) {
+                api->render_block(inst, out, 128);
+                if (b >= 100) { struct timespec ms = { 0, 1000000 }; nanosleep(&ms, NULL); }
+            }
             char loaded[512] = {0};
             api->get_param(inst, "kit", loaded, (int)sizeof loaded);
             CHECK(strstr(loaded, "/tmp/dr32_kr/") != NULL,

@@ -156,6 +156,18 @@ Resample <canvas> Resample Pad · Resample Kit, dialogs in place  <- level `resa
   back armed would flatten a kit on the next turn. The exclusion list in `link_fans_out`
   (`sample*`, `note`, `sending_note`, `browse`, `play`, `ui_*`) is the design, not caution: those
   are what make a pad a distinct pad.
+- ⭐ **The audition is READ ON A WORKER, applied between blocks** (`dsp/dr32_kitjob.h`,
+  2026-09-27). Settling (60 blocks) makes it happen once; before this it then ran on the callback,
+  **8–83 ms a kit on the device, one block stalled 72 ms** — a dropout across every track, and on
+  dAVEBOx enough to poison its render pool into serial rendering. `dr32_preset_load` is now
+  `dr32_preset_prepare` (parse + decode, touches no kit) + `dr32_preset_apply` (params, notes,
+  buffer handover, no file read) back to back, so the synchronous path and the browser's are ONE
+  code path; A/B-identical to the old loader on every fixture (params bytes, note map). ⚠ Only the
+  browser goes async: a state restore / set load / `kit_restore` stays synchronous (the host wants
+  the kit in place when `set_param` returns) and CANCELS any read in flight — newest wins, by
+  generation, pinned deterministically by `test_browser.c` 6b via `kit_loading`. The decode memo
+  survives: `dr32_preset_stamps` snapshots each pad's path+size+mtime at post, and apply re-checks
+  the pad before keeping its buffer. The apply's own cost is logged ("kit apply cost").
 - 🔴 **The preset page auditions with NO undo.** Writing `kit_index` loads, replacing all 32 pads,
   and the host offers no `live_preview`/`browser_hooks` there — the module cannot even tell
   "scrolled past" from "chose this", because the click only navigates away and Back writes

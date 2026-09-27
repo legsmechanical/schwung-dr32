@@ -103,6 +103,22 @@ static void write_non_drum(const char *path) {
     fclose(f);
 }
 
+/* The browser's load is READ on a worker and applied between blocks
+ * (dsp/dr32_kitjob.h), so "the cursor settled" is no longer "the kit is in":
+ * render past the settle window, then keep rendering with the worker given
+ * time, for long enough that a load which is coming has come — and one that
+ * must NOT come has had every chance to. Both render entry points. */
+static void settle(plugin_api_v2_t *api, void *inst, int split) {
+    static int16_t sink[2 * 128], va[2 * 128], vb[2 * 128];
+    int16_t *outs[2] = { va, vb };
+    struct timespec ms = { 0, 1000000 };
+    for (int i = 0; i < 390; i++) {
+        if (split) move_plugin_render_split(inst, outs, 2, sink, 128);
+        else       api->render_block(inst, sink, 128);
+        if (i >= 90) nanosleep(&ms, NULL);
+    }
+}
+
 int main(void) {
     char tmpl[] = "/tmp/dr32browseXXXXXX";
     char *dir = mkdtemp(tmpl);
@@ -135,7 +151,6 @@ int main(void) {
     void *inst = api ? api->create_instance("src", NULL) : NULL;
     CHECK(inst != NULL, "create_instance returned NULL");
     if (inst) {
-        static int16_t sink[2 * 128];
         char v[8192];
         #define GET(k) (api->get_param(inst, (k), v, (int)sizeof v), v)
 
@@ -169,7 +184,7 @@ int main(void) {
               "the kit loaded on the DETENT — the audition is meant to wait for the cursor to settle");
 
         /* 4. ...and once the cursor settles, it loads. This is the whole path. */
-        for (int i = 0; i < 90; i++) api->render_block(inst, sink, 128);
+        settle(api, inst, 0);
         CHECK(strstr(GET("kit"), "Beta Kit") != NULL,
               "after the settle the loaded kit is '%s' — the browser did not load anything", v);
 
@@ -198,15 +213,36 @@ int main(void) {
          */
         api->set_param(inst, "kit_index", "0");
         CHECK(!strcmp(GET("kit_name"), "Alpha Kit"), "cursor did not move back: '%s'", v);
-        {
-            static int16_t va[2 * 128], vb[2 * 128];
-            int16_t *outs[2] = { va, vb };
-            for (int i = 0; i < 90; i++)
-                move_plugin_render_split(inst, outs, 2, sink, 128);
-        }
+        settle(api, inst, 1);
         CHECK(!strcmp(GET("kit"), kit_a),
               "on the SPLIT render path the kit is still '%s' — the deferred load "
               "is not serviced there, so a pad on a bus stops the browser dead", v);
+
+        /*
+         * 6b. A SYNCHRONOUS LOAD WINS OVER THE BROWSER'S READ IN FLIGHT. The
+         *     audition is read on a worker (dsp/dr32_kitjob.h) and applied on
+         *     a later block; a state restore or set load landing in between is
+         *     the newer intent, and the finished read must be thrown away, not
+         *     applied on top of it. Deterministic: the read is only ever
+         *     APPLIED inside a render, so between seeing it in flight and the
+         *     next render, nothing can land.
+         */
+        api->set_param(inst, "kit_index", "1");               /* Beta; Alpha is loaded */
+        {
+            static int16_t sink[2 * 128];
+            int seen = 0;
+            for (int i = 0; i < 200 && !seen; i++) {
+                api->render_block(inst, sink, 128);
+                seen = !strcmp(GET("kit_loading"), "1");
+            }
+            CHECK(seen, "the audition was never posted to the worker (kit_loading stayed 0)");
+        }
+        CHECK(!strcmp(GET("kit"), kit_a), "the kit changed while its read was in flight: '%s'", v);
+        api->set_param(inst, "kit", kit_a);                   /* a restore, say */
+        CHECK(!strcmp(GET("kit_loading"), "0"), "a synchronous load left the audition in flight");
+        settle(api, inst, 0);
+        CHECK(!strcmp(GET("kit"), kit_a),
+              "the browser's stale read landed on top of a newer synchronous load: '%s'", v);
 
         /*
          * 7. INIT (Josh, 2026-09-22: "an 'Init' category that has one preset —
@@ -233,7 +269,7 @@ int main(void) {
         api->set_param(inst, "pad4_note", "80");
         api->set_param(inst, "master", "0.5");
         api->set_param(inst, "kit_index", "0");
-        for (int i = 0; i < 90; i++) api->render_block(inst, sink, 128);
+        settle(api, inst, 0);
         CHECK(!strcmp(GET("kit"), "dr32:init"), "after Init the kit is '%s'", v);
         CHECK(!strcmp(GET("pad2_model"), ""), "Init left pad 2's engine: '%s'", v);
         CHECK(!strcmp(GET("pad1_loaded"), "0"), "Init left pad 1 loaded");
@@ -316,7 +352,7 @@ int main(void) {
          *    only when the jog MOVES, so the category commit is the only write
          *    the landing kit ever gets. No kit_index write below is the point.
          */
-        #define SETTLE() for (int i_ = 0; i_ < 90; i_++) api->render_block(inst, sink, 128)
+        #define SETTLE() settle(api, inst, 0)
         api->set_param(inst, "kit_cat", "1");                 /* Hybrid; Init is loaded */
         CHECK(!strcmp(GET("kit_index"), "0"), "a new category lands on kit %s, want 0", v);
         CHECK(!strcmp(GET("kit"), "dr32:init"), "the category commit loaded at once — it must settle like a detent");

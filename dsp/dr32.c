@@ -14,6 +14,7 @@
 #include "dr32_params.h"
 #include "dr32_preset.h"
 #include "dr32_kits.h"
+#include "dr32_kitjob.h"
 #include "dr32_state.h"
 #include "dr32_engine.h"
 #include "dr32_resample.h"
@@ -78,6 +79,9 @@ typedef struct {
      * dr32_service_pending_kit. */
     int        kit_pending;      /* -1 = nothing owed */
     unsigned   kit_pending_at;   /* render-block counter when it was last moved */
+    /* ...and the audition itself is READ on a worker (dr32_kitjob.h), then
+     * applied between blocks. */
+    dr32_kitjob *kj;
 
     /* A per-pad sample swap changed the pad NAMES and the host has not re-read
      * the hierarchy yet. Serving `is_loading` across the swap is how we ask it
@@ -450,6 +454,7 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
      * browser's first read starts the scan on its own thread — see get_param. */
     in->kits = dr32_kits_create();
     in->kit_pending = -1;
+    in->kj = dr32_kitjob_create();
     in->rs = dr32_rs_job_create(DR32_RS_DIR);
     in->ui_hierarchy_src = load_ui_hierarchy(module_dir, &in->ui_hierarchy_len);
     {
@@ -499,6 +504,7 @@ static void destroy_instance(void *instance) {
     /* First: the worker reads nothing of the kit, but a switch must not be
      * waiting on a kit about to be freed. */
     dr32_rs_job_destroy(in->rs);
+    dr32_kitjob_destroy(in->kj);     /* frees a plan it never handed over */
     dr32_kit_free(&in->kit);
     dr32_kits_destroy(in->kits);
     free(in->ui_hierarchy_src);
@@ -551,6 +557,34 @@ static int load_kit_any(dr32_instance *in, const char *path, dr32_preset_report 
         return 1;
     }
     return dr32_preset_load(&in->kit, path, rep);
+}
+
+/* What every kit load does once the pads are in place, synchronous or not.
+ * `read_ms` < 0: the load was synchronous and took `ms`; otherwise it was
+ * read on the worker in `read_ms` (and the caller logs what the apply cost). */
+static void kit_load_done(dr32_instance *in, const char *path, int ok,
+                          const dr32_preset_report *rep, double ms, double read_ms) {
+    char msg[DR32_MAX_PATH + 200];
+    if (ok) {
+        // Clear any previous error. Without this a single failed load stuck
+        // a "could not load kit" warning on the synth forever, including on
+        // every later re-entry into the module.
+        in->err[0] = '\0';
+        dr32_capture_baseline(in);
+        if (read_ms < 0)
+            snprintf(msg, sizeof(msg),
+                     "dr32: kit '%s' loaded in %.1f ms — %d pads, %d samples, %d empty, %d unresolved, %d failed",
+                     path, ms, rep->pads, rep->loaded, rep->empty, rep->unresolved, rep->failed);
+        else
+            snprintf(msg, sizeof(msg),
+                     "dr32: kit '%s' loaded — read in %.1f ms on the worker — "
+                     "%d pads, %d samples, %d empty, %d unresolved, %d failed",
+                     path, read_ms, rep->pads, rep->loaded, rep->empty, rep->unresolved, rep->failed);
+    } else {
+        snprintf(msg, sizeof(msg), "dr32: kit '%s' FAILED to load", path);
+        snprintf(in->err, sizeof(in->err), "could not load kit: %s", path);
+    }
+    logmsg(msg);
 }
 
 static void set_param(void *instance, const char *key, const char *val);
@@ -630,6 +664,9 @@ static void set_param(void *instance, const char *key, const char *val) {
         // Whether this is the kit we ALREADY hold, decided before the copy
         // below overwrites the incumbent -- comparing after it always says yes.
         int same_kit = (in->state_baseline && !strcmp(in->kit_path, val));
+        /* This load is the newest: a browser audition still being read on the
+         * worker must never land on top of it. */
+        dr32_kitjob_cancel(in->kj);
         /* Not for Init: its reset reads nothing, so there is nothing to save,
          * and a baseline replay cannot EMPTY a pad (an empty pad writes no
          * `sample` into the baseline) — a sample added since would survive. */
@@ -680,21 +717,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         int ok = load_kit_any(in, val, &rep);
         clock_gettime(CLOCK_MONOTONIC, &t1);
         double ms = (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
-        char msg[DR32_MAX_PATH + 200];
-        if (ok) {
-            // Clear any previous error. Without this a single failed load stuck
-            // a "could not load kit" warning on the synth forever, including on
-            // every later re-entry into the module.
-            in->err[0] = '\0';
-            dr32_capture_baseline(in);
-            snprintf(msg, sizeof(msg),
-                     "dr32: kit '%s' loaded in %.1f ms — %d pads, %d samples, %d empty, %d unresolved, %d failed",
-                     val, ms, rep.pads, rep.loaded, rep.empty, rep.unresolved, rep.failed);
-        } else {
-            snprintf(msg, sizeof(msg), "dr32: kit '%s' FAILED to load", val);
-            snprintf(in->err, sizeof(in->err), "could not load kit: %s", val);
-        }
-        logmsg(msg);
+        kit_load_done(in, val, ok, &rep, ms, -1.0);
         return;
     }
 
@@ -705,6 +728,7 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
     if (!strcmp(key, "kit_restore")) {
+        dr32_kitjob_cancel(in->kj);
         if (in->kit_saved[0] && strcmp(in->kit_saved, in->kit_path) != 0) {
             dr32_preset_report rep;
             char saved[DR32_MAX_PATH];
@@ -1026,6 +1050,10 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
 
     if (!strcmp(key, "kit") || !strcmp(key, "kit_move") || !strcmp(key, "kit_user"))
         return snprintf(buf, buf_len, "%s", in->kit_path);
+    /* 1 while the browser's audition is being read on the worker (posted, not
+     * yet applied or superseded). */
+    if (!strcmp(key, "kit_loading"))
+        return snprintf(buf, buf_len, "%d", dr32_kitjob_busy(in->kj));
     // The blob Schwung stores in the set's slot_N.json. Without this the host
     // has nothing to persist and a DR32 slot comes back empty after a reboot.
     // The baseline keeps the blob to the user's EDITS — see dr32_state.h for
@@ -1057,24 +1085,62 @@ static int get_error(void *instance, char *buf, int buf_len) {
  * one load instead of twenty, and the one it costs lands where the user has
  * stopped — which is also the only kit they actually asked to hear.
  *
- * ⚠ This does not make the load cheap, and it is not meant to: it makes it
- * happen ONCE. The cost is inherent — a kit parses a preset and reads up to 32
- * WAVs — and the decode memo already covers the repeat case.
+ * ⚠ Settling makes the load happen ONCE; the worker (dr32_kitjob.h) makes it
+ * happen OFF the callback. The cost is inherent — a kit parses a preset and
+ * reads up to 32 WAVs — and ran here, on the callback, until 2026-09-27: 8-83
+ * ms a load on the device. Now the audio thread only applies the result.
  *
  * ⚠ Serviced from render_block because that is the only thing that runs on a
- * clock. set_param and render_block are the same thread, so this does not move
- * the work off the callback; it removes the repetition.
+ * clock — and BOTH render paths call it (see move_plugin_render_split).
  */
 #define DR32_KIT_SETTLE_BLOCKS 60   /* ~174 ms at 2.902 ms/block */
 
 static void dr32_service_pending_kit(dr32_instance *in) {
+    /* A kit the worker has finished reading lands HERE, between blocks — the
+     * only moment the render is not reading the pads. The apply reads no file. */
+    dr32_kit_plan *plan = NULL;
+    char path[DR32_MAX_PATH];
+    double read_ms = 0.0;
+    if (dr32_kitjob_take(in->kj, &plan, path, (int)sizeof(path), &read_ms)) {
+        dr32_preset_report rep;
+        memset(&rep, 0, sizeof(rep));
+        struct timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        if (plan) {
+            in->kit.tap_pad = -1;                 /* see load_kit_any */
+            dr32_preset_apply(&in->kit, plan, &rep);
+            dr32_kit_plan_free(plan);
+            snprintf(in->kit_path, sizeof(in->kit_path), "%s", path);
+        }
+        /* Timed to the end of the bookkeeping: the baseline and the hierarchy
+         * are part of what this block pays. */
+        kit_load_done(in, path, plan != NULL, &rep, 0.0, read_ms);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        if (plan) {
+            char msg[96];
+            snprintf(msg, sizeof(msg), "dr32: kit apply cost %.2f ms on the audio thread",
+                     (t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_nsec - t0.tv_nsec) / 1e6);
+            logmsg(msg);
+        }
+    }
+
     if (in->kit_pending < 0) return;
     if (in->kit.block - in->kit_pending_at < DR32_KIT_SETTLE_BLOCKS) return;
 
-    int idx = in->kit_pending;
-    in->kit_pending = -1;
-    const char *path = dr32_kits_path(in->kits, in->kit_cat, idx);
-    if (path && path[0]) set_param(in, "kit", path);
+    const char *next = dr32_kits_path(in->kits, in->kit_cat, in->kit_pending);
+    if (!next || !next[0]) { in->kit_pending = -1; return; }
+    /* Init reads nothing, and the kit already loaded is a baseline replay with
+     * no disk read: both are cheap enough to do here and now. */
+    if (!strcmp(next, DR32_KIT_INIT_PATH) || !strcmp(next, in->kit_path)) {
+        in->kit_pending = -1;
+        set_param(in, "kit", next);
+        return;
+    }
+    int r = dr32_kitjob_post(in->kj, next, &in->kit);
+    if (r == 0) { in->kit_pending = -1; return; }
+    if (r == -1) return;                          /* lost a race: next block */
+    in->kit_pending = -1;                         /* no worker: load it here, as before */
+    set_param(in, "kit", next);
 }
 
 /* RESAMPLE's switch: a pad whose file is written starts playing it now, here,
