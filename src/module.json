@@ -274,7 +274,11 @@
               "step": 0.01,
               "unit": "s",
               "short_name": "HOLD",
-              "default": 0.3
+              "default": 0.3,
+              "viz": {
+                "group": "amp",
+                "role": "hold"
+              }
             },
             {
               "key": "env_mode",
@@ -282,7 +286,12 @@
               "type": "enum",
               "options": ["A-H-D", "A-S-R"],
               "short_name": "ENV",
-              "default": "A-H-D"
+              "default": "A-H-D",
+              "viz": {
+                "group": "amp",
+                "role": "mode",
+                "span": false
+              }
             },
             {
               "key": "cutoff",
