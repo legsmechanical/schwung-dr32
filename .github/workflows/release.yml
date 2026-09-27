@@ -30,6 +30,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ⚠ actions/checkout leaves the pushed tag as a LIGHTWEIGHT tag on the
+      #   commit, so `%(contents)` below read the COMMIT MESSAGE: v0.4.0 went
+      #   out with its last commit's text ("test_chowkick: render the short
+      #   last block short") as its release notes. Fetch the annotated tag
+      #   object itself, over the top.
+      - name: Fetch the annotated tag
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
