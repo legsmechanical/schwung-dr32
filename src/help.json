@@ -169,8 +169,9 @@
             " a modelled kick:",
             " pulse, body, noise",
             "FM",
-            " two-operator FM",
-            " drums, noise, claps",
+            " DR32's own FM:",
+            " Kick, Snare, Metal",
+            " and Perc engines",
             "",
             "Scroll to put a drum",
             "on the pad, click to",
@@ -440,6 +441,41 @@
         "back to a sample.",
         "Synth pads are kept",
         "in the Schwung set."
+      ]
+    },
+    {
+      "title": "Credits",
+      "lines": [
+        "Simian and Urchin:",
+        " Punk Labs' OneTrick",
+        " SIMIAN 2 and URCHIN",
+        " (GPL-3.0). If you",
+        " play them, buy them",
+        " at punklabs.com",
+        "",
+        "9W9, 6W6, 8W8, CW-78:",
+        " athousanddetails,",
+        " building on ER-99",
+        " (Matthew Cieplak),",
+        " AudioKit's 606",
+        " drums (Matthew",
+        " Fecher) and Sonic",
+        " Pi's sc808, after",
+        " Yoshinosuke",
+        " Horiuchi's SC-808",
+        "",
+        "ChowKick: Jatin",
+        " Chowdhury, of",
+        " Chowdhury DSP",
+        "",
+        "FM and the sampler:",
+        " DR32's own",
+        "",
+        "Schwung: Charles",
+        " Vestal",
+        "",
+        "Full list: NOTICES.md",
+        "in the DR32 repo."
       ]
     }
   ]

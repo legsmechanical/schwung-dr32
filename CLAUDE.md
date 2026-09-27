@@ -249,8 +249,9 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
 - `ui_engine` is the gate: the FOCUSED pad's engine, derived and read-only. It is in
   `chain_params` and on NO level (docs/MODULES.md, "The gate does not need a cell"). Every engine
   page is a pad level with `visible_if ui_engine == id`. Shape, Start/End and Punch are gated
-  `== 0`. **Needs host #533** for the pages to follow a pad press. On an older host every engine's
-  pages show at once, which is cluttered and never wrong.
+  `== 0`. **Needs host #533** for the pages to follow a pad press — in upstream 1.5.0, which is
+  DR32 0.4.0's `min_host_version` (with #520 for Resample's enterable page and #545 for the
+  envelope picture's A-H-D / A-S-R `mode` role).
 - DR32 owns the mix. Each engine's own Gain, Pan and reverb send are pinned, and a model's gain and
   pan become the pad's Volume and Pan. Velocity is the ENGINE's (SIMIAN's Vel Gain feeds its
   saturation; URCHIN's velocity is strike energy), so a model starts the pad's `vel_vol` at 0.
@@ -426,8 +427,9 @@ WAVs, plugin names/split/state/module dir).
 
 ## 🎛 The UI is the host's param-pages grid — DR32 ships no UI of its own (since 0.2.0, 2026-09-05)
 
-DR32 targets **upstream Schwung ≥ 1.2.0** (and needs **≥ 1.3.0** for its per-pad sends to reach
-the host's return buses at all). Every page — the 32 pads, the kit browser — is planned by the
+DR32 0.4.0 requires **upstream Schwung ≥ 1.5.0** (`min_host_version`): gated pages (#533),
+enterable canvas pages (#520) and the envelope `mode` role (#545). The per-pad sends have needed
+≥ 1.3.0 since 0.3. Every page — the 32 pads, the kit browser — is planned by the
 host from the hierarchy the DSP serves, using upstream's
 built-in pictures (envelope, filter curve, fader, switch, sample waveform + wave editor) and the
 1.2.0 drum-surface contract. The canvaskit Pad Editor (the OLD `canvas.js`) and the fork-only
@@ -664,7 +666,7 @@ boundary conditions. `tests/test_browser.c` uses it to drive the whole path the 
 list → `kit_cat` → `kit_count` → `kit_index` → settle → loaded), on **both** render entry points.
 
 ```sh
-export SCHWUNG_SRC=../schwung-current/.worktrees/v1.3.3   # the host DR32 actually targets
+export SCHWUNG_SRC=../schwung-current/.worktrees/v1.5.0   # the host DR32 actually targets
 tests/run.sh                     # 1. off-device suite; writes dist/tests/served_hierarchy.json
 node tools/pages_check.mjs       # 2. upstream's validator over the SERVED hierarchy; writes the fixture
 node "$SCHWUNG_SRC/tools/param-pages/preview.mjs" dr32 --all --layout movy \
@@ -672,9 +674,9 @@ node "$SCHWUNG_SRC/tools/param-pages/preview.mjs" dr32 --all --layout movy \
 ```
 
 ⚠ **`../schwung-current` itself is STALE at v1.2.0-16** — it is the upstream-PR home and its
-checkout belongs to whatever branch is being prepared there. DR32 targets 1.3.x, so point
+checkout belongs to whatever branch is being prepared there. DR32 targets 1.5.x, so point
 `SCHWUNG_SRC` at a worktree of the tag instead of switching that checkout:
-`git -C ../schwung-current worktree add --detach .worktrees/v1.3.3 v1.3.3`.
+`git -C ../schwung-current worktree add --detach .worktrees/v1.5.0 v1.5.0`.
 
 `tests/test_state.c` writes the hierarchy the plugin actually serves to
 `dist/tests/served_hierarchy.json`; `pages_check` reads THAT, not `module.json`, and writes a
