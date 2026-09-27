@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 extern plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host);
@@ -138,13 +139,17 @@ int main(void) {
         char v[8192];
         #define GET(k) (api->get_param(inst, (k), v, (int)sizeof v), v)
 
-        /* 1. The catalogue is INCREMENTAL and pumped from these very reads, so
-         *    the host's own shape — keep reading the page's keys — is what
-         *    finishes it. A bounded loop, because a walk that never terminates
-         *    is the failure this must not hang on. */
+        /* 1. The first read starts the catalogue's scan on its own thread and
+         *    shows Init alone; the host keeps reading the page's keys, and a
+         *    later read adopts the finished list. A bounded loop, because a
+         *    walk that never terminates is the failure this must not hang on. */
+        CHECK(strstr(GET("kit_cat_items"), "Hybrid") == NULL,
+              "the FIRST read already lists the tree — the scan ran on the reading thread: %.200s", v);
         int spins = 0;
-        while (strcmp(GET("kit_cat_items"), "[]") == 0 && ++spins < 100000) { }
-        CHECK(spins < 100000, "the category list never filled — the catalogue walk did not finish");
+        struct timespec ms = { 0, 1000000 };
+        while (strstr(GET("kit_cat_items"), "Hybrid") == NULL && ++spins < 10000)
+            nanosleep(&ms, NULL);
+        CHECK(spins < 10000, "the category list never filled — the catalogue walk did not finish");
         CHECK(strstr(GET("kit_cat_items"), "\"label\":\"Hybrid\"") != NULL,
               "category list has no Hybrid: %.200s", v);
 

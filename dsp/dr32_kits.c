@@ -1,9 +1,14 @@
-// dr32_kits.c — see dr32_kits.h for why this exists and why the scan is
-// incremental rather than a single pass.
+// dr32_kits.c — see dr32_kits.h for why this exists and why the scan runs on
+// its own thread.
+
+/* pthreads are POSIX, and the build is -std=c11. */
+#define _POSIX_C_SOURCE 200809L
 
 #include "dr32_kits.h"
 
 #include <dirent.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,18 +41,27 @@ typedef struct {
     int  cat;                       /* category inherited by everything below */
 } frame;
 
-struct dr32_kits {
+/* One catalogue: what the reads see. Immutable once published. */
+typedef struct {
     entry *v;
     int    n;
-
     char   cat_name[DR32_KIT_CATS][DR32_KIT_NAME_LEN];
     int    cat_n;
+} snap;
 
-    /* Walk state. `root` is which root we are on; -1 once finished. */
-    int    root;
-    frame  stack[DR32_KITS_WALK_MAX];
-    int    depth;
-    int    done;
+struct dr32_kits {
+    /* What the reads see. The AUDIO thread alone reads and moves it: `seed`
+     * (Init only) until the worker's catalogue is adopted, then that. */
+    const snap *cur;
+    int         ready;
+    snap        seed;
+    entry       seed_v[1];
+
+    /* worker -> audio, once: the finished catalogue. */
+    _Atomic(snap *) pub;
+    atomic_int      quit;
+    int             started;    /* the thread was created, so destroy joins it */
+    pthread_t       th;
 };
 
 /* ---------- small helpers ------------------------------------------------ */
@@ -93,7 +107,7 @@ static int is_drum_rack(const char *path) {
 }
 
 /** Index of `name` in the category table, appending it if new. -1 if full. */
-static int cat_intern(dr32_kits *c, const char *name) {
+static int cat_intern(snap *c, const char *name) {
     for (int i = 0; i < c->cat_n; i++)
         if (!strcmp(c->cat_name[i], name)) return i;
     if (c->cat_n >= DR32_KIT_CATS) return -1;
@@ -107,39 +121,115 @@ static int cmp_entry(const void *a, const void *b) {
     return strcasecmp(x->name, y->name);
 }
 
-/* ---------- the incremental walk ----------------------------------------- */
+/* ---------- the walk, on the worker thread ------------------------------- */
 
-static void walk_reset(dr32_kits *c) {
-    for (int i = 0; i < c->depth; i++)
-        if (c->stack[i].d) closedir(c->stack[i].d);
-    c->depth = 0;
-}
+typedef struct {
+    frame stack[DR32_KITS_WALK_MAX];
+    int   depth;
+} walk;
 
 /** Open `path` as the next frame. Silently ignored if it will not open or the
  *  stack is full — an unreadable folder is a folder with no kits in it, not an
  *  error worth failing the whole catalogue for. */
-static void walk_push(dr32_kits *c, const char *path, int cat) {
-    if (c->depth >= DR32_KITS_WALK_MAX) return;
+static void walk_push(walk *w, const char *path, int cat) {
+    if (w->depth >= DR32_KITS_WALK_MAX) return;
     DIR *d = opendir(path);
     if (!d) return;
-    frame *f = &c->stack[c->depth++];
+    frame *f = &w->stack[w->depth++];
     f->d = d;
     f->cat = cat;
     snprintf(f->path, sizeof(f->path), "%s", path);
 }
 
+/** Walk one root to the end, appending every drum rack under it to `s`.
+ *  Returns 0 if `quit` stopped it partway. */
+static int walk_root(snap *s, const char *root, int cat, atomic_int *quit) {
+    walk w = { .depth = 0 };
+    walk_push(&w, root, cat);
+    while (w.depth > 0) {
+        if (atomic_load(quit)) {
+            while (w.depth > 0) closedir(w.stack[--w.depth].d);
+            return 0;
+        }
+        frame *f = &w.stack[w.depth - 1];
+        struct dirent *e = readdir(f->d);
+        if (!e) { closedir(f->d); w.depth--; continue; }
+        if (e->d_name[0] == '.') continue;   /* dotfiles, . and .. */
+
+        char full[DR32_MAX_PATH];
+        if ((size_t)snprintf(full, sizeof(full), "%s/%s", f->path, e->d_name) >= sizeof(full))
+            continue;
+
+        struct stat st;
+        if (stat(full, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            /* Directly under the Core root, the folder NAMES the category and
+             * everything below it inherits that. Anywhere else the category is
+             * whatever the frame already carries. */
+            int sub = (f->cat < 0) ? cat_intern(s, e->d_name) : f->cat;
+            walk_push(&w, full, sub);
+            continue;
+        }
+        if (!S_ISREG(st.st_mode) || !is_preset_name(e->d_name)) continue;
+        if (s->n >= DR32_KITS_MAX) continue;
+        if (!is_drum_rack(full)) continue;
+
+        int ec = (f->cat < 0) ? cat_intern(s, CORE_LOOSE_CAT) : f->cat;
+        if (ec < 0) continue;                /* category table full */
+        entry *en = &s->v[s->n++];
+        snprintf(en->path, sizeof(en->path), "%s", full);
+        stem_of(full, en->name, sizeof(en->name));
+        en->cat = ec;
+    }
+    return 1;
+}
+
+/** The Init kit, FIRST: its category is interned before any folder's, and
+ *  categories show in the order they were interned. */
+static void seed_init(snap *s) {
+    int ic = cat_intern(s, DR32_KIT_INIT_CAT);
+    if (ic < 0 || s->n >= DR32_KITS_MAX) return;
+    entry *en = &s->v[s->n++];
+    snprintf(en->path, sizeof(en->path), "%s", DR32_KIT_INIT_PATH);
+    snprintf(en->name, sizeof(en->name), "%s", DR32_KIT_INIT_NAME);
+    en->cat = ic;
+}
+
+/** An empty category is never shown (dr32_kits.h) — but "My Kits" is interned
+ *  before its folder is opened, and a Core folder before its contents are
+ *  read, so both can end up holding nothing. Close the gaps, order kept. */
+static void drop_empty_cats(snap *s) {
+    int map[DR32_KIT_CATS], used[DR32_KIT_CATS] = {0}, n = 0;
+    for (int i = 0; i < s->n; i++) used[s->v[i].cat] = 1;
+    for (int k = 0; k < s->cat_n; k++) {
+        map[k] = used[k] ? n : -1;
+        if (used[k] && n != k) memcpy(s->cat_name[n], s->cat_name[k], DR32_KIT_NAME_LEN);
+        if (used[k]) n++;
+    }
+    for (int i = 0; i < s->n; i++) s->v[i].cat = map[s->v[i].cat];
+    s->cat_n = n;
+}
+
+static void snap_free(snap *s) {
+    if (!s) return;
+    free(s->v);
+    free(s);
+}
+
 /**
- * Begin the next root, or finish.
+ * The whole scan, start to finish, then ONE publish.
  *
  * ⭑ `DR32_KIT_ROOTS` overrides both roots with "<core>:<user>" so the catalogue
  * is TESTABLE. Without it the roots are two absolute /data paths that exist only
  * on the device, which meant the off-device tests could only poke at boundary
  * conditions — and a test written against an empty catalogue passes VACUOUSLY,
  * which is exactly how the deferred-audition test first "passed" while asserting
- * nothing. Unset in every real run; reading it costs one getenv at instance
- * creation.
+ * nothing. Unset in every real run.
  */
-static void walk_next_root(dr32_kits *c) {
+static void *kits_worker(void *arg) {
+    dr32_kits *c = (dr32_kits *)arg;
+
     const char *over = getenv("DR32_KIT_ROOTS");
     char core[DR32_MAX_PATH], user[DR32_MAX_PATH];
     const char *core_root = CORE_ROOT, *user_root = USER_ROOT;
@@ -154,128 +244,108 @@ static void walk_next_root(dr32_kits *c) {
             }
         }
     }
-    c->root++;
-    if (c->root == 0) {
-        /* The Init kit, FIRST: its category is interned before any folder's,
-         * and categories show in the order they were interned. Seeded on every
-         * rebuild, and there before the scan has found anything. */
-        int ic = cat_intern(c, DR32_KIT_INIT_CAT);
-        if (ic >= 0 && c->n < DR32_KITS_MAX) {
-            entry *en = &c->v[c->n++];
-            snprintf(en->path, sizeof(en->path), "%s", DR32_KIT_INIT_PATH);
-            snprintf(en->name, sizeof(en->name), "%s", DR32_KIT_INIT_NAME);
-            en->cat = ic;
-        }
-        walk_push(c, core_root, -1);        /* -1: category comes from the subfolder */
-    } else if (c->root == 1) {
-        walk_push(c, user_root, cat_intern(c, USER_CAT));
-    } else {
-        c->done = 1;
-        qsort(c->v, (size_t)c->n, sizeof(entry), cmp_entry);
+
+    snap *s = (snap *)calloc(1, sizeof(*s));
+    if (!s) return NULL;
+    s->v = (entry *)calloc(DR32_KITS_MAX, sizeof(entry));
+    if (!s->v) { free(s); return NULL; }
+
+    seed_init(s);
+    if (!walk_root(s, core_root, -1, &c->quit) ||        /* -1: category from the subfolder */
+        !walk_root(s, user_root, cat_intern(s, USER_CAT), &c->quit)) {
+        snap_free(s);
+        return NULL;
     }
+    drop_empty_cats(s);
+    qsort(s->v, (size_t)s->n, sizeof(entry), cmp_entry);
+    /* 768 slots were a ceiling, not a size: give the rest back. */
+    entry *fit = (entry *)realloc(s->v, (size_t)(s->n ? s->n : 1) * sizeof(entry));
+    if (fit) s->v = fit;
+
+    atomic_store_explicit(&c->pub, s, memory_order_release);
+    return NULL;
 }
 
-int dr32_kits_pump(dr32_kits *c, int budget) {
-    if (!c || c->done) return 1;
-    if (budget <= 0) budget = 1;
-
-    while (budget > 0) {
-        if (c->depth == 0) {
-            walk_next_root(c);
-            if (c->done) return 1;
-            if (c->depth == 0) continue;    /* that root does not exist */
-        }
-
-        frame *f = &c->stack[c->depth - 1];
-        struct dirent *e = readdir(f->d);
-        if (!e) {
-            closedir(f->d);
-            c->depth--;
-            continue;                        /* costs nothing; not charged */
-        }
-        if (e->d_name[0] == '.') continue;   /* dotfiles, . and .. */
-
-        char full[DR32_MAX_PATH];
-        if ((size_t)snprintf(full, sizeof(full), "%s/%s", f->path, e->d_name) >= sizeof(full))
-            continue;
-
-        struct stat st;
-        if (stat(full, &st) != 0) continue;
-        budget--;
-
-        if (S_ISDIR(st.st_mode)) {
-            /* Directly under the Core root, the folder NAMES the category and
-             * everything below it inherits that. Anywhere else the category is
-             * whatever the frame already carries. */
-            int cat = (f->cat < 0) ? cat_intern(c, e->d_name) : f->cat;
-            walk_push(c, full, cat);
-            continue;
-        }
-        if (!S_ISREG(st.st_mode) || !is_preset_name(e->d_name)) continue;
-        if (c->n >= DR32_KITS_MAX) continue;
-        if (!is_drum_rack(full)) continue;
-
-        int cat = (f->cat < 0) ? cat_intern(c, CORE_LOOSE_CAT) : f->cat;
-        if (cat < 0) continue;               /* category table full */
-        entry *en = &c->v[c->n++];
-        snprintf(en->path, sizeof(en->path), "%s", full);
-        stem_of(full, en->name, sizeof(en->name));
-        en->cat = cat;
-    }
-    return c->done;
-}
-
-/* ---------- lifecycle and reads ------------------------------------------ */
+/* ---------- lifecycle ----------------------------------------------------- */
 
 dr32_kits *dr32_kits_create(void) {
     dr32_kits *c = (dr32_kits *)calloc(1, sizeof(*c));
     if (!c) return NULL;
-    c->v = (entry *)calloc(DR32_KITS_MAX, sizeof(entry));
-    if (!c->v) { free(c); return NULL; }
-    c->root = -1;
+    /* Init is there before the scan has found anything, so the browser opens
+     * on a real list — and loading Init needs no scan at all. */
+    c->seed.v = c->seed_v;
+    snprintf(c->seed.cat_name[0], DR32_KIT_NAME_LEN, "%s", DR32_KIT_INIT_CAT);
+    c->seed.cat_n = 1;
+    snprintf(c->seed_v[0].path, sizeof(c->seed_v[0].path), "%s", DR32_KIT_INIT_PATH);
+    snprintf(c->seed_v[0].name, sizeof(c->seed_v[0].name), "%s", DR32_KIT_INIT_NAME);
+    c->seed.n = 1;
+    c->cur = &c->seed;
+    atomic_init(&c->pub, NULL);
+    atomic_init(&c->quit, 0);
     return c;
 }
 
 void dr32_kits_destroy(dr32_kits *c) {
     if (!c) return;
-    walk_reset(c);
-    free(c->v);
+    if (c->started) {
+        /* The walk checks this between entries, so the wait is one file. */
+        atomic_store(&c->quit, 1);
+        pthread_join(c->th, NULL);
+    }
+    /* Adopted or not, the published catalogue is freed here and only here. */
+    snap_free(atomic_load(&c->pub));
     free(c);
 }
 
-void dr32_kits_invalidate(dr32_kits *c) {
-    if (!c) return;
-    walk_reset(c);
-    c->n = 0;
-    c->cat_n = 0;
-    c->root = -1;
-    c->done = 0;
+int dr32_kits_poll(dr32_kits *c) {
+    if (!c) return 0;
+    if (c->ready) return 1;
+    if (!c->started) {
+        /* Once. If the thread cannot be made the browser shows Init alone —
+         * never the scan on this thread instead. */
+        c->started = 1;
+        if (pthread_create(&c->th, NULL, kits_worker, c) != 0) {
+            c->started = 0;
+            c->ready = 1;
+            return 1;
+        }
+        return 0;
+    }
+    snap *s = atomic_load_explicit(&c->pub, memory_order_acquire);
+    if (!s) return 0;
+    c->cur = s;
+    c->ready = 1;
+    return 1;
 }
 
-int dr32_kits_ready(const dr32_kits *c) { return c && c->done; }
+/* ---------- reads: the adopted catalogue, never disk ---------------------- */
 
-int dr32_kits_cat_count(const dr32_kits *c) { return c ? c->cat_n : 0; }
+int dr32_kits_ready(const dr32_kits *c) { return c && c->ready; }
+
+int dr32_kits_cat_count(const dr32_kits *c) { return c ? c->cur->cat_n : 0; }
 
 const char *dr32_kits_cat_name(const dr32_kits *c, int cat) {
-    if (!c || cat < 0 || cat >= c->cat_n) return "";
-    return c->cat_name[cat];
+    if (!c || cat < 0 || cat >= c->cur->cat_n) return "";
+    return c->cur->cat_name[cat];
 }
 
 int dr32_kits_count(const dr32_kits *c, int cat) {
     if (!c) return 0;
+    const snap *s = c->cur;
     int n = 0;
-    for (int i = 0; i < c->n; i++) if (c->v[i].cat == cat) n++;
+    for (int i = 0; i < s->n; i++) if (s->v[i].cat == cat) n++;
     return n;
 }
 
 /** The nth entry of a category, or NULL. The catalogue is sorted by (cat,name),
  *  so this is a short scan rather than an index — at ~152 entries that is
- *  cheaper than keeping a second table in step with the incremental fill. */
+ *  cheaper than keeping a second table. */
 static const entry *nth(const dr32_kits *c, int cat, int idx) {
     if (!c || idx < 0) return NULL;
-    for (int i = 0; i < c->n; i++) {
-        if (c->v[i].cat != cat) continue;
-        if (idx-- == 0) return &c->v[i];
+    const snap *s = c->cur;
+    for (int i = 0; i < s->n; i++) {
+        if (s->v[i].cat != cat) continue;
+        if (idx-- == 0) return &s->v[i];
     }
     return NULL;
 }
@@ -292,11 +362,12 @@ const char *dr32_kits_path(const dr32_kits *c, int cat, int idx) {
 
 int dr32_kits_locate(const dr32_kits *c, const char *path, int *cat, int *idx) {
     if (!c || !path || !path[0]) return -1;
-    for (int i = 0; i < c->n; i++) {
-        if (strcmp(c->v[i].path, path)) continue;
+    const snap *s = c->cur;
+    for (int i = 0; i < s->n; i++) {
+        if (strcmp(s->v[i].path, path)) continue;
         int k = 0;
-        for (int j = 0; j < i; j++) if (c->v[j].cat == c->v[i].cat) k++;
-        if (cat) *cat = c->v[i].cat;
+        for (int j = 0; j < i; j++) if (s->v[j].cat == s->v[i].cat) k++;
+        if (cat) *cat = s->v[i].cat;
         if (idx) *idx = k;
         return 0;
     }

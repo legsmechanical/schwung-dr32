@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <math.h>
 
 /* Exported by dsp/dr32.c; the plugin headers describe the struct, not the
@@ -566,9 +567,13 @@ int main(void) {
         CHECK(inst != NULL, "create_instance returned NULL");
         if (inst) {
             char before[512] = {0}, after[512] = {0};
-            /* Drive the catalogue to completion first. */
-            for (int i = 0; i < 200; i++) {
-                char c[64]; api->get_param(inst, "kit_count", c, (int)sizeof c);
+            /* Drive the catalogue to completion first: the reads start the
+             * scan on its own thread, and a later read adopts it. */
+            for (int i = 0; i < 5000; i++) {
+                char c[512]; api->get_param(inst, "kit_cat_items", c, (int)sizeof c);
+                if (strstr(c, "\"index\":1")) break;
+                struct timespec ms = { 0, 1000000 };
+                nanosleep(&ms, NULL);
             }
             /* Category 0 is the Init kit (one entry, no file): the fixture's
              * kits are in the first REAL category. */

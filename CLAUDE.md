@@ -143,8 +143,11 @@ Resample <canvas> Resample Pad · Resample Kit, dialogs in place  <- level `resa
 - **The Kits browser is DR32's own CATALOGUE, not the file browser** (`dsp/dr32_kits.h`). It
   filters by CONTENT, because the host's browser filters by extension and the user's preset tree
   holds every instrument's presets — 365 files, 75 drum racks, measured on the device. ⚠ The scan
-  is INCREMENTAL because `get_param` is on the SPI callback; do not make it a single pass, and do
-  not scan at `create_instance` either.
+  runs on its OWN THREAD, started by the browser's first read; every `get_param` only reads the
+  published catalogue. 🔴 It was once pumped from those reads, 24 entries a call "far inside the
+  ~900us budget" — measured on the device it was **10.6 ms a call** (cold storage: one fopen can
+  cost ms) and the first browser open dropped audio (2026-09-27). No per-call slice is safe, a
+  time-bounded one included. Do not scan at `create_instance` either.
 - ⭑ **LINK is ONE-SHOT PER PARAMETER, and off by default.** Arm it, sweep one knob — every pad
   takes that value — and the moment a DIFFERENT field is written it releases, with that write
   landing on the focused pad alone. Reaching for another knob IS the "done" signal, so the

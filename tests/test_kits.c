@@ -23,9 +23,9 @@
  * that only counted files would pass with that defect intact, so every fixture
  * below deliberately mixes drum racks with same-extension non-drum presets.
  *
- * The scan is INCREMENTAL because get_param runs on the SPI callback, so the
- * tests also drive it one small slice at a time — pumping with a budget of 1 is
- * the shape the device actually uses, just slower.
+ * The scan runs on its OWN THREAD because get_param runs on the SPI callback
+ * (a per-call slice measured 10 ms on the device). So the tests poll, as the
+ * browser's reads do, and wait for the worker between polls.
  */
 
 #include "../dsp/dr32_kits.h"
@@ -34,7 +34,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 static int failures = 0, checks = 0;
@@ -64,6 +66,17 @@ static void write_preset(const char *path, int drum) {
     fclose(f);
 }
 
+/** Poll until the worker's catalogue is adopted, as the browser's reads do,
+ *  sleeping between polls. Bounded: a walk that never finishes must FAIL. */
+static int wait_ready(dr32_kits *c) {
+    struct timespec ms = { 0, 1000000 };
+    for (int i = 0; i < 10000; i++) {
+        if (dr32_kits_poll(c)) return 1;
+        nanosleep(&ms, NULL);
+    }
+    return 0;
+}
+
 static void rm_rf(const char *path) {
     DIR *d = opendir(path);
     if (d) {
@@ -82,41 +95,95 @@ static void rm_rf(const char *path) {
 }
 
 int main(void) {
-    /* dr32_kits.c hard-codes the two real roots, so this test drives the parts
-     * that do not depend on them plus a locate/ordering check over a built
-     * catalogue. The ROOTS themselves are only exercisable on the device; the
-     * device pass is what covers them. */
+    /* The real roots (nothing at those paths off the device): the parts that
+     * do not depend on what the tree holds. */
+    unsetenv("DR32_KIT_ROOTS");
     dr32_kits *c = dr32_kits_create();
     CHECK(c != NULL, "create returned NULL");
     if (!c) return 1;
 
-    /* An empty machine must not hang the pump or invent categories. */
-    int guard = 0;
-    while (!dr32_kits_pump(c, 8) && ++guard < 100000) { }
-    CHECK(guard < 100000, "pump never completed — the walk does not terminate");
-    CHECK(dr32_kits_ready(c), "ready() false after the pump completed");
+    /* Before any poll: Init alone, and not ready — "not found" must not be
+     * mistaken for "not in the catalogue" yet. */
+    CHECK(!dr32_kits_ready(c), "ready() before the scan was even started");
+    CHECK(dr32_kits_cat_count(c) == 1 && !strcmp(dr32_kits_cat_name(c, 0), "Init"),
+          "before the scan the categories are not exactly Init");
+    CHECK(!strcmp(dr32_kits_path(c, 0, 0), DR32_KIT_INIT_PATH), "Init's path is '%s'",
+          dr32_kits_path(c, 0, 0));
 
-    /* Whatever this build host has (almost certainly nothing at those paths),
-     * the accessors must be total: no crash, no out-of-range read. */
+    /* An empty machine must not hang the worker or invent categories. */
+    CHECK(wait_ready(c), "the scan never completed — the walk does not terminate");
+    CHECK(dr32_kits_cat_count(c) == 1, "an empty tree produced %d categories, want 1 (Init)",
+          dr32_kits_cat_count(c));
+
+    /* The accessors must be total: no crash, no out-of-range read. */
     CHECK(dr32_kits_count(c, 999) == 0, "count of a nonexistent category is not 0");
     CHECK(dr32_kits_name(c, 0, 99999)[0] == '\0', "name past the end is not empty");
     CHECK(dr32_kits_path(c, 0, -1)[0] == '\0', "path at a negative index is not empty");
     CHECK(dr32_kits_cat_name(c, -1)[0] == '\0', "cat_name at -1 is not empty");
     CHECK(dr32_kits_locate(c, "", NULL, NULL) != 0, "locate of an empty path succeeded");
     CHECK(dr32_kits_locate(c, "/nope/nope.json", NULL, NULL) != 0, "locate of a missing path succeeded");
-
-    /* Pumping a finished catalogue stays finished and stays cheap. */
-    CHECK(dr32_kits_pump(c, 1) == 1, "pump on a complete catalogue did not return 1");
-
-    /* Invalidate must genuinely reset, not just clear the flag. */
-    dr32_kits_invalidate(c);
-    CHECK(!dr32_kits_ready(c), "still ready() after invalidate");
-    CHECK(dr32_kits_cat_count(c) == 0, "categories survived invalidate");
-    guard = 0;
-    while (!dr32_kits_pump(c, 8) && ++guard < 100000) { }
-    CHECK(dr32_kits_ready(c), "did not complete after invalidate");
-
+    CHECK(dr32_kits_poll(c) == 1, "poll on a complete catalogue did not return 1");
     dr32_kits_destroy(c);
+
+    /* ---- a real tree: the reads never wait on the scan ---- */
+    {
+        char tmpl[] = "/tmp/dr32kitsXXXXXX";
+        char *dir = mkdtemp(tmpl);
+        CHECK(dir != NULL, "mkdtemp failed");
+        if (dir) {
+            char core[1024], user[1024], sub[1040], p[1100], roots[2100];
+            snprintf(core, sizeof core, "%s/core", dir);
+            snprintf(user, sizeof user, "%s/user", dir);
+            snprintf(sub, sizeof sub, "%s/Acoustic", core);
+            mkdir(core, 0755); mkdir(user, 0755); mkdir(sub, 0755);
+            /* Enough files that the walk takes real time behind the reads. */
+            for (int i = 0; i < 300; i++) {
+                snprintf(p, sizeof p, "%s/%s %03d.json", i % 2 ? sub : user,
+                         i % 3 ? "Kit" : "Bass", i);
+                write_preset(p, i % 3 != 0);
+            }
+            snprintf(roots, sizeof roots, "%s:%s", core, user);
+            setenv("DR32_KIT_ROOTS", roots, 1);
+
+            c = dr32_kits_create();
+            /* The first poll STARTS the worker and returns at once: whatever
+             * the tree holds, this read sees Init alone. The old shape did the
+             * walking right here, on the caller's thread. */
+            CHECK(dr32_kits_poll(c) == 0, "the first poll reported a finished catalogue");
+            CHECK(dr32_kits_cat_count(c) == 1, "mid-scan the reads see %d categories, want 1 (Init)",
+                  dr32_kits_cat_count(c));
+            CHECK(wait_ready(c), "the scan of the fixture tree never completed");
+            int want_core = 0, want_user = 0;
+            for (int i = 0; i < 300; i++)
+                if (i % 3 != 0) { if (i % 2) want_core++; else want_user++; }
+            CHECK(dr32_kits_cat_count(c) == 3, "%d categories, want 3 (Init, Acoustic, My Kits)",
+                  dr32_kits_cat_count(c));
+            CHECK(!strcmp(dr32_kits_cat_name(c, 0), "Init"), "Init is not first");
+            CHECK(dr32_kits_count(c, 1) == want_core, "Acoustic holds %d, want %d",
+                  dr32_kits_count(c, 1), want_core);
+            CHECK(dr32_kits_count(c, 2) == want_user, "My Kits holds %d, want %d",
+                  dr32_kits_count(c, 2), want_user);
+            /* Sorted by name within the category, and locate agrees. */
+            int sorted = 1;
+            for (int i = 1; i < dr32_kits_count(c, 1); i++)
+                if (strcasecmp(dr32_kits_name(c, 1, i - 1), dr32_kits_name(c, 1, i)) > 0) sorted = 0;
+            CHECK(sorted, "a category is not sorted by name");
+            int lc = -1, li = -1;
+            CHECK(dr32_kits_locate(c, dr32_kits_path(c, 2, 5), &lc, &li) == 0 && lc == 2 && li == 5,
+                  "locate of My Kits #5 gave %d/%d", lc, li);
+            dr32_kits_destroy(c);
+
+            /* Destroyed MID-SCAN: the worker is told to stop and joined, and
+             * nothing it built leaks into a freed instance. */
+            c = dr32_kits_create();
+            dr32_kits_poll(c);
+            dr32_kits_destroy(c);
+            CHECK(1, "destroy mid-scan returned");
+
+            unsetenv("DR32_KIT_ROOTS");
+            rm_rf(dir);
+        }
+    }
 
     /* ---- the content filter, which is the point of the whole file ---- */
     char tmpl[] = "/tmp/dr32kitsXXXXXX";

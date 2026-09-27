@@ -67,8 +67,8 @@ typedef struct {
     char    *state_baseline;
 
     /* The kit catalogue behind the two-level Kits browser, and where the
-     * browser's cursor currently sits. Built incrementally — see dr32_kits.h
-     * for why a single-pass scan is not a legal shape here. */
+     * browser's cursor currently sits. Scanned on its own thread — see
+     * dr32_kits.h for why no scan on this thread is a legal shape. */
     dr32_kits *kits;
     int        kit_cat;      /* category the browser is showing */
     int        kit_idx;      /* entry within that category */
@@ -446,9 +446,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     /* Where 9W9 finds its cymbal WAVs. Only the path is kept here: the PCM is
      * decoded when a 9W9 model is first picked, never on the SPI callback. */
     dr32_engines_set_module_dir(module_dir);
-    /* Empty, and NOT scanned here: create_instance is on the SPI callback too,
-     * so walking ~442 files at this point would stall the load. The catalogue
-     * fills in from the browser's own reads — see get_param. */
+    /* Empty, and NOT scanned yet: most instances never open the browser. The
+     * browser's first read starts the scan on its own thread — see get_param. */
     in->kits = dr32_kits_create();
     in->kit_pending = -1;
     in->rs = dr32_rs_job_create(DR32_RS_DIR);
@@ -981,19 +980,17 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     if (!strcmp(key, "voice_send_params"))
         return snprintf(buf, buf_len, "[\"{id}_send_a\",\"{id}_send_b\"]");
     /*
-     * The Kits browser's reads. Every one of these PUMPS the catalogue a little
-     * first: the host polls this page (count -> index -> name, one read per
-     * tick), so its own polling drives the scan to completion over a few dozen
-     * ticks while the user is looking at the page. A budget of 24 entries keeps
-     * any single call far inside the ~900us SPI budget; scanning all ~442 files
-     * in one call would drop frames, which is the whole reason the catalogue is
-     * incremental. Once complete, pump() returns immediately.
+     * The Kits browser's reads. The first one STARTS the catalogue's scan on
+     * its own thread, and each later one adopts the result once it is there
+     * (dr32_kits.h: the scan used to be pumped from these reads, 24 entries a
+     * call, and that measured 10 ms a call on the device). Until then the
+     * list is Init alone; the host keeps polling, so it fills in on screen.
      */
     if (!strncmp(key, "kit_", 4) &&
         (!strcmp(key, "kit_cat_items") || !strcmp(key, "kit_cat") ||
          !strcmp(key, "kit_count") || !strcmp(key, "kit_index") ||
          !strcmp(key, "kit_name"))) {
-        dr32_kits_pump(in->kits, 24);
+        dr32_kits_poll(in->kits);
         /* Once the scan finishes, point the cursor at the kit that is actually
          * loaded. Otherwise the browser opens at entry 0 and the first detent
          * loads something the user did not ask for — on a page that auditions

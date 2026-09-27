@@ -10,14 +10,18 @@
 // cell listed all 365 and 290 of them could not load. A catalogue can filter by
 // CONTENT, which the browser structurally cannot.
 //
-// ⚠⚠ THE SCAN IS INCREMENTAL, AND THAT IS NOT AN OPTIMISATION — IT IS THE ONLY
-// LEGAL SHAPE. `get_param` runs on the SPI callback with a ~900us budget
-// (docs/REALTIME_SAFETY.md), and REALTIME_SAFETY names "get_param that rescans
-// a directory" as a known way modules blow it. Scanning ~442 files in one call
-// would drop frames. So `dr32_kits_pump` does a BOUNDED slice per call and the
-// host's own polling drives it to completion over a few dozen ticks: the preset
-// page reads count -> index -> name round-robin, one read per tick, so the list
-// fills in while the user is still looking at it.
+// ⚠⚠ THE SCAN RUNS ON ITS OWN THREAD, AND THAT IS NOT AN OPTIMISATION — IT IS
+// THE ONLY LEGAL SHAPE. `get_param` runs on the SPI callback with a ~900us
+// budget (docs/REALTIME_SAFETY.md), which names "get_param that rescans a
+// directory" as a known way modules blow it. This was first an INCREMENTAL scan
+// pumped from those reads, 24 entries a call, on the premise that 24 entries
+// fit the budget. On the device it did not: the first browser open logged
+// `param-slow: get ... synth:kit_count took 10.597 ms on the SPI callback`
+// (2026-09-27) and dropped audio. Cold storage makes one fopen cost
+// milliseconds, so NO per-call slice is safe — a time-bounded one included.
+// So the first read starts a worker that walks the whole tree and publishes the
+// finished catalogue once; every read only looks at what is already published.
+// Until then the list is Init alone, and `dr32_kits_ready` is 0.
 //
 // ⭑ Identifying a drum rack costs ONE 1 KB READ. Measured across all 75 user
 // drum racks: the `drumZoneSettings` / `drumRack` marker sits between byte 452
@@ -52,18 +56,15 @@ typedef struct dr32_kits dr32_kits;
 dr32_kits *dr32_kits_create(void);
 void       dr32_kits_destroy(dr32_kits *c);
 
-/** Do a BOUNDED slice of the scan. `budget` is how many directory entries may
- *  be examined, which is what costs — a file's 1 KB probe is the expensive
- *  part. Returns 1 once the catalogue is complete, 0 while still working.
- *  Cheap and safe to call every time a browser param is read. */
-int  dr32_kits_pump(dr32_kits *c, int budget);
+/** Start the scan if it has not started, adopt its catalogue if it has
+ *  finished. Returns dr32_kits_ready(). Never touches disk: cheap and safe to
+ *  call on every browser read (the audio thread). Every read below must be on
+ *  that SAME thread — the adopt is not locked against them. */
+int  dr32_kits_poll(dr32_kits *c);
 
-/** 1 once the whole tree has been walked. */
+/** 1 once the whole tree has been walked and adopted. Before that the
+ *  catalogue is Init alone, and "not found" may mean "not scanned yet". */
 int  dr32_kits_ready(const dr32_kits *c);
-
-/** Throw the catalogue away so the next pump rebuilds it — after a kit is
- *  saved or deleted, where the on-disk set has genuinely changed. */
-void dr32_kits_invalidate(dr32_kits *c);
 
 /** Categories that actually contain kits, in display order. `cat` is an index
  *  into THAT list, not into the fixed table — an empty category is never shown,
