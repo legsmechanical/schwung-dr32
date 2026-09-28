@@ -31,7 +31,7 @@ the way it opens. Scrolling the list auditions what you land on, so you can hear
 category. The kit is read in the background, so auditioning never interrupts the rest of your set.
 
 **Per-pad sound editing**, the way the hardware does it: playback region, transpose and detune,
-choke groups, two envelope modes (Trigger and Gate, as on Move's Drum Sampler), four filter types, velocity response, pan,
+choke groups, two envelope modes (Trigger and Gate, as on Move's Drum Sampler) with envelope knobs weighted for fine short times, four filter types, velocity response, pan,
 level and Punch. Pad names follow the sample, so the header tells you which drum you're on, and the
 PAD knob shows the pad's number in large type. Drums are seated by the note that plays them, so the
 number you see is the pad you hit.
