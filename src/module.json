@@ -371,7 +371,7 @@
               "default": 0
             }
           ],
-          "knobs": ["attack", "decay", "hold", "env_mode", "cutoff", "resonance", "peak_db", "filter_type", "filter_on"],
+          "knobs": ["attack", "hold", "decay", "env_mode", "cutoff", "resonance", "peak_db", "filter_type", "filter_on"],
           "child_key_overrides": {
             "ui_current_pad": "ui_current_pad"
           },
