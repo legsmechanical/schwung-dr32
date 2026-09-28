@@ -24,6 +24,18 @@ Master   MASTR
 Resample <canvas> Resample Pad · Resample Kit, dialogs in place  <- level `resample` (src/resample.js)
 ```
 
+- ⭑ **ATK / HOLD / DCY are CURVED knobs** (Josh, 2026-09-28: *"i want the knob movement to feel
+  the same, i just want more precision before about 12 oclock"*). The host steps every float knob
+  by 0.005 of its range per detent (knob_engine.mjs, both hosts) and has no curve field, so the
+  knob keys are `atk_knob` / `hold_knob` / `dcy_knob`, 0..1 POSITIONS, and `dr32_params.c`
+  (`knob_to_sec`) maps them to seconds with `noon` exactly at 12 o'clock (Hold/Decay 1 s, Attack
+  100 ms — tune there). They are VIEWS, like `peak_db`: `attack`/`hold`/`decay` (seconds) are
+  what the engine reads, `state` saves, Copy copies and the .ablpreset carries. The host would
+  print the position, so each knob declares a `card_script` (`src/env_card.js`) that prints the
+  time while it is turned. ⚠ The card carries a COPY of the curve (no getParam on the card path);
+  `tools/check_env_knobs.mjs` holds it to a table `test_state.c` writes from the C one. The card
+  fields live INLINE only — the served chain_params must stay the host's fallback
+  (check_chain_params).
 - ⭑ **Resample** (Josh, 2026-09-22; his screen spec, verbatim, heads `_worklogs/dr32-resample-spec.md`
   in the workspace). ONE page, last after Master — Josh rejected a second (dialog) page in the
   rotation, and host changes ("no host changes"). `resample` is an `as_page` + `enterable` canvas (a

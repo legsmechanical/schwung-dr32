@@ -217,7 +217,10 @@ picking one sets the pad to Trigger with Hold at Inf. Turn Hold down on Shape fo
   <tr><td>START · END</td><td>Playback region, drawn over the waveform. Sample pads only.</td></tr>
   <tr><td>TRSP · DETN</td><td>Transpose in semitones, detune in cents.</td></tr>
   <tr><td>CHOKE</td><td>Choke group. Pads sharing a group cut each other off.</td></tr>
-  <tr><td>ATTACK · HOLD · DECAY</td><td>The amp envelope (the Shape page, sample pads only).</td></tr>
+  <tr><td>ATTACK · HOLD · DECAY</td><td>The amp envelope (the Shape page, sample pads only). The
+      knobs are weighted for short times: the first half of each turn covers up to 1 s (Hold,
+      Decay) or 100 ms (Attack), in fine steps, and the rest reaches the long end. Hold turned
+      fully up is Inf.</td></tr>
   <tr><td>ENV</td><td>Trigger or Gate, as on Move's Drum Sampler. Trigger plays through
       attack, hold and decay whatever the note length; Gate holds the sound while the pad is held,
       then decays. The envelope picture follows it: in Gate, Hold does nothing, and the picture

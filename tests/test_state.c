@@ -674,6 +674,75 @@ int main(void) {
         CHECK(strstr(blob, "env_mode") == NULL, "an unedited env_mode was written into the delta: %s", blob);
     }
 
+    /* ---- The envelope KNOBS: 0..1 positions on a curve, views of seconds --
+     * Same travel as a linear knob, the short times in the first half. The
+     * seconds keys stay the truth: they are what is saved. */
+    {
+        dr32_kit a; dr32_kit_init(&a);
+        occupy(&a, 0, "/k.wav");
+        char v[64];
+        const char *knob[] = { "pad1_atk_knob", "pad1_hold_knob", "pad1_dcy_knob" };
+        const char *sec[]  = { "pad1_attack",   "pad1_hold",      "pad1_decay" };
+        const double lo[] = { 0.0001, 0.001, 0.001 }, hi[] = { 20, 60, 60 }, noon[] = { 0.1, 1.0, 1.0 };
+        for (int i = 0; i < 3; i++) {
+            dr32_apply_param(&a, knob[i], "0");   rd(&a, sec[i], v, sizeof v);
+            CHECK(fabs(atof(v) - lo[i]) < 1e-9, "%s 0 -> %s s, want %g", knob[i], v, lo[i]);
+            dr32_apply_param(&a, knob[i], "0.5"); rd(&a, sec[i], v, sizeof v);
+            CHECK(fabs(atof(v) - noon[i]) < 1e-4 * noon[i], "%s at noon -> %s s, want %g", knob[i], v, noon[i]);
+            dr32_apply_param(&a, knob[i], "1");   rd(&a, sec[i], v, sizeof v);
+            CHECK(atof(v) == hi[i], "%s 1 -> %s s, want exactly %g", knob[i], v, hi[i]);
+            /* monotonic, and a position reads back as itself (4 decimals) */
+            double prev = -1;
+            for (int s = 0; s <= 10000; s += 5) {
+                char in[16]; snprintf(in, sizeof in, "%.4f", s / 10000.0);
+                dr32_apply_param(&a, knob[i], in);
+                rd(&a, sec[i], v, sizeof v);
+                double t = atof(v);
+                if (!(t >= prev)) { CHECK(0, "%s is not monotonic at %s", knob[i], in); break; }
+                prev = t;
+                rd(&a, knob[i], v, sizeof v);
+                if (strcmp(v, in)) { CHECK(0, "%s wrote %s, read back %s", knob[i], in, v); break; }
+            }
+            /* a seconds value from a kit shows as its position */
+            char s5[32]; snprintf(s5, sizeof s5, "%g", noon[i]);
+            dr32_apply_param(&a, sec[i], s5); rd(&a, knob[i], v, sizeof v);
+            CHECK(!strcmp(v, "0.5000"), "%s = %s s should read as noon, got %s", sec[i], s5, v);
+        }
+        /* The precision this is for: Decay near 50 ms moves in a few ms per
+         * detent (the host's detent is 0.005 of the range). */
+        dr32_apply_param(&a, "pad1_decay", "0.05");
+        rd(&a, "pad1_dcy_knob", v, sizeof v);
+        char nx[16]; snprintf(nx, sizeof nx, "%.4f", atof(v) + 0.005);
+        dr32_apply_param(&a, "pad1_dcy_knob", nx);
+        rd(&a, "pad1_decay", v, sizeof v);
+        CHECK(atof(v) - 0.05 < 0.004, "one detent from 50 ms moved Decay to %s s", v);
+
+        /* Views are never saved: only seconds keys go in the blob. */
+        dr32_apply_param(&a, "pad1_hold_knob", "0.25");
+        CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob), NULL) > 0, "knobs: write failed");
+        CHECK(strstr(blob, "_knob") == NULL, "a knob key was persisted: %s", blob);
+        CHECK(strstr(blob, "\"pad1_hold\"") != NULL, "Hold (seconds) was not persisted");
+
+        /* The table the card's copy of the curve is held to
+         * (tools/check_env_knobs.mjs). */
+        FILE *f = fopen("dist/tests/env_knobs.json", "w");
+        if (f) {
+            fputs("{", f);
+            for (int i = 0; i < 3; i++) {
+                fprintf(f, "%s\"%s\":[", i ? "," : "", knob[i] + 5);
+                for (int s = 0; s <= 200; s++) {
+                    char in[16]; snprintf(in, sizeof in, "%.4f", s / 200.0);
+                    dr32_apply_param(&a, knob[i], in);
+                    rd(&a, sec[i], v, sizeof v);
+                    fprintf(f, "%s[%s,%s]", s ? "," : "", in, v);
+                }
+                fputs("]", f);
+            }
+            fputs("}\n", f);
+            fclose(f);
+        }
+    }
+
     printf("%s  (%d checks, %d failures)\n", failures ? "FAILED" : "ok", checks, failures);
     return failures ? 1 : 0;
 }

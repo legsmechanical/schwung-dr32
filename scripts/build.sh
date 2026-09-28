@@ -209,6 +209,10 @@ cp src/resample.js  "dist/${MODULE_ID}/"
 # module root because ui_current_pad declares viz.kind "custom:padnum". Without
 # it the cell falls back to the host's small number (correct, just small).
 cp src/canvas.js    "dist/${MODULE_ID}/"
+# The Attack / Hold / Decay knobs' card: those knobs are 0..1 positions on a
+# curve, and this prints the TIME while one is turned (their card_script).
+# Without it the host's card shows the bare position.
+cp src/env_card.js  "dist/${MODULE_ID}/"
 # ...and the host only loads canvas.js if the chain_params it reads FROM THE
 # PLUGIN declares the custom kind: dsp.so serves this file (the host's own
 # fallback list plus that one viz; tools/check_chain_params.mjs proves it).
