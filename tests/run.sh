@@ -51,6 +51,8 @@ node tools/check_browser_nav.mjs >/dev/null || { node tools/check_browser_nav.mj
 # The Resample dialog (src/resample.js), driven the way the host drives an
 # entered canvas page: jog/click as CCs, Back, drawPage with its extra_keys.
 node tools/check_resample_page.mjs || fail=1
+# The envelope knobs' card prints the DSP's curve from its own copy (see the tool).
+node tools/check_env_knobs.mjs || fail=1
 
 # build.sh's two-pass shape: the outer pass must not fall through past its
 # `docker run`, or every line below the guard silently runs twice on the same

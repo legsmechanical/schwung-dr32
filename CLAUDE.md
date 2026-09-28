@@ -16,7 +16,7 @@ loads fine, logs nothing, menu does nothing.
 Category <items>   Init · Acoustic · Electronic · Hybrid · My Kits   <- first bank
   Kit    <preset>  a flat list of just that category
 Pad      PAD   ENGN  STRT  END   TRSP  DETN  CHOKE VOL    <- level `pads` (STRT/END: samples)
-Shape    ATK   DCY   HOLD  ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (samples only)
+Shape    ATK   HOLD  DCY   ENV   CUT   RES   TYPE  FILT   <- level `pad_shape` (samples only)
 <engine> the synth voice's pages, gated on ui_engine      <- levels `eng_*` (generated)
 Mix      VVOL  VOL   PAN   LINK  SNDA  SNDB  PUNCH PTIME  <- level `pad_mix`
 Stereo   WMODE WIDE  WFREQ                              <- level `pad_stereo`
@@ -24,6 +24,18 @@ Master   MASTR
 Resample <canvas> Resample Pad · Resample Kit, dialogs in place  <- level `resample` (src/resample.js)
 ```
 
+- ⭑ **ATK / HOLD / DCY are CURVED knobs** (Josh, 2026-09-28: *"i want the knob movement to feel
+  the same, i just want more precision before about 12 oclock"*). The host steps every float knob
+  by 0.005 of its range per detent (knob_engine.mjs, both hosts) and has no curve field, so the
+  knob keys are `atk_knob` / `hold_knob` / `dcy_knob`, 0..1 POSITIONS, and `dr32_params.c`
+  (`knob_to_sec`) maps them to seconds with `noon` exactly at 12 o'clock (Hold/Decay 1 s, Attack
+  100 ms — tune there). They are VIEWS, like `peak_db`: `attack`/`hold`/`decay` (seconds) are
+  what the engine reads, `state` saves, Copy copies and the .ablpreset carries. The host would
+  print the position, so each knob declares a `card_script` (`src/env_card.js`) that prints the
+  time while it is turned. ⚠ The card carries a COPY of the curve (no getParam on the card path);
+  `tools/check_env_knobs.mjs` holds it to a table `test_state.c` writes from the C one. The card
+  fields live INLINE only — the served chain_params must stay the host's fallback
+  (check_chain_params).
 - ⭑ **Resample** (Josh, 2026-09-22; his screen spec, verbatim, heads `_worklogs/dr32-resample-spec.md`
   in the workspace). ONE page, last after Master — Josh rejected a second (dialog) page in the
   rotation, and host changes ("no host changes"). `resample` is an `as_page` + `enterable` canvas (a
@@ -133,7 +145,7 @@ Resample <canvas> Resample Pad · Resample Kit, dialogs in place  <- level `resa
   cannot rely on the host's measurer. `check_browser_nav` §13 pins it.
 - **A PICKED SAMPLE PLAYS WHOLE** (Josh, 2026-09-23: *"if you pick a sample to put on a pad, you
   should hear the whole sample when you tap the pad by default"*). `browser.js` `audition()` writes
-  `env_mode = A-H-D` and `hold = 60` (Inf) after every `sample` write, replacing what the pad had.
+  `env_mode = Trigger` and `hold = 60` (Inf) after every `sample` write, replacing what the pad had.
   ⚠ In the UI, NOT the DSP's `sample` write: state restore replays through that write and the blob
   is a delta, so a user's Hold equal to the baseline would never be saved and would restore as Inf.
 - **DR32 opens EMPTY** (Josh, 2026-09-09). No default kit — it used to load the 707.
@@ -251,7 +263,7 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
   page is a pad level with `visible_if ui_engine == id`. Shape, Start/End and Punch are gated
   `== 0`. **Needs host #533** for the pages to follow a pad press — in upstream 1.5.0, which is
   DR32 0.4.0's `min_host_version` (with #520 for Resample's enterable page and #545 for the
-  envelope picture's A-H-D / A-S-R `mode` role).
+  envelope picture's `mode` role: Trigger / Gate, Move's names; stored as A-H-D / A-S-R).
 - DR32 owns the mix. Each engine's own Gain, Pan and reverb send are pinned, and a model's gain and
   pan become the pad's Volume and Pan. Velocity is the ENGINE's (SIMIAN's Vel Gain feeds its
   saturation; URCHIN's velocity is strike energy), so a model starts the pad's `vel_vol` at 0.

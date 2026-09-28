@@ -176,12 +176,12 @@ check('clicking .. goes up, same as Back', here(), '/data/CoreLibrary/Samples');
 cursorTo('Drums/'); navRight(); cursorTo('Kicks/'); navRight();
 check('non-audio is not listed', rows().join(','), '..,kick1.wav,kick2.wav');
 params.pad3_sample = '';
-params.pad3_env_mode = 'A-S-R';
+params.pad3_env_mode = 'Gate';
 params.pad3_hold = '0.3';
 cursorTo('kick1.wav');
 check('the scroll loaded the pad', params.pad3_sample, '/data/CoreLibrary/Samples/Drums/Kicks/kick1.wav');
-/* A picked sample plays whole: A-H-D, Hold Inf (60 = DR32_HOLD_MAX). */
-check('a picked sample sets A-H-D', params.pad3_env_mode, 'A-H-D');
+/* A picked sample plays whole: Trigger, Hold Inf (60 = DR32_HOLD_MAX). */
+check('a picked sample sets Trigger', params.pad3_env_mode, 'Trigger');
 check('…and Hold Inf', params.pad3_hold, '60');
 params.pad3_hold = '0.3';
 cursorTo('kick2.wav');

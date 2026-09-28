@@ -623,6 +623,126 @@ int main(void) {
         sh("rm -rf /tmp/dr32_kr");
     }
 
+    /* ---- The envelope mode: Move's names on screen, A-H-D / A-S-R stored --
+     * get_param answers Trigger / Gate (the ENV cell and the picture's `mode`
+     * role read it); set_param takes either spelling and the index; the blob
+     * keeps the .ablpreset spelling, so an older DR32 still restores it. */
+    {
+        dr32_kit a; dr32_kit_init(&a);
+        occupy(&a, 0, "/k.wav"); occupy(&a, 1, "/s.wav");
+        char v[64];
+        rd(&a, "pad1_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Trigger"), "a fresh pad should read Trigger, got '%s'", v);
+        const char *in[]   = { "Gate", "Trigger", "A-S-R", "A-H-D", "1", "0", NULL };
+        const char *want[] = { "Gate", "Trigger", "Gate",  "Trigger", "Gate", "Trigger" };
+        for (int i = 0; in[i]; i++) {
+            dr32_apply_param(&a, "pad1_env_mode", in[i]);
+            rd(&a, "pad1_env_mode", v, sizeof v);
+            CHECK(!strcmp(v, want[i]), "env_mode '%s' read back '%s', want '%s'", in[i], v, want[i]);
+        }
+
+        dr32_apply_param(&a, "pad1_env_mode", "Gate");
+        dr32_apply_param(&a, "pad2_env_mode", "Trigger");
+        CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob), NULL) > 0, "env: write failed");
+        CHECK(strstr(blob, "\"pad1_env_mode\":\"A-S-R\"") != NULL, "Gate should be STORED as A-S-R");
+        CHECK(strstr(blob, "\"pad2_env_mode\":\"A-H-D\"") != NULL, "Trigger should be STORED as A-H-D");
+        CHECK(strstr(blob, "Gate") == NULL && strstr(blob, "Trigger") == NULL,
+              "the screen names leaked into the blob");
+
+        dr32_kit b; dr32_kit_init(&b);
+        occupy(&b, 0, "x"); occupy(&b, 1, "x");
+        CHECK(dr32_state_read(&b, blob, NULL, NULL) == 1, "env: state_read rejected its own output");
+        rd(&b, "pad1_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Gate"), "A-S-R restored as '%s', want Gate", v);
+        rd(&b, "pad2_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Trigger"), "A-H-D restored as '%s', want Trigger", v);
+
+        /* A blob written with the screen names (by hand, or a future writer)
+         * restores too. */
+        dr32_kit c; dr32_kit_init(&c);
+        occupy(&c, 0, "x");
+        CHECK(dr32_state_read(&c, "{\"v\":2,\"kit\":\"\",\"params\":{\"pad1_env_mode\":\"Gate\"}}",
+                              NULL, NULL) == 1, "env: a Gate blob was rejected");
+        rd(&c, "pad1_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Gate"), "a stored 'Gate' restored as '%s'", v);
+
+        /* The baseline is written by the same code, so an unedited mode is
+         * still left out of the delta. */
+        static char base[65536];
+        CHECK(dr32_state_write(&a, "/k.ablpreset", base, (int)sizeof(base), NULL) > 0, "env: baseline");
+        CHECK(dr32_state_write(&a, "/k.ablpreset", blob, (int)sizeof(blob), base) > 0, "env: delta");
+        CHECK(strstr(blob, "env_mode") == NULL, "an unedited env_mode was written into the delta: %s", blob);
+    }
+
+    /* ---- The envelope KNOBS: 0..1 positions on a curve, views of seconds --
+     * Same travel as a linear knob, the short times in the first half. The
+     * seconds keys stay the truth: they are what is saved. */
+    {
+        dr32_kit a; dr32_kit_init(&a);
+        occupy(&a, 0, "/k.wav");
+        char v[64];
+        const char *knob[] = { "pad1_atk_knob", "pad1_hold_knob", "pad1_dcy_knob" };
+        const char *sec[]  = { "pad1_attack",   "pad1_hold",      "pad1_decay" };
+        const double lo[] = { 0.0001, 0.001, 0.001 }, hi[] = { 20, 60, 60 }, noon[] = { 0.1, 1.0, 1.0 };
+        for (int i = 0; i < 3; i++) {
+            dr32_apply_param(&a, knob[i], "0");   rd(&a, sec[i], v, sizeof v);
+            CHECK(fabs(atof(v) - lo[i]) < 1e-9, "%s 0 -> %s s, want %g", knob[i], v, lo[i]);
+            dr32_apply_param(&a, knob[i], "0.5"); rd(&a, sec[i], v, sizeof v);
+            CHECK(fabs(atof(v) - noon[i]) < 1e-4 * noon[i], "%s at noon -> %s s, want %g", knob[i], v, noon[i]);
+            dr32_apply_param(&a, knob[i], "1");   rd(&a, sec[i], v, sizeof v);
+            CHECK(atof(v) == hi[i], "%s 1 -> %s s, want exactly %g", knob[i], v, hi[i]);
+            /* monotonic, and a position reads back as itself (4 decimals) */
+            double prev = -1;
+            for (int s = 0; s <= 10000; s += 5) {
+                char in[16]; snprintf(in, sizeof in, "%.4f", s / 10000.0);
+                dr32_apply_param(&a, knob[i], in);
+                rd(&a, sec[i], v, sizeof v);
+                double t = atof(v);
+                if (!(t >= prev)) { CHECK(0, "%s is not monotonic at %s", knob[i], in); break; }
+                prev = t;
+                rd(&a, knob[i], v, sizeof v);
+                if (strcmp(v, in)) { CHECK(0, "%s wrote %s, read back %s", knob[i], in, v); break; }
+            }
+            /* a seconds value from a kit shows as its position */
+            char s5[32]; snprintf(s5, sizeof s5, "%g", noon[i]);
+            dr32_apply_param(&a, sec[i], s5); rd(&a, knob[i], v, sizeof v);
+            CHECK(!strcmp(v, "0.5000"), "%s = %s s should read as noon, got %s", sec[i], s5, v);
+        }
+        /* The precision this is for: Decay near 50 ms moves in a few ms per
+         * detent (the host's detent is 0.005 of the range). */
+        dr32_apply_param(&a, "pad1_decay", "0.05");
+        rd(&a, "pad1_dcy_knob", v, sizeof v);
+        char nx[16]; snprintf(nx, sizeof nx, "%.4f", atof(v) + 0.005);
+        dr32_apply_param(&a, "pad1_dcy_knob", nx);
+        rd(&a, "pad1_decay", v, sizeof v);
+        CHECK(atof(v) - 0.05 < 0.004, "one detent from 50 ms moved Decay to %s s", v);
+
+        /* Views are never saved: only seconds keys go in the blob. */
+        dr32_apply_param(&a, "pad1_hold_knob", "0.25");
+        CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob), NULL) > 0, "knobs: write failed");
+        CHECK(strstr(blob, "_knob") == NULL, "a knob key was persisted: %s", blob);
+        CHECK(strstr(blob, "\"pad1_hold\"") != NULL, "Hold (seconds) was not persisted");
+
+        /* The table the card's copy of the curve is held to
+         * (tools/check_env_knobs.mjs). */
+        FILE *f = fopen("dist/tests/env_knobs.json", "w");
+        if (f) {
+            fputs("{", f);
+            for (int i = 0; i < 3; i++) {
+                fprintf(f, "%s\"%s\":[", i ? "," : "", knob[i] + 5);
+                for (int s = 0; s <= 200; s++) {
+                    char in[16]; snprintf(in, sizeof in, "%.4f", s / 200.0);
+                    dr32_apply_param(&a, knob[i], in);
+                    rd(&a, sec[i], v, sizeof v);
+                    fprintf(f, "%s[%s,%s]", s ? "," : "", in, v);
+                }
+                fputs("]", f);
+            }
+            fputs("}\n", f);
+            fclose(f);
+        }
+    }
+
     printf("%s  (%d checks, %d failures)\n", failures ? "FAILED" : "ok", checks, failures);
     return failures ? 1 : 0;
 }

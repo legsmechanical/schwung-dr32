@@ -214,6 +214,37 @@ int main(int argc, char **argv) {
         remove(kp);
     }
 
+    // ---- Voice_Envelope_Mode: Move writes "A-H-D" / "A-S-R"; the screen
+    // reads Trigger / Gate. A pad with no mode is Trigger (Move's default).
+    {
+        const char *kp = "/tmp/dr32_env_kit.json";
+        FILE *f = fopen(kp, "wb");
+        if (f) {
+            const char *modes[] = { "\"A-H-D\"", "\"A-S-R\"", NULL };
+            fputs("{\"kind\":\"drumRack\",\"chains\":[", f);
+            for (int i = 0; i < 3; i++) {
+                fprintf(f, "%s{\"drumZoneSettings\":{\"receivingNote\":%d},\"devices\":[{\"kind\":\"drumCell\","
+                           "\"parameters\":{", i ? "," : "", 36 + i);
+                if (modes[i]) fprintf(f, "\"Voice_Envelope_Mode\":%s", modes[i]);
+                fputs("}}]}", f);
+            }
+            fputs("]}", f);
+            fclose(f);
+        }
+        dr32_kit kit;
+        dr32_kit_init(&kit);
+        CHECK(dr32_preset_load(&kit, kp, NULL), "env: kit loaded");
+        const char *want[] = { "Trigger", "Gate", "Trigger" };
+        for (int i = 0; i < 3; i++) {
+            char key[32], v[32] = "";
+            snprintf(key, sizeof key, "pad%d_env_mode", i + 1);
+            dr32_read_param(&kit, key, v, sizeof v);
+            CHECK(!strcmp(v, want[i]), "env: pad %d reads '%s', want '%s'", i + 1, v, want[i]);
+        }
+        dr32_kit_free(&kit);
+        remove(kp);
+    }
+
     // ---- a missing / wrong file must fail cleanly
     {
         dr32_kit kit;

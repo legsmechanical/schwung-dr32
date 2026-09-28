@@ -66,6 +66,50 @@ static int split_pad_key(const dr32_kit *k, const char *key, const char **rest) 
     return (idx >= 0 && idx < DR32_PADS) ? idx : -1;
 }
 
+/*
+ * The envelope KNOBS: `atk_knob`, `hold_knob`, `dcy_knob`, each 0..1.
+ *
+ * Josh, 2026-09-28: "i want the knob movement to feel the same, i just want
+ * more precision before about 12 oclock". The host steps every float knob by
+ * the same fraction of its range per detent and a module cannot change that,
+ * so the knob is a POSITION and the time is a curve of it. Same detents end
+ * to end; the first half of the sweep holds the short times.
+ *
+ *     t(p) = lo + (hi - lo) * (r^p - 1) / (r - 1),   sqrt(r) = (hi-lo)/(noon-lo) - 1
+ *
+ * which puts `noon` exactly at p = 0.5, lo at 0 and hi at 1. Tune the feel by
+ * the noon values alone. ⚠ src/canvas.js carries the SAME curve to print the
+ * seconds on the knob's card; tests/test_state.c writes a table of this one
+ * and tools/check_env_knobs.mjs holds the card to it.
+ *
+ * ⚠ Same rule as peak_db: the knob keys are VIEWS. attack/hold/decay (seconds)
+ * are what the engine reads, what `state` saves and what the .ablpreset
+ * carries; a knob key is never persisted.
+ */
+typedef struct { double lo, hi, noon; } env_knob;
+static const env_knob ATK_KNOB  = { DR32_ATTACK_MIN, DR32_ATTACK_MAX, 0.1 };
+static const env_knob HOLD_KNOB = { DR32_HOLD_MIN,   DR32_HOLD_MAX,   1.0 };
+static const env_knob DCY_KNOB  = { DR32_DECAY_MIN,  DR32_DECAY_MAX,  1.0 };
+
+static double knob_r(const env_knob *k) {
+    double s = (k->hi - k->lo) / (k->noon - k->lo) - 1.0;
+    return s * s;
+}
+
+static float knob_to_sec(const env_knob *k, float pos) {
+    if (!(pos > 0.0f)) return (float)k->lo;
+    if (pos >= 1.0f) return (float)k->hi;           /* exact: Hold's top is Inf */
+    double r = knob_r(k);
+    return (float)(k->lo + (k->hi - k->lo) * (pow(r, pos) - 1.0) / (r - 1.0));
+}
+
+static float sec_to_knob(const env_knob *k, float t) {
+    if (!(t > k->lo)) return 0.0f;
+    if (t >= k->hi) return 1.0f;
+    double r = knob_r(k);
+    return (float)(log(1.0 + (t - k->lo) * (r - 1.0) / (k->hi - k->lo)) / log(r));
+}
+
 static int parse_filter_type(const char *v) {
     // The JSON's own spellings, measured on device. Accept the numeric form too
     // so the UI can send either.
@@ -265,8 +309,7 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "attack"))      return snprintf(buf, buf_len, "%g", (double)p->attack);
         if (!strcmp(sub, "hold"))        return snprintf(buf, buf_len, "%g", (double)p->hold);
         if (!strcmp(sub, "decay"))       return snprintf(buf, buf_len, "%g", (double)p->decay);
-        if (!strcmp(sub, "env_mode"))    return snprintf(buf, buf_len, "%s",
-                                                        p->env_mode == DR32_ENV_ASR ? "A-S-R" : "A-H-D");
+        if (!strcmp(sub, "env_mode"))    return snprintf(buf, buf_len, "%s", dr32_env_mode_label(p->env_mode));
         if (!strcmp(sub, "filter_on"))   return snprintf(buf, buf_len, "%d", p->filter_on);
         if (!strcmp(sub, "filter_type")) return snprintf(buf, buf_len, "%s", filter_type_name(p->filter_type));
         if (!strcmp(sub, "cutoff"))      return snprintf(buf, buf_len, "%g", (double)p->cutoff);
@@ -288,6 +331,11 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * is flat rather than 0. The Move's range is -12..+12 dB (Josh, from
          * the device), i.e. 0.25119 .. 3.98107.
          */
+        /* %.4f: the host writes a float knob with 4 decimals at this step,
+         * so a read never shows float noise the knob would then step from. */
+        if (!strcmp(sub, "atk_knob"))  return snprintf(buf, buf_len, "%.4f", (double)sec_to_knob(&ATK_KNOB,  p->attack));
+        if (!strcmp(sub, "hold_knob")) return snprintf(buf, buf_len, "%.4f", (double)sec_to_knob(&HOLD_KNOB, p->hold));
+        if (!strcmp(sub, "dcy_knob"))  return snprintf(buf, buf_len, "%.4f", (double)sec_to_knob(&DCY_KNOB,  p->decay));
         if (!strcmp(sub, "peak_db")) {
             float g = p->peak_gain > 1e-6f ? p->peak_gain : 1e-6f;
             return snprintf(buf, buf_len, "%g", (double)(20.0f * log10f(g)));
@@ -435,14 +483,16 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         else if (!strcmp(sub, "attack"))        p->attack = f;
         else if (!strcmp(sub, "hold"))          p->hold = f;
         else if (!strcmp(sub, "decay"))         p->decay = f;
-        else if (!strcmp(sub, "env_mode"))      p->env_mode = (!strcmp(val, "A-S-R") || atoi(val) == 1)
-                                                              ? DR32_ENV_ASR : DR32_ENV_AHD;
+        else if (!strcmp(sub, "env_mode"))      p->env_mode = dr32_env_mode_parse(val);
         else if (!strcmp(sub, "filter_on"))     p->filter_on = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "filter_type"))   p->filter_type = (dr32_filter_type)parse_filter_type(val);
         else if (!strcmp(sub, "cutoff"))        p->cutoff = f;
         else if (!strcmp(sub, "resonance"))     p->resonance = f;
         else if (!strcmp(sub, "peak_gain"))     p->peak_gain = f;
         else if (!strcmp(sub, "peak_db"))       p->peak_gain = powf(10.0f, f / 20.0f);
+        else if (!strcmp(sub, "atk_knob"))      p->attack = knob_to_sec(&ATK_KNOB,  f);
+        else if (!strcmp(sub, "hold_knob"))     p->hold   = knob_to_sec(&HOLD_KNOB, f);
+        else if (!strcmp(sub, "dcy_knob"))      p->decay  = knob_to_sec(&DCY_KNOB,  f);
         else if (!strcmp(sub, "mod_target"))    p->mod_target = (dr32_mod_target)parse_mod_target(val);
         else if (!strcmp(sub, "mod_amount"))    p->mod_amount = f;
         else if (!strcmp(sub, "pitch_env"))     p->pitch_to_env = atoi(val) ? 1 : 0;
