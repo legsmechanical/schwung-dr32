@@ -1,6 +1,7 @@
 #include "dr32_voice.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define DR32_PI 3.14159265358979323846f
@@ -41,6 +42,15 @@ void dr32_pad_defaults(dr32_pad *p) {
 
 /** The engine's rational approximation of tan(pi*f/fs) — NOT a call to tanf().
  *  Keeping the approximation (and its error) is part of matching the sound. */
+dr32_env_mode dr32_env_mode_parse(const char *v) {
+    if (!v) return DR32_ENV_AHD;
+    if (!strcmp(v, "Gate") || !strcmp(v, "A-S-R") || atoi(v) == 1) return DR32_ENV_ASR;
+    return DR32_ENV_AHD;
+}
+
+const char *dr32_env_mode_label(dr32_env_mode m)  { return m == DR32_ENV_ASR ? "Gate"  : "Trigger"; }
+const char *dr32_env_mode_stored(dr32_env_mode m) { return m == DR32_ENV_ASR ? "A-S-R" : "A-H-D"; }
+
 float dr32_filter_g(float cutoff_hz) {
     float f = cutoff_hz;
     if (f < DR32_CUTOFF_MIN) f = DR32_CUTOFF_MIN;

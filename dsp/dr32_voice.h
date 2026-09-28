@@ -19,10 +19,18 @@
 
 #define DR32_SR 44100.0f
 
-/** Voice_Envelope_Mode. A-H-D = manual's "Trigger" (ignores note-off);
+/** Voice_Envelope_Mode. A-H-D = Move's "Trigger" (ignores note-off);
  *  A-S-R = "Gate" (sustains while held). Matches the engine's 2-value
  *  envelope_mode dimension in the 320-kernel specialization index. */
 typedef enum { DR32_ENV_AHD = 0, DR32_ENV_ASR = 1 } dr32_env_mode;
+
+/** Two spellings of one value. The screen shows Move's names, Trigger / Gate;
+ *  the .ablpreset and DR32's saved state store "A-H-D" / "A-S-R", so a blob
+ *  written now still restores on an older DR32. The parser takes either, and
+ *  the index 0/1. */
+dr32_env_mode dr32_env_mode_parse(const char *v);
+const char   *dr32_env_mode_label(dr32_env_mode m);    /* "Trigger" | "Gate" */
+const char   *dr32_env_mode_stored(dr32_env_mode m);   /* "A-H-D" | "A-S-R" */
 
 /** Filter type. NUMBERING MATCHES THE NATIVE ENGINE's filter_type field
  *  (DRUM_FILTER_RECON.md) — 0 LP12, 1 LP24, 2 HP24, 3 Peak. Note this is NOT

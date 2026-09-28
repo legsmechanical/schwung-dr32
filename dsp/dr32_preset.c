@@ -289,7 +289,7 @@ dr32_kit_plan *dr32_preset_prepare(const char *path, const dr32_pad_stamp *held,
         pad->pitch_to_env  = dr32_json_bool(p, "Voice_PitchToEnvelopeModulation", 0);
 
         const char *mode = dr32_json_str(p, "Voice_Envelope_Mode", "A-H-D");
-        pad->env_mode = (mode && !strcmp(mode, "A-S-R")) ? DR32_ENV_ASR : DR32_ENV_AHD;
+        pad->env_mode = dr32_env_mode_parse(mode);
         pad->filter_type = filter_from_name(dr32_json_str(p, "Voice_Filter_Type", "Lowpass"));
         pad->mod_target  = mod_from_name(dr32_json_str(p, "Voice_ModulationTarget", "Filter"));
 

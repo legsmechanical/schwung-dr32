@@ -152,7 +152,7 @@ has no interface of its own. Every page below is Schwung's own knob grid.</p>
 <span class="pg">Category</span>Init &middot; Acoustic &middot; Electronic &middot; Hybrid &middot; My Kits<br>
 <span class="pg dim">&nbsp;&nbsp;Kit</span><span class="dim">the kits in that category</span><br>
 <span class="pg">Pad</span>PAD&nbsp;&nbsp;&nbsp;&nbsp;ENGN&nbsp;&nbsp;&nbsp;STRT&nbsp;&nbsp;&nbsp;END&nbsp;&nbsp;&nbsp;&nbsp;TRSP&nbsp;&nbsp;DETN&nbsp;&nbsp;CHOKE&nbsp;&nbsp;VOL<br>
-<span class="pg">Shape</span>ATK&nbsp;&nbsp;&nbsp;&nbsp;DCY&nbsp;&nbsp;&nbsp;&nbsp;HOLD&nbsp;&nbsp;ENV&nbsp;&nbsp;&nbsp;&nbsp;CUT&nbsp;&nbsp;&nbsp;RES&nbsp;&nbsp;&nbsp;TYPE&nbsp;&nbsp;&nbsp;FILT&nbsp;&nbsp;<span class="dim">(sample pads)</span><br>
+<span class="pg">Shape</span>ATK&nbsp;&nbsp;&nbsp;&nbsp;HOLD&nbsp;&nbsp;DCY&nbsp;&nbsp;&nbsp;&nbsp;ENV&nbsp;&nbsp;&nbsp;&nbsp;CUT&nbsp;&nbsp;&nbsp;RES&nbsp;&nbsp;&nbsp;TYPE&nbsp;&nbsp;&nbsp;FILT&nbsp;&nbsp;<span class="dim">(sample pads)</span><br>
 <span class="pg dim">&nbsp;&nbsp;Engine</span><span class="dim">the synth drum's own pages, in place of Shape &nbsp;(synth pads)</span><br>
 <span class="pg">Mix</span>VVOL&nbsp;&nbsp;&nbsp;VOL&nbsp;&nbsp;&nbsp;&nbsp;PAN&nbsp;&nbsp;&nbsp;LINK&nbsp;&nbsp;&nbsp;SNDA&nbsp;&nbsp;SNDB&nbsp;&nbsp;PUNCH&nbsp;&nbsp;PTIME<br>
 <span class="pg">Stereo</span>WMODE&nbsp;&nbsp;WIDE&nbsp;&nbsp;&nbsp;WFREQ&nbsp;&nbsp;TIME&nbsp;&nbsp;&nbsp;COMP&nbsp;&nbsp;&nbsp;LATE<br>
@@ -209,7 +209,7 @@ it and close.</p>
 
 <p>On a sample pad, ENGN opens in the folder its sample came from, with the cursor on it, so you
 can step through neighbouring samples by ear. A sample you pick <strong>plays to its end</strong>:
-picking one sets the pad to A-H-D with Hold at Inf. Turn Hold down on Shape for a shorter hit.</p>
+picking one sets the pad to Trigger with Hold at Inf. Turn Hold down on Shape for a shorter hit.</p>
 
 <h3>Shaping</h3>
 
@@ -217,9 +217,11 @@ picking one sets the pad to A-H-D with Hold at Inf. Turn Hold down on Shape for 
   <tr><td>START · END</td><td>Playback region, drawn over the waveform. Sample pads only.</td></tr>
   <tr><td>TRSP · DETN</td><td>Transpose in semitones, detune in cents.</td></tr>
   <tr><td>CHOKE</td><td>Choke group. Pads sharing a group cut each other off.</td></tr>
-  <tr><td>ATTACK · DECAY · HOLD</td><td>The amp envelope (the Shape page, sample pads only).</td></tr>
-  <tr><td>ENV</td><td>A-H-D or A-S-R. The envelope picture follows it: in A-S-R, Hold does
-      nothing, and the picture shows a sustain instead.</td></tr>
+  <tr><td>ATTACK · HOLD · DECAY</td><td>The amp envelope (the Shape page, sample pads only).</td></tr>
+  <tr><td>ENV</td><td>Trigger or Gate, as on Move's Drum Sampler. Trigger plays through
+      attack, hold and decay whatever the note length; Gate holds the sound while the pad is held,
+      then decays. The envelope picture follows it: in Gate, Hold does nothing, and the picture
+      shows a sustain instead.</td></tr>
   <tr><td>CUT · RES · TYPE</td><td>Filter, four types, with FILT as its on/off switch.</td></tr>
   <tr><td>VELVOL</td><td>How much velocity affects level.</td></tr>
   <tr><td>VOL · PAN</td><td>Per-pad level and position.</td></tr>

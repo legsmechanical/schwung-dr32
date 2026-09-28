@@ -155,6 +155,13 @@ static int emit_param(const dr32_kit *kit, const char *key,
     int len = dr32_read_param(kit, key, val, (int)sizeof(val));
     if (len <= 0 || !val[0]) return n;
 
+    /* The envelope mode READS as Move's screen name (Trigger / Gate) but is
+     * STORED as the .ablpreset spells it (A-H-D / A-S-R): a blob stays
+     * readable by an older DR32, and matches a baseline written by one. */
+    size_t kl = strlen(key);
+    if (kl >= 9 && !strcmp(key + kl - 9, "_env_mode"))
+        snprintf(val, sizeof(val), "%s", dr32_env_mode_stored(dr32_env_mode_parse(val)));
+
     if (baseline) {
         const dr32_json *m = baseline_find(baseline, cursor, key);
         const char *base = (m && m->type == DR32_JSON_STRING) ? m->str : NULL;

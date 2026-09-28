@@ -284,9 +284,9 @@
               "key": "env_mode",
               "name": "Envelope",
               "type": "enum",
-              "options": ["A-H-D", "A-S-R"],
+              "options": ["Trigger", "Gate"],
               "short_name": "ENV",
-              "default": "A-H-D",
+              "default": "Trigger",
               "viz": {
                 "group": "amp",
                 "role": "mode",

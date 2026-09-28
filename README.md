@@ -31,7 +31,7 @@ the way it opens. Scrolling the list auditions what you land on, so you can hear
 category. The kit is read in the background, so auditioning never interrupts the rest of your set.
 
 **Per-pad sound editing**, the way the hardware does it: playback region, transpose and detune,
-choke groups, two envelope modes (A-H-D and A-S-R), four filter types, velocity response, pan,
+choke groups, two envelope modes (Trigger and Gate, as on Move's Drum Sampler), four filter types, velocity response, pan,
 level and Punch. Pad names follow the sample, so the header tells you which drum you're on, and the
 PAD knob shows the pad's number in large type. Drums are seated by the note that plays them, so the
 number you see is the pad you hit.
@@ -79,7 +79,7 @@ puts it back on the pad, level-matched. **Resample Kit** does every synth pad at
 **Sample swapping without leaving the page.** On a sample pad, **ENGN** opens straight into the folder
 that pad's sample came from, with the cursor on it. Scrolling puts each sample on the pad as you land
 on it, so you can hit the pad to hear the next snare along, and clicking one takes it and closes. A
-sample you pick plays to its end (A-H-D with Hold at Inf); turn Hold down for a shorter hit.
+sample you pick plays to its end (Trigger with Hold at Inf); turn Hold down for a shorter hit.
 
 **Route pads to their own buses, with their own effects.** DR32 publishes all 32 pads to Schwung's
 **module bus** framework, so the host can group any subset of them onto a bus that renders into its
@@ -146,7 +146,7 @@ the device too, under Module Help.
 
 - 🔴 **Browsing kits has no undo.** Moving the cursor loads what you land on, and the kit you were on
   is gone. Save your work before you go shopping.
-- **A sample you pick plays to its end.** Picking one sets the pad's envelope to A-H-D with Hold at
+- **A sample you pick plays to its end.** Picking one sets the pad's envelope to Trigger with Hold at
   Inf, so a tap plays the whole file. Turn Hold down on the Shape page for a shorter hit.
 - **Pads 17–32 sit outside Move's 4×4 pad map**, so the small map in the header doesn't light for
   them.

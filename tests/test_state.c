@@ -623,6 +623,57 @@ int main(void) {
         sh("rm -rf /tmp/dr32_kr");
     }
 
+    /* ---- The envelope mode: Move's names on screen, A-H-D / A-S-R stored --
+     * get_param answers Trigger / Gate (the ENV cell and the picture's `mode`
+     * role read it); set_param takes either spelling and the index; the blob
+     * keeps the .ablpreset spelling, so an older DR32 still restores it. */
+    {
+        dr32_kit a; dr32_kit_init(&a);
+        occupy(&a, 0, "/k.wav"); occupy(&a, 1, "/s.wav");
+        char v[64];
+        rd(&a, "pad1_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Trigger"), "a fresh pad should read Trigger, got '%s'", v);
+        const char *in[]   = { "Gate", "Trigger", "A-S-R", "A-H-D", "1", "0", NULL };
+        const char *want[] = { "Gate", "Trigger", "Gate",  "Trigger", "Gate", "Trigger" };
+        for (int i = 0; in[i]; i++) {
+            dr32_apply_param(&a, "pad1_env_mode", in[i]);
+            rd(&a, "pad1_env_mode", v, sizeof v);
+            CHECK(!strcmp(v, want[i]), "env_mode '%s' read back '%s', want '%s'", in[i], v, want[i]);
+        }
+
+        dr32_apply_param(&a, "pad1_env_mode", "Gate");
+        dr32_apply_param(&a, "pad2_env_mode", "Trigger");
+        CHECK(dr32_state_write(&a, "", blob, (int)sizeof(blob), NULL) > 0, "env: write failed");
+        CHECK(strstr(blob, "\"pad1_env_mode\":\"A-S-R\"") != NULL, "Gate should be STORED as A-S-R");
+        CHECK(strstr(blob, "\"pad2_env_mode\":\"A-H-D\"") != NULL, "Trigger should be STORED as A-H-D");
+        CHECK(strstr(blob, "Gate") == NULL && strstr(blob, "Trigger") == NULL,
+              "the screen names leaked into the blob");
+
+        dr32_kit b; dr32_kit_init(&b);
+        occupy(&b, 0, "x"); occupy(&b, 1, "x");
+        CHECK(dr32_state_read(&b, blob, NULL, NULL) == 1, "env: state_read rejected its own output");
+        rd(&b, "pad1_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Gate"), "A-S-R restored as '%s', want Gate", v);
+        rd(&b, "pad2_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Trigger"), "A-H-D restored as '%s', want Trigger", v);
+
+        /* A blob written with the screen names (by hand, or a future writer)
+         * restores too. */
+        dr32_kit c; dr32_kit_init(&c);
+        occupy(&c, 0, "x");
+        CHECK(dr32_state_read(&c, "{\"v\":2,\"kit\":\"\",\"params\":{\"pad1_env_mode\":\"Gate\"}}",
+                              NULL, NULL) == 1, "env: a Gate blob was rejected");
+        rd(&c, "pad1_env_mode", v, sizeof v);
+        CHECK(!strcmp(v, "Gate"), "a stored 'Gate' restored as '%s'", v);
+
+        /* The baseline is written by the same code, so an unedited mode is
+         * still left out of the delta. */
+        static char base[65536];
+        CHECK(dr32_state_write(&a, "/k.ablpreset", base, (int)sizeof(base), NULL) > 0, "env: baseline");
+        CHECK(dr32_state_write(&a, "/k.ablpreset", blob, (int)sizeof(blob), base) > 0, "env: delta");
+        CHECK(strstr(blob, "env_mode") == NULL, "an unedited env_mode was written into the delta: %s", blob);
+    }
+
     printf("%s  (%d checks, %d failures)\n", failures ? "FAILED" : "ok", checks, failures);
     return failures ? 1 : 0;
 }

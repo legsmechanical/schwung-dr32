@@ -265,8 +265,7 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
         if (!strcmp(sub, "attack"))      return snprintf(buf, buf_len, "%g", (double)p->attack);
         if (!strcmp(sub, "hold"))        return snprintf(buf, buf_len, "%g", (double)p->hold);
         if (!strcmp(sub, "decay"))       return snprintf(buf, buf_len, "%g", (double)p->decay);
-        if (!strcmp(sub, "env_mode"))    return snprintf(buf, buf_len, "%s",
-                                                        p->env_mode == DR32_ENV_ASR ? "A-S-R" : "A-H-D");
+        if (!strcmp(sub, "env_mode"))    return snprintf(buf, buf_len, "%s", dr32_env_mode_label(p->env_mode));
         if (!strcmp(sub, "filter_on"))   return snprintf(buf, buf_len, "%d", p->filter_on);
         if (!strcmp(sub, "filter_type")) return snprintf(buf, buf_len, "%s", filter_type_name(p->filter_type));
         if (!strcmp(sub, "cutoff"))      return snprintf(buf, buf_len, "%g", (double)p->cutoff);
@@ -435,8 +434,7 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
         else if (!strcmp(sub, "attack"))        p->attack = f;
         else if (!strcmp(sub, "hold"))          p->hold = f;
         else if (!strcmp(sub, "decay"))         p->decay = f;
-        else if (!strcmp(sub, "env_mode"))      p->env_mode = (!strcmp(val, "A-S-R") || atoi(val) == 1)
-                                                              ? DR32_ENV_ASR : DR32_ENV_AHD;
+        else if (!strcmp(sub, "env_mode"))      p->env_mode = dr32_env_mode_parse(val);
         else if (!strcmp(sub, "filter_on"))     p->filter_on = atoi(val) ? 1 : 0;
         else if (!strcmp(sub, "filter_type"))   p->filter_type = (dr32_filter_type)parse_filter_type(val);
         else if (!strcmp(sub, "cutoff"))        p->cutoff = f;

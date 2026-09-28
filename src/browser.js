@@ -409,9 +409,9 @@ function clampScroll(st) {
  * ⭑ A PICKED SAMPLE PLAYS WHOLE (Josh, 2026-09-23: "if you pick a sample to put
  * on a pad, you should hear the whole sample when you tap the pad by default").
  * The pad's envelope is Move's (Hold 0.3 s, then an 84 dB decay), which cut a
- * loop off after its first beat. So each pick also sets A-H-D and Hold Inf
+ * loop off after its first beat. So each pick also sets Trigger and Hold Inf
  * (60 s = DR32_HOLD_MAX, the engine's infinite hold), replacing whatever the pad
- * had: a new sample is a new sound. A-H-D because A-S-R would still cut a TAP.
+ * had: a new sample is a new sound. Trigger because Gate would still cut a TAP.
  * ⚠ Here and NOT in the DSP's `sample` write: a state restore replays through
  * that same write, and the blob is a DELTA — a Hold the user set back to 0.3
  * equals the baseline, is never saved, and would restore as Inf.
@@ -428,7 +428,7 @@ function audition(ctx, st) {
     }
     if (row.path === st.loaded) return;    /* already there; skip the write */
     ctx.setParam('pad' + st.pad + '_sample', row.path);
-    ctx.setParam('pad' + st.pad + '_env_mode', 'A-H-D');
+    ctx.setParam('pad' + st.pad + '_env_mode', 'Trigger');
     ctx.setParam('pad' + st.pad + '_hold', '60');
     st.loaded = row.path;
 }

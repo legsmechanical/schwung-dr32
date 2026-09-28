@@ -204,10 +204,10 @@
           "title": "Shape",
           "lines": [
             "ATK   attack",
-            "DCY   decay",
             "HOLD  hold",
-            "ENV   A-H-D or",
-            "      A-S-R",
+            "DCY   decay",
+            "ENV   Trigger or",
+            "      Gate",
             "CUT   filter freq",
             "RES   resonance",
             "TYPE  filter type,",
