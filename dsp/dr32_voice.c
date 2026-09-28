@@ -293,6 +293,10 @@ int dr32_voice_render(dr32_voice *v, float *out, int n) {
             v->env += v->atk_rate;
             if (v->env >= 1.0f) { v->env = 1.0f; v->stage = 1; }
         }
+        // Gate ignores Hold, as Move's Drum Sampler does (checked on the
+        // device 2026-09-28: Move still SHOWS its Hold knob in Gate, and it
+        // does nothing). So the knob stays on the page; only the picture
+        // drops the plateau.
         if (v->stage == 1) {
             if (v->env_mode == DR32_ENV_AHD) {
                 if (!v->hold_infinite) {
