@@ -291,6 +291,7 @@
               "name": "Envelope",
               "type": "enum",
               "options": ["Trigger", "Gate"],
+              "short_options": ["Triggr", "Gate"],
               "short_name": "ENV",
               "default": "Trigger",
               "viz": {
