@@ -245,7 +245,7 @@
               "short_name": "ATK",
               "default": 0.0,
               "card_script": "env_card.js#dr32_atk_card",
-              "card_w": 122.0,
+              "card_w": 90.0,
               "card_h": 15.0,
               "viz": {
                 "group": "amp",
@@ -262,7 +262,7 @@
               "short_name": "HOLD",
               "default": 0.3569,
               "card_script": "env_card.js#dr32_hold_card",
-              "card_w": 122.0,
+              "card_w": 90.0,
               "card_h": 15.0,
               "viz": {
                 "group": "amp",
@@ -279,7 +279,7 @@
               "short_name": "DCY",
               "default": 0.5,
               "card_script": "env_card.js#dr32_dcy_card",
-              "card_w": 122.0,
+              "card_w": 90.0,
               "card_h": 15.0,
               "viz": {
                 "group": "amp",

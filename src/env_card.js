@@ -32,11 +32,14 @@ function knobToSec(k, pos) {
     return k.lo + (k.hi - k.lo) * (Math.pow(r, pos) - 1) / (r - 1);
 }
 
+/* Three significant figures. The band is chosen on the ROUNDED value, so
+ * 9.996 ms prints "10.0 ms", not "10.00 ms". */
 function fmtTime(t) {
-    if (t < 0.01) return (t * 1000).toFixed(2) + " ms";
-    if (t < 0.1)  return (t * 1000).toFixed(1) + " ms";
-    if (t < 1)    return Math.round(t * 1000) + " ms";
-    if (t < 10)   return t.toFixed(2) + " s";
+    const ms = t * 1000;
+    if (Number(ms.toFixed(2)) < 10)  return ms.toFixed(2) + " ms";
+    if (Number(ms.toFixed(1)) < 100) return ms.toFixed(1) + " ms";
+    if (Math.round(ms) < 1000)       return Math.round(ms) + " ms";
+    if (Number(t.toFixed(2)) < 10)   return t.toFixed(2) + " s";
     return t.toFixed(1) + " s";
 }
 
