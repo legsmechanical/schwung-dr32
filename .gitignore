@@ -10,3 +10,4 @@ notes/
 #   Untracking keeps the files on disk; it only stops git carrying them.
 build/
 tools/__pycache__/
+src/plugins.log

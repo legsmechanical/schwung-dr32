@@ -12,8 +12,9 @@
  *                == id` and carrying its params inline, plus the root nav
  *                entries for them. dsp/dr32.c MERGES this into the hierarchy
  *                it serves (after the Shape entry, at the end of `levels`).
- *   module.json  every engine key plus `model` in each pad level's
- *                child_copy_keys; the `ui_engine` gate in chain_params.
+ *   module.json  `model` in each pad level's child_copy_keys (the engines' own
+ *                keys are added by the DSP for the engines in use); the
+ *                `ui_engine` gate in chain_params.
  *   browser.js   the picker's model list, between its GENERATED markers.
  *   engine_tpl.json  the page TEMPLATE for engines other modules bring
  *                (dsp/dr32_plugins.c fills it in at run time).
@@ -290,9 +291,14 @@ const withKeys = (keys) => {
     base.splice(base.indexOf('sample') + 1, 0, 'model', ...keys);
     return base;
 };
+/* ⭑ THE BASE BANKS CARRY NO ENGINE KEYS HERE. They need the keys of every
+ * engine a pad might be running, and that is what dsp/dr32.c puts in at run
+ * time, for the engines the KIT is running (dr32_build_src, right after
+ * `"sample","model"`): all 276 in four lists was 13 KB of a 20 KB document,
+ * served to kits that use none of them. */
 const allKeys = [...new Set(engines.flatMap((e) => e.params.map((p) => p.key)))];
 for (const lv of Object.values(newLevels))
-    if (Array.isArray(lv.child_copy_keys)) lv.child_copy_keys = withKeys(allKeys);
+    if (Array.isArray(lv.child_copy_keys)) lv.child_copy_keys = withKeys([]);
 for (const [, lv] of genLevels) {
     /* In the base banks' ORDER, not the page's: a kit port's page lays its
      * lanes' extras out beside the knobs they belong to, which is not the

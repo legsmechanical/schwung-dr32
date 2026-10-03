@@ -63,9 +63,10 @@ typedef struct {
     unsigned char *eng_served;   /* per page: is it in ui_hierarchy_src         */
     /* ...and the pages of engines OTHER MODULES bring (dr32_plugins.c), which
      * are the process's, not this instance's: `plug_served[i]` is the same
-     * flag for dr32_plugin_page_at(i). A base bank's copy list also takes the
-     * keys of each plugin engine in use, at `base_copy_at`. */
+     * flag for dr32_plugin_page_at(i). A base bank's copy list takes the keys
+     * of every engine in use, ours or theirs, at `base_copy_at`. */
     unsigned char plug_served[DR32_PLUG_PAGES];
+    unsigned eng_sig;            /* which engines the copy lists were built for */
     long     base_copy_at[DR32_COPY_LISTS];
     int      n_base_copy;
     int      plug_logged;
@@ -148,8 +149,14 @@ static int append_pad_name(const dr32_pad_slot *s, char *out, int cap) {
     /* A synth pad is named by its model ("Kick"); a sample pad by its file. */
     const char *base, *dot;
     int len;
+    char orphan[80];
     if (s->engine) {
         base = dr32_pad_model_name(s);
+        len = (int)strlen(base);
+    } else if (s->orphan) {
+        /* "omega/fm2 missing" -> "fm2 missing": the model, and why it is silent. */
+        base = dr32_pad_orphan_name(s, orphan, (int)sizeof orphan);
+        if (strchr(base, '/')) base = strchr(base, '/') + 1;
         len = (int)strlen(base);
     } else {
         base = s->path[0] ? strrchr(s->path, '/') : NULL;
@@ -417,9 +424,9 @@ static void load_engine_ui(dr32_instance *in, const char *module_dir) {
                     in->n_eng_pages = n;
                     in->base_nav_at = entry_close + 1;
                     in->base_lv_at = hl_close;
-                    /* Each base bank's copy list, right after `model`: where a
-                     * plugin engine's keys go (written in order, so after the
-                     * model that makes the target pad that engine). */
+                    /* Each base bank's copy list, right after `model`: where the
+                     * keys of the engines in use go (written in order, so after
+                     * the model that makes the target pad that engine). */
                     static const char COPY[] = "\"sample\",\"model\"";
                     for (const char *c = hier; (c = strstr(c, COPY)) && in->n_base_copy < DR32_COPY_LISTS; c += sizeof(COPY) - 1)
                         in->base_copy_at[in->n_base_copy++] = (long)(c - hier) + (long)sizeof(COPY) - 1;
@@ -451,6 +458,45 @@ static int eng_page_wanted(const dr32_kit *kit, const dr32_eng_page *p) {
     return 0;
 }
 
+/* The engines the kit is running, as one number: the copy lists follow the
+ * ENGINES, not the pages (two lanes of a kit port share a page and differ in a
+ * key), so this is what says they are stale. */
+static unsigned engines_sig(const dr32_kit *kit) {
+    unsigned h = 2166136261u;
+    for (int id = 1, n = DR32_ENG_COUNT + dr32_plugin_engine_count(); id < n; id++)
+        if (engine_in_use(kit, id)) h = (h ^ (unsigned)id) * 16777619u;
+    return h;
+}
+
+/* `,"key","key"` for every engine in use, in engine order, each key once (a
+ * kit port's lanes share most of theirs). malloc'd; NULL when no pad runs an
+ * engine or on failure. */
+static char *engine_copy_keys(const dr32_kit *kit, size_t *len) {
+    size_t cap = 0, n = 0;
+    char *out = NULL;
+    for (int id = 1, top = DR32_ENG_COUNT + dr32_plugin_engine_count(); id < top; id++) {
+        const dr32_engine_ops *e = engine_in_use(kit, id) ? dr32_engine_get(id) : NULL;
+        for (int i = 0; e && i < e->nparams; i++) {
+            const char *key = e->params[i].key;
+            size_t kl = strlen(key);
+            /* Already there? Search for `"key"` whole. */
+            int have = 0;
+            for (const char *q = out; q && !have && (q = strstr(q, key)); q += kl)
+                have = q[-1] == '"' && q[kl] == '"';
+            if (have) continue;
+            if (n + kl + 4 > cap) {
+                cap = cap ? cap * 2 : 1024;
+                char *g = (char *)realloc(out, cap);
+                if (!g) { free(out); return NULL; }
+                out = g;
+            }
+            n += (size_t)snprintf(out + n, cap - n, ",\"%s\"", key);
+        }
+    }
+    *len = n;
+    return out;
+}
+
 static int plug_pages(void) {
     int n = dr32_plugin_page_count();
     return n < DR32_PLUG_PAGES ? n : DR32_PLUG_PAGES;
@@ -458,7 +504,7 @@ static int plug_pages(void) {
 
 /* Is `ui_hierarchy_src` built for the engines the kit holds NOW? */
 static int dr32_src_current(const dr32_instance *in) {
-    if (!in->ui_hierarchy_src) return 0;
+    if (!in->ui_hierarchy_src || in->eng_sig != engines_sig(&in->kit)) return 0;
     for (int i = 0; i < in->n_eng_pages; i++)
         if (in->eng_served[i] != (unsigned char)eng_page_wanted(&in->kit, &in->eng_pages[i])) return 0;
     for (int i = 0, n = plug_pages(); i < n; i++)
@@ -473,11 +519,11 @@ static int by_offset(const void *a, const void *b) {
     return d < 0 ? -1 : d > 0;
 }
 
-/** `ui_hierarchy_src` = the base plus the pages of the engines in use: nav
- *  entries right after the `nav_after` level's entry, levels at the end of
- *  `levels`, and each plugin engine's keys in the base banks' copy lists
- *  (their own built-in keys are in module.json already). Rebuilt only when
- *  that set changes. */
+/** `ui_hierarchy_src` = the base plus what the engines in use need: their
+ *  pages (nav entries right after the `nav_after` level's entry, levels at the
+ *  end of `levels`) and their keys in the base banks' copy lists. module.json
+ *  carries NO engine keys there: 276 of them in four lists was two thirds of a
+ *  sample kit's whole document. Rebuilt only when the set of engines changes. */
 static void dr32_build_src(dr32_instance *in) {
     if (!in->ui_hierarchy_base || dr32_src_current(in)) return;
     const char *base = in->ui_hierarchy_base;
@@ -495,12 +541,12 @@ static void dr32_build_src(dr32_instance *in) {
         in->plug_served[i] = (unsigned char)engine_in_use(&in->kit, p->engine);
         if (in->plug_served[i]) cap += (size_t)p->nav_len + (size_t)p->level_len + 2;
     }
-    for (int e = 0, ne = merge ? dr32_plugin_engine_count() : 0; e < ne; e++)
-        if (engine_in_use(&in->kit, DR32_ENG_COUNT + e)) copy_len += strlen(dr32_plugin_engine_keys(DR32_ENG_COUNT + e));
+    char *copy = merge ? engine_copy_keys(&in->kit, &copy_len) : NULL;
+    if (!copy) copy_len = 0;
     cap += copy_len * (size_t)in->n_base_copy;
 
     char *out = (char *)malloc(cap);
-    if (!out) return;
+    if (!out) { free(copy); return; }
     size_t n = 0, from = 0;
     dr32_insert ins[DR32_COPY_LISTS + 2];
     int ni = 0;
@@ -515,12 +561,7 @@ static void dr32_build_src(dr32_instance *in) {
         memcpy(out + n, base + from, at - from); n += at - from;
         from = at;
         if (ins[k].kind == 0) {
-            for (int e = 0, ne = dr32_plugin_engine_count(); e < ne; e++) {
-                if (!engine_in_use(&in->kit, DR32_ENG_COUNT + e)) continue;
-                const char *keys = dr32_plugin_engine_keys(DR32_ENG_COUNT + e);
-                size_t kl = strlen(keys);
-                memcpy(out + n, keys, kl); n += kl;
-            }
+            memcpy(out + n, copy, copy_len); n += copy_len;
             continue;
         }
         for (int i = 0; i < in->n_eng_pages; i++) {
@@ -540,8 +581,10 @@ static void dr32_build_src(dr32_instance *in) {
     }
     memcpy(out + n, base + from, base_len - from); n += base_len - from;
     out[n] = '\0';
+    free(copy);
     free(in->ui_hierarchy_src);
     in->ui_hierarchy_src = out;
+    in->eng_sig = engines_sig(&in->kit);
 
     /* What the scan found, once it has: the host thread logs, the scan's does not. */
     if (!in->plug_logged && dr32_plugins_ready()) {

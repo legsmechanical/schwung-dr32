@@ -140,6 +140,11 @@ const dr32_model *dr32_model_at(int i);
 /** Index of the model with this slug, or -1. */
 int               dr32_model_find(const char *slug);
 
+/** Does any model share this slug's family ("omega/" of "omega/fm2")? False
+ *  means the module that brings it is not installed, as opposed to a model
+ *  name nobody has. */
+int               dr32_model_family_known(const char *slug);
+
 /** Index of `key` in the engine's table, or -1. `key` is the full prefixed
  *  key ("sm_pitch"). */
 int dr32_engine_param_index(const dr32_engine_ops *e, const char *key);

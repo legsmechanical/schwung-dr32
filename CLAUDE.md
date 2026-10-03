@@ -296,9 +296,11 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
 - ⭑ **Engine pages are served PER KIT** (branch `served-engine-pages`): a page is in the served
   hierarchy only while some pad runs the engine (or kit-port family) its `visible_if` names
   (`dr32_build_src` in `dsp/dr32.c`; `engine_ui.json` is cut into pages at create). A kit with no
-  synth pad serves 20 KB; every engine at once, 99 KB. The host re-reads on the `is_loading` edge a
+  synth pad served 20 KB at that point; every engine at once, 99 KB. The host re-reads on the `is_loading` edge a
   `_model` / `_sample` write already arms, and `get_param("ui_hierarchy")` rebuilds if the set is
-  stale, so an engine in use is never without its pages. ⚠ `test_state.c` therefore puts one model
+  stale, so an engine in use is never without its pages. The base banks' copy lists follow the kit
+  too: module.json carries NO engine keys there, and the DSP adds those of the engines in use right
+  after `"sample","model"` (that exact text is the anchor). A sample kit serves 9 KB. ⚠ `test_state.c` therefore puts one model
   per GATE on pads 4+ before writing `served_hierarchy.json` — that is what keeps `pages_check`
   validating all 41 engine pages. A page whose gate it cannot read is served always.
 - The SERVED hierarchy crosses the host's value channel (SHADOW_PARAM_VALUE_LEN: **128 KB** since
@@ -345,8 +347,14 @@ the developer"*, runtime, no DR32 release per engine. Test case: `schwung-omega`
 - A plugin that breaks a rule is refused WHOLE and the reason is logged (`dr32: engine plugin ...
   refused: ...`). `tests/test_plugins.c` loads a toy plugin, a rule-breaking one and a junk file
   through the real `create_instance`.
-- ⚠ NOT DONE: a kit saved with a plugin pad, opened WITHOUT the plugin, restores that pad empty and
-  the next save drops it. `ui_engine`'s declared max in chain_params is still the built-in count.
+- **A model whose module is NOT installed is KEPT** (`dr32_pad_slot.orphan`): the pad is silent,
+  reads as `<slug> missing`, and its model, saved `x_` knobs and mix values are written back out on
+  the next save. Only when the slug's whole FAMILY is absent (`dr32_model_family_known`); an unknown
+  name in a family we have changes nothing, as before. Not copied by Copy (its keys are in no list).
+- **The scan's report is also `<dr32 folder>/plugins.log`**, rewritten each start: the host's log is
+  best-effort and can be off, and this is what a module author needs when an engine does not show.
+- Full keys must fit DR32's 64-byte key buffers with `pad32_`: plugin id and engine slug <= 12
+  chars, a param key <= 16. ⚠ `ui_engine`'s declared max in chain_params is still the built-in count.
 
 ### 🥁 The kit ports: 9W9, 6W6, 8W8, CW-78 (2026-09-22)
 

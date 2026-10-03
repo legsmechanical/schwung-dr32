@@ -63,7 +63,7 @@ extern "C" {
  *  ⓘ The host's knob is LINEAR (a detent is 0.5% of the range). If a range
  *  crowds the useful values into a few detents, narrow the range. */
 typedef struct dr32x_param {
-    const char *key;        /* bare: [a-z0-9_], <= 24 chars: "pitch"           */
+    const char *key;        /* bare: [a-z0-9_], <= 16 chars: "pitch"           */
     const char *name;       /* knob label, <= 32 chars: "Pitch"                */
     const char *short_name; /* the cell's label, <= 8 chars: "PITCH"           */
     float       min, max, def, step;   /* a step < 1 makes it a float knob     */
@@ -75,7 +75,7 @@ typedef struct dr32x_param {
 } dr32x_param;
 
 typedef struct dr32x_engine {
-    const char *slug;       /* [a-z0-9_], <= 16 chars: "fm2"                   */
+    const char *slug;       /* [a-z0-9_], <= 12 chars: "fm2"                   */
     const char *name;       /* "FM2"                                           */
     int         nparams;    /* 1..DR32X_MAX_PARAMS                             */
     const dr32x_param *params;
@@ -106,7 +106,7 @@ typedef struct dr32x_model {
 typedef struct dr32x_plugin {
     unsigned    api_version;    /* DR32X_API_VERSION                           */
     unsigned    struct_size;    /* sizeof(dr32x_plugin)                        */
-    const char *id;             /* [a-z0-9], <= 16 chars: "omega"              */
+    const char *id;             /* [a-z0-9], <= 12 chars: "omega"              */
     const char *name;           /* the picker's section: "Omega"               */
     int         nengines;
     const dr32x_engine *engines;

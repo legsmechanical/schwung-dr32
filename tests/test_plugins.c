@@ -154,11 +154,81 @@ int main(void) {
     CHECK(!strstr(h, "x_toy_"), "the toy's pages or keys outlived its last pad");
     CHECK(strstr(h, "\"eng_sm_tone\"") != NULL, "the built-in engine's pages did not arrive");
 
+    /* ---- 6b. a model whose module is NOT installed is kept, not lost ---- */
+    {
+        /* A set saved on a Move that had another module's engine, opened on one
+         * that does not: the pad cannot play, and must still be THERE — its
+         * model, its knobs and its place in the mix — so that the next save
+         * does not quietly delete it. */
+        void *g = api->create_instance("dist/tests/plug/dr32", NULL);
+        const char *wa = "/tmp/dr32_plug_real.wav";
+        api->set_param(g, "state",
+            "{\"v\":2,\"kit\":\"\",\"params\":{\"pad5_model\":\"ghost/kick\",\"pad5_volume\":\"-3\","
+            "\"pad5_x_ghost_a_pitch\":\"77\",\"pad5_x_ghost_a_wave\":\"Square\",\"pad6_model\":\"toy/high\"}}");
+        v[0] = 0; api->get_param(g, "pad5_model", v, (int)sizeof v);
+        CHECK(!strcmp(v, "ghost/kick"), "a missing model reads '%s', want its slug kept", v);
+        v[0] = 0; api->get_param(g, "pad5_sample", v, (int)sizeof v);
+        CHECK(!strcmp(v, "ghost/kick missing"), "the pad's name reads '%s', want 'ghost/kick missing'", v);
+        v[0] = 0; api->get_param(g, "pad6_model", v, (int)sizeof v);
+        CHECK(!strcmp(v, "toy/high"), "an installed model beside it did not load ('%s')", v);
+        api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+        CHECK(strstr(h, "\"kick missing\"") != NULL, "the pad is not named as missing in the served hierarchy");
+        /* It is silent, and hitting it is safe. */
+        uint8_t on[3] = { 0x90, 40, 100 };
+        api->on_midi(g, on, 3, 0);
+        int loud = 0;
+        for (int b = 0; b < 20; b++) { api->render_block(g, out, 128); for (int i = 0; i < 256; i++) if (out[i]) loud = 1; }
+        CHECK(!loud, "a pad with a missing model made a sound");
+        /* Saved again, nothing of it is gone. */
+        int gn = api->get_param(g, "state", st, (int)sizeof st);
+        CHECK(gn > 2 && strstr(st, "\"pad5_model\":\"ghost/kick\""), "the missing model was dropped from the next save: %s", st);
+        CHECK(strstr(st, "\"pad5_x_ghost_a_pitch\":\"77\"") && strstr(st, "\"pad5_x_ghost_a_wave\":\"Square\""),
+              "its saved knobs were dropped from the next save: %s", st);
+        CHECK(strstr(st, "\"pad5_volume\":\"-3\""), "its pad volume was dropped from the next save: %s", st);
+        CHECK(!strstr(st, "pad5_sample"), "the 'missing' name was saved as a sample path: %s", st);
+        /* A second round trip is the same blob: nothing accumulates. */
+        void *g2 = api->create_instance("dist/tests/plug/dr32", NULL);
+        static char st2[65536];
+        api->set_param(g2, "state", st);
+        api->get_param(g2, "state", st2, (int)sizeof st2);
+        CHECK(!strcmp(st, st2), "the state does not survive a second round trip:\n %s\n %s", st, st2);
+        api->destroy_instance(g2);
+        /* Giving the pad a real sound ends it. */
+        FILE *wf = fopen(wa, "wb");
+        if (wf) {
+            unsigned char hdr[44] = { 'R','I','F','F', 36+200,0,0,0, 'W','A','V','E', 'f','m','t',' ', 16,0,0,0, 1,0, 1,0,
+                                      0x44,0xAC,0,0, 0x88,0x58,1,0, 2,0, 16,0, 'd','a','t','a', 200,0,0,0 };
+            static unsigned char pcm[200];
+            fwrite(hdr, 1, 44, wf); fwrite(pcm, 1, 200, wf); fclose(wf);
+        }
+        /* An unknown name in a family that IS installed is not a missing module. */
+        api->set_param(g, "pad6_model", "toy/nope");
+        v[0] = 0; api->get_param(g, "pad6_model", v, (int)sizeof v);
+        CHECK(!strcmp(v, "toy/high"), "an unknown model of an installed plugin replaced the pad ('%s')", v);
+        api->set_param(g, "pad5_sample", wa);
+        api->get_param(g, "state", st, (int)sizeof st);
+        CHECK(!strstr(st, "ghost"), "the missing model outlived a sample loaded onto its pad: %s", st);
+        remove(wa);
+        api->destroy_instance(g);
+    }
+
     /* ---- 7. the broken ones cost nothing, and say why ------------------- */
     CHECK(strstr(logbuf, "engine plugin bad refused") && strstr(logbuf, "more than 8 knobs"),
           "the refused plugin's reason was not logged:\n%s", logbuf);
     CHECK(strstr(logbuf, "junk") && strstr(logbuf, "did not load"), "the unloadable file was not reported:\n%s", logbuf);
     CHECK(strstr(logbuf, "engine plugin toy: 1 engines, 2 models, 2 pages"), "the good plugin was not reported:\n%s", logbuf);
+
+    /* ...and in a file of DR32's own, which does not depend on the host's log. */
+    {
+        static char pl[4096];
+        FILE *pf = fopen("dist/tests/plug/dr32/plugins.log", "rb");
+        size_t pn = pf ? fread(pl, 1, sizeof(pl) - 1, pf) : 0;
+        if (pf) fclose(pf);
+        pl[pn] = '\0';
+        CHECK(strstr(pl, "engine plugin toy: 1 engines") && strstr(pl, "engine plugin bad refused"),
+              "plugins.log does not carry the scan's report: '%s'", pl);
+        remove("dist/tests/plug/dr32/plugins.log");     /* that folder is src/, by symlink */
+    }
 
     api->destroy_instance(inst);
     printf("%s  (%d checks, %d failures)\n", fails ? "FAILED" : "PASSED", checks, fails);

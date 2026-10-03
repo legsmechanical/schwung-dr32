@@ -250,19 +250,32 @@ const ALL_PAD_LEVELS = [...PAD_LEVELS, ...ENGINE_LEVELS];
         }
     }
     /* Copy/Clear act on the level you stand on. The base banks show on every
-     * pad, so they carry the SAME full list, with `model` right behind
-     * `sample` (written in order: the model must exist on the target before
-     * its knobs can land). An engine page shows only on a pad running THAT
-     * engine, so its list is the same one with every OTHER engine's keys taken
-     * out — anything else would copy a different pad depending on the page. */
+     * pad, so they carry the SAME list, with `model` right behind `sample`
+     * (written in order: the model must exist on the target before its knobs
+     * can land) and NO engine keys: dsp/dr32.c adds those at run time, for the
+     * engines the kit is running (tests/test_state.c pins the served result).
+     * An engine page shows only on a pad running THAT engine, so its list is
+     * the same one with its own engine's keys right after `model` — anything
+     * else would copy a different pad depending on the page. */
     const full = (levels.pads || {}).child_copy_keys || [];
     const prefixes = [...new Set(ENGINE_LEVELS.map((n) => n.slice(4).split('_')[0] + '_'))];
+    const engineShaped = full.filter((k) => prefixes.some((p) => k.startsWith(p)) && !['fx_type', 'fx_p1', 'fx_p2'].includes(k));
+    if (engineShaped.length)
+        errors.push(`pads.child_copy_keys carries engine keys (${engineShaped.slice(0, 4).join(', ')}...) — the DSP adds those for the engines in use`);
     for (const name of ALL_PAD_LEVELS) {
         const own = name.startsWith('eng_') ? name.slice(4).split('_')[0] + '_' : null;
-        const want = own ? full.filter((k) => !prefixes.some((p) => p !== own && k.startsWith(p))) : full;
         const ck = (levels[name] || {}).child_copy_keys || [];
-        if (JSON.stringify(ck) !== JSON.stringify(want))
-            errors.push(`levels.${name}.child_copy_keys is not ${own ? `the full list scoped to ${own}*` : "pads' list"} — Copy would copy a different pad depending on the page`);
+        if (!own) {
+            if (JSON.stringify(ck) !== JSON.stringify(full))
+                errors.push(`levels.${name}.child_copy_keys is not pads' list — Copy would copy a different pad depending on the page`);
+            continue;
+        }
+        const at = ck.indexOf('model') + 1;
+        let end = at;
+        while (end < ck.length && ck[end].startsWith(own)) end++;
+        const rest = [...ck.slice(0, at), ...ck.slice(end)];
+        if (end === at || JSON.stringify(rest) !== JSON.stringify(full))
+            errors.push(`levels.${name}.child_copy_keys is not pads' list with ${own}* keys right after "model" — Copy would copy a different pad depending on the page`);
     }
     const ck = (levels.pads || {}).child_copy_keys || [];
     if (ck.indexOf('model') !== ck.indexOf('sample') + 1)

@@ -97,6 +97,16 @@ int dr32_model_find(const char *slug) {
     return -1;
 }
 
+int dr32_model_family_known(const char *slug) {
+    const char *cut = slug ? strchr(slug, '/') : NULL;
+    if (!cut) return 0;
+    size_t n = (size_t)(cut - slug) + 1;            /* with the slash */
+    int total = dr32_model_count();
+    for (int i = 0; i < total; i++)
+        if (!strncmp(dr32_model_at(i)->slug, slug, n)) return 1;
+    return 0;
+}
+
 int dr32_engine_param_index(const dr32_engine_ops *e, const char *key) {
     if (!e || !key) return -1;
     for (int i = 0; i < e->nparams; i++)

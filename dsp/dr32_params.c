@@ -218,10 +218,18 @@ int dr32_read_param(const dr32_kit *kit, const char *key, char *buf, int buf_len
          * same name is ignored below, so the name is never taken for a path. */
         if (!strcmp(sub, "sample") || !strcmp(sub, "sample_move")
             || !strcmp(sub, "sample_user"))
+        {
+            /* A pad saved with a model whose module is not installed says so
+             * where its name would be, and still reads as that model. */
+            if (s->orphan) {
+                char nm[80];
+                return snprintf(buf, buf_len, "%s", dr32_pad_orphan_name(s, nm, (int)sizeof nm));
+            }
             return snprintf(buf, buf_len, "%s", s->engine ? dr32_pad_model_name(s) : s->path);
+        }
         if (!strcmp(sub, "model")) {
             const dr32_model *m = s->engine ? dr32_model_at(s->model) : NULL;
-            return snprintf(buf, buf_len, "%s", m ? m->slug : "");
+            return snprintf(buf, buf_len, "%s", m ? m->slug : s->orphan ? dr32_pad_orphan_model(s) : "");
         }
         /* An engine parameter answers only on a pad running that engine. On
          * any other pad the key is simply not this pad's, and reads as unknown
@@ -437,6 +445,10 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
             /* A synth pad READS its model's name here (see dr32_read_param),
              * so that name coming back is not a path to load. */
             if (s->engine && !strcmp(val, dr32_pad_model_name(s))) return 1;
+            if (s->orphan) {
+                char nm[80];
+                if (!strcmp(val, dr32_pad_orphan_name(s, nm, (int)sizeof nm))) return 1;
+            }
             /* A synth pad becoming a sample pad starts from a sample pad's
              * defaults, not from the model's Vel Vol of 0 and whatever level it
              * was given — but it keeps where it sits in the kit: its note,
@@ -461,7 +473,14 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
             }
             dr32_kit_load_sample(kit, pad, val);
         }
-        else if (!strcmp(sub, "model"))           { if (val[0]) dr32_kit_set_model(kit, pad, val); }
+        else if (!strcmp(sub, "model")) {
+            /* A model whose whole FAMILY is absent is one another module
+             * brings and this Move does not have: keep what the kit says
+             * rather than forget it. An unknown name in a family we do have
+             * changes nothing, as it always has. */
+            if (val[0] && !dr32_kit_set_model(kit, pad, val) && strchr(val, '/') && !dr32_model_family_known(val))
+                dr32_kit_orphan_begin(kit, pad, val);
+        }
         else if (!strcmp(sub, "browse"))          dr32_kit_browse_step(kit, pad, atoi(val));
         else if (!strcmp(sub, "note"))          dr32_kit_set_note(kit, pad, atoi(val));
         else if (!strcmp(sub, "choke"))         p->choke_group = atoi(val);
@@ -563,6 +582,8 @@ static int apply_pad_field(dr32_kit *kit, int pad, const char *sub, const char *
                 s->eops->set(s->eng, ix, f);
             }
         }
+        /* ...and that missing model's saved knobs (plugin keys are `x_...`). */
+        else if (s->orphan && !strncmp(sub, "x_", 2)) dr32_kit_orphan_param(kit, pad, sub, val);
         return 1;
     }
 }

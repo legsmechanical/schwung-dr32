@@ -351,6 +351,10 @@ int main(void) {
             CHECK(spliced == anchors,
                   "child_names spliced %d times for %d anchors — every pad bank needs its own names",
                   spliced, anchors);
+            /* ...and no engine's KEYS: module.json's copy lists carry none, the
+             * DSP adds them for the engines the kit runs. */
+            CHECK(strstr(h, "\"sm_pitch\"") == NULL && strstr(h, "\"fk_tone\"") == NULL,
+                  "engine keys are in the copy lists of a kit with no synth pad");
             int n_samples_only = n;
 
             /* One pad per GATE (each engine, and each kit port's family) brings
@@ -389,6 +393,23 @@ int main(void) {
             CHECK(spliced == anchors,
                   "child_names spliced %d times for %d anchors — every pad bank needs its own names",
                   spliced, anchors);
+            /* Copy acts on the page you stand on, and the four base banks show
+             * on EVERY pad: with the engines in the kit they carry every
+             * engine's keys, right after `model`, each key once. Simian is the
+             * first engine, so its first key leads: 4 banks + its own 2 pages. */
+            {
+                int lead = 0, fp = 0, n9 = 0;
+                for (const char *q = h; (q = strstr(q, "\"sample\",\"model\",\"sm_pitch\"")); q++) lead++;
+                CHECK(lead == 6, "simian's keys lead %d copy lists, want 6 (4 base banks + its 2 pages)", lead);
+                /* The last engine's last key, and a key every 9W9 lane shares:
+                 * each once per base bank, plus once per page of its own. */
+                for (const char *q = h; (q = strstr(q, "\"fp_vnfreq\",\"start\"")); q++) fp++;
+                CHECK(fp == 4 + 6, "FM Perc's last key closes %d copy lists, want 10 (4 base banks + its 6 pages)", fp);
+                const char *pads = strstr(h, "\"pads\":{");
+                const char *end = pads ? strstr(pads, "\"params\":[") : NULL;
+                for (const char *q = pads; q && end && (q = strstr(q, "\"n9_tune\"")) && q < end; q++) n9++;
+                CHECK(n9 == 1, "a kit port's shared key is in the Pad bank's copy list %d times, want once", n9);
+            }
             printf("  served hierarchy: %d bytes with no synth pad, %d with every engine\n", n_samples_only, n);
             /* Every page, so tools/pages_check.mjs runs the host's validator
              * over all of them. */

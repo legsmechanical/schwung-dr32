@@ -213,7 +213,7 @@ static const char *validate(const dr32x_plugin *pl) {
         return why;
     }
     if (pl->struct_size < sizeof(dr32x_plugin)) return "struct_size is too small";
-    if (!is_ident(pl->id, 16, 0)) return "id must be [a-z0-9], 1-16 chars";
+    if (!is_ident(pl->id, 12, 0)) return "id must be [a-z0-9], 1-12 chars";
     if (!is_text(pl->name, 24)) return "name must be 1-24 printable chars";
     if (id_taken(pl->id)) return "id is already an engine family";
     if (pl->nengines < 1 || !pl->engines) return "no engines";
@@ -222,7 +222,7 @@ static const char *validate(const dr32x_plugin *pl) {
     if (g_nmod + pl->nmodels > PL_MAX_MODELS) return "too many plugin models installed";
     for (int e = 0; e < pl->nengines; e++) {
         const dr32x_engine *x = &pl->engines[e];
-        if (!is_ident(x->slug, 16, 1) || !is_text(x->name, 24)) return "an engine's slug or name is malformed";
+        if (!is_ident(x->slug, 12, 1) || !is_text(x->name, 24)) return "an engine's slug or name is malformed";
         for (int j = 0; j < e; j++)
             if (!strcmp(pl->engines[j].slug, x->slug)) return "two engines share a slug";
         if (!x->create || !x->destroy || !x->set || !x->note_on || !x->choke || !x->render)
@@ -231,7 +231,7 @@ static const char *validate(const dr32x_plugin *pl) {
         for (int i = 0; i < x->nparams; i++) {
             const dr32x_param *p = &x->params[i];
             snprintf(why, sizeof(why), "engine %s param %d", x->slug, i);
-            if (!is_ident(p->key, 24, 1) || !is_text(p->name, 32) || !is_text(p->short_name, 8) ||
+            if (!is_ident(p->key, 16, 1) || !is_text(p->name, 32) || !is_text(p->short_name, 8) ||
                 !is_text(p->page, 16) || (p->unit && !is_text(p->unit, 8)))
                 return strncat(why, ": key, name, short_name, page or unit is malformed", sizeof(why) - strlen(why) - 1);
             for (int j = 0; j < i; j++)
@@ -458,6 +458,18 @@ static void *scan(void *arg) {
     free(tpl);
     sb_str(&fam, "]");
     g_families = sb_take(&fam);
+    /* ⭐ THE REPORT ALSO GOES TO A FILE, <DR32's folder>/plugins.log, rewritten
+     * each start. The host's log is best-effort (it will not block the audio
+     * thread for a line) and can be switched off, and this is the one thing a
+     * module author needs when their engine does not show up: was it found,
+     * and if it was refused, why. This thread may write files; the audio
+     * thread never does. */
+    if (nfound) {
+        char path[1200];
+        snprintf(path, sizeof(path), "%s/plugins.log", g_dir);
+        FILE *f = fopen(path, "w");
+        if (f) { fputs(g_report ? g_report : "", f); fclose(f); }
+    }
     atomic_store(&g_ready, 1);
     return NULL;
 }
