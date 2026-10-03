@@ -1,0 +1,166 @@
+#define _GNU_SOURCE
+
+// Engines ANOTHER MODULE brings (dsp/dr32_plugins.c, dsp/dr32_engine_api.h),
+// loaded the way the device loads them: a `dr32_engine.so` in a sibling module
+// folder, found by DR32 on its own, with no build-time knowledge of it.
+//
+// tests/run.sh lays the tree out before this runs:
+//
+//   dist/tests/plug/dr32  -> src        DR32's own module dir
+//   dist/tests/plug/toy/dr32_engine.so  a good plugin   (fixtures/plugin)
+//   dist/tests/plug/bad/dr32_engine.so  nine knobs on one page: refused WHOLE
+//   dist/tests/plug/junk/dr32_engine.so not a shared object at all
+//
+// The property under test is the one a module author cares about: drop the
+// file in, and the models are in the picker, play, have pages, save and copy —
+// and a plugin that breaks a rule costs DR32 nothing.
+
+#include "../dsp/dr32_kit.h"
+#include "../dsp/host/plugin_api_v1.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+extern plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host);
+
+static int checks, fails;
+#define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
+
+static char logbuf[8192];
+static void hostlog(const char *m) { strncat(logbuf, m, sizeof(logbuf) - strlen(logbuf) - 2); strcat(logbuf, "\n"); }
+
+static int count(const char *h, const char *needle) {
+    int n = 0;
+    for (const char *q = h; (q = strstr(q, needle)); q++) n++;
+    return n;
+}
+
+int main(void) {
+    printf("test_plugins\n");
+    static host_api_v1_t host;
+    host.api_version = 1;
+    host.sample_rate = 44100;
+    host.frames_per_block = 128;
+    host.log = hostlog;
+    plugin_api_v2_t *api = move_plugin_init_v2(&host);
+    void *inst = api ? api->create_instance("dist/tests/plug/dr32", NULL) : NULL;
+    CHECK(inst != NULL, "create_instance returned NULL");
+    if (!inst) return 1;
+
+    static char h[131072];
+    char v[256];
+    static int16_t out[2 * 128];
+    #define GET(k) (v[0] = '\0', api->get_param(inst, k, v, (int)sizeof v), v)
+
+    /* ---- 1. found, without being asked for ----------------------------- */
+    int builtin = dr32_model_count() - dr32_plugin_model_count();
+    dr32_plugins_wait();
+    CHECK(dr32_plugins_ready(), "the scan never published");
+    CHECK(dr32_plugin_engine_count() == 1, "%d plugin engines; the toy has 1 and the bad one must add none", dr32_plugin_engine_count());
+    CHECK(dr32_plugin_model_count() == 2, "%d plugin models, want the toy's 2", dr32_plugin_model_count());
+    CHECK(dr32_model_count() == builtin + 2, "the plugin's models are not in the model list");
+    /* Ours do not move: a pad holds a model INDEX. */
+    CHECK(dr32_model_find("simian/kick") == 0, "a built-in model moved when a plugin was installed");
+    int mi = dr32_model_find("toy/low");
+    CHECK(mi == builtin, "toy/low is model %d, want %d (right after ours)", mi, builtin);
+    const dr32_engine_ops *e = dr32_engine_get(DR32_ENG_COUNT);
+    CHECK(e && e->family == DR32_FAM_PLUGIN && e->nparams == 4, "the toy engine is not registered at the first plugin id");
+    CHECK(e && !strcmp(e->params[0].key, "x_toy_sine_pitch"), "full key is '%s', want x_toy_sine_pitch", e ? e->params[0].key : "");
+
+    /* The picker reads this. */
+    api->get_param(inst, "plugin_models", h, (int)sizeof h);
+    CHECK(!strcmp(h, "[{\"id\":\"toy\",\"label\":\"Toy\",\"models\":[{\"slug\":\"toy/low\",\"name\":\"Toy Low\"},"
+                     "{\"slug\":\"toy/high\",\"name\":\"Toy High\"}]}]"), "plugin_models: %s", h);
+
+    /* ---- 2. no plugin pad: nothing of the plugin's is served ------------ */
+    int n0 = api->get_param(inst, "ui_hierarchy", h, (int)sizeof h);
+    CHECK(n0 > 2 && !strstr(h, "x_toy_"), "the toy's keys are served with no pad running it");
+
+    /* ---- 3. a pad runs it ---------------------------------------------- */
+    api->set_param(inst, "pad3_model", "toy/low");
+    CHECK(!strcmp(GET("pad3_model"), "toy/low"), "pad3_model reads '%s'", v);
+    api->set_param(inst, "ui_current_pad", "3");
+    CHECK(atoi(GET("ui_engine")) == DR32_ENG_COUNT, "ui_engine is %s, want %d", v, DR32_ENG_COUNT);
+    CHECK(atoi(GET("ui_family")) == DR32_FAM_PLUGIN, "ui_family is %s, want %d", v, DR32_FAM_PLUGIN);
+    CHECK(!strcmp(GET("is_loading"), "1"), "a plugin model did not arm is_loading");
+    /* The model's values and level are the pad's. */
+    CHECK(atof(GET("pad3_x_toy_sine_pitch")) == 60.0, "pitch reads %s, want the model's 60", v);
+    CHECK(!strcmp(GET("pad3_x_toy_sine_wave"), "Sine"), "the enum reads '%s', want its option's name", v);
+    CHECK(fabs(atof(GET("pad3_volume")) + 6.0) < 1e-3, "pad volume is %s, want the model's -6 dB", v);
+
+    /* It sounds, and a knob reaches it: 60 Hz vs 300 Hz by zero crossings. */
+    int zc[2] = {0, 0};
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass) api->set_param(inst, "pad3_x_toy_sine_pitch", "300");
+        uint8_t on[3] = { 0x90, 38, 100 };
+        api->on_midi(inst, on, 3, 0);
+        double peak = 0;
+        int16_t prev = 0;
+        for (int b = 0; b < 40; b++) {
+            api->render_block(inst, out, 128);
+            for (int i = 0; i < 128; i++) {
+                int16_t s = out[2 * i];
+                if (abs(s) > peak) peak = abs(s);
+                if ((prev < 0) != (s < 0)) zc[pass]++;
+                prev = s;
+            }
+        }
+        CHECK(peak > 500, "pass %d: the plugin pad is silent (peak %g)", pass, peak);
+    }
+    CHECK(zc[1] > 3 * zc[0], "the pitch knob did not reach the engine (%d vs %d crossings)", zc[0], zc[1]);
+    CHECK(atof(GET("pad3_x_toy_sine_pitch")) == 300.0, "pitch reads back %s after the write", v);
+
+    /* ---- 4. its pages, built from the template -------------------------- */
+    int n1 = api->get_param(inst, "ui_hierarchy", h, (int)sizeof h);
+    CHECK(n1 > n0, "the hierarchy did not grow when a plugin engine came into use");
+    CHECK(strstr(h, "\"eng_x_toy_sine_tone\":{\"name\":\"Tone\",\"visible_if\":{\"param\":\"ui_engine\",\"equals\":59}") != NULL,
+          "the Tone page is missing or mis-gated");
+    CHECK(strstr(h, "\"eng_x_toy_sine_color\":{\"name\":\"Color\"") != NULL, "the second page (Color) is missing");
+    CHECK(strstr(h, "{\"level\":\"eng_x_toy_sine_tone\",\"label\":\"Tone\"}") != NULL, "the Tone page has no root nav entry");
+    CHECK(strstr(h, "{\"key\":\"x_toy_sine_wave\",\"name\":\"Wave\",\"short_name\":\"WAVE\",\"type\":\"enum\","
+                    "\"options\":[\"Sine\",\"Square\"],\"default\":\"Sine\"}") != NULL, "the enum is not declared as DR32 declares its own");
+    CHECK(strstr(h, "{\"key\":\"x_toy_sine_tone\",\"name\":\"Tone\",\"short_name\":\"TONE\",\"type\":\"float\","
+                    "\"min\":0,\"max\":1,\"default\":0.5,\"step\":0.01}") != NULL, "the float knob is not declared with its step");
+    CHECK(strstr(h, "\"knobs\":[\"x_toy_sine_pitch\",\"x_toy_sine_decay\",\"x_toy_sine_wave\"]") != NULL, "Tone's knobs are wrong");
+    CHECK(!strstr(h, "@"), "a template token was left in the served hierarchy");
+    /* Copy acts on the level you stand on: the four base banks and the toy's
+     * two pages each carry its keys, right after `model`. */
+    CHECK(count(h, "\"sample\",\"model\",\"x_toy_sine_pitch\",\"x_toy_sine_decay\",\"x_toy_sine_wave\",\"x_toy_sine_tone\",") == 6,
+          "the toy's keys are in %d copy lists, want 6 (4 base banks + its 2 pages)",
+          count(h, "\"sample\",\"model\",\"x_toy_sine_pitch\""));
+    CHECK(count(h, "\"child_names\": [") == count(h, "\"child_index_param\""), "a plugin page lost its pad names");
+    FILE *f = fopen("dist/tests/served_plugin_hierarchy.json", "w");
+    if (f) { fputs(h, f); fclose(f); }
+
+    /* ---- 5. it saves, and comes back ------------------------------------ */
+    static char st[65536];
+    int sn = api->get_param(inst, "state", st, (int)sizeof st);
+    CHECK(sn > 2 && strstr(st, "toy/low") && strstr(st, "x_toy_sine_pitch"), "the state blob does not carry the plugin pad");
+    void *inst2 = api->create_instance("dist/tests/plug/dr32", NULL);
+    if (inst2) {
+        api->set_param(inst2, "state", st);
+        v[0] = '\0'; api->get_param(inst2, "pad3_model", v, (int)sizeof v);
+        CHECK(!strcmp(v, "toy/low"), "restored pad3_model is '%s'", v);
+        v[0] = '\0'; api->get_param(inst2, "pad3_x_toy_sine_pitch", v, (int)sizeof v);
+        CHECK(atof(v) == 300.0, "restored pitch is %s, want the edited 300", v);
+        api->destroy_instance(inst2);
+    }
+
+    /* ---- 6. the pad goes back to a sample: its pages and keys leave ----- */
+    api->set_param(inst, "pad3_model", "simian/kick");
+    api->get_param(inst, "ui_hierarchy", h, (int)sizeof h);
+    CHECK(!strstr(h, "x_toy_"), "the toy's pages or keys outlived its last pad");
+    CHECK(strstr(h, "\"eng_sm_tone\"") != NULL, "the built-in engine's pages did not arrive");
+
+    /* ---- 7. the broken ones cost nothing, and say why ------------------- */
+    CHECK(strstr(logbuf, "engine plugin bad refused") && strstr(logbuf, "more than 8 knobs"),
+          "the refused plugin's reason was not logged:\n%s", logbuf);
+    CHECK(strstr(logbuf, "junk") && strstr(logbuf, "did not load"), "the unloadable file was not reported:\n%s", logbuf);
+    CHECK(strstr(logbuf, "engine plugin toy: 1 engines, 2 models, 2 pages"), "the good plugin was not reported:\n%s", logbuf);
+
+    api->destroy_instance(inst);
+    printf("%s  (%d checks, %d failures)\n", fails ? "FAILED" : "PASSED", checks, fails);
+    return fails ? 1 : 0;
+}

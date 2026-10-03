@@ -322,6 +322,32 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
 - LINK spreads an engine param only to pads running the same engine (the key simply is not the
   other pads'). `model` is never linked.
 
+### 🔌 Engines OTHER MODULES bring (2026-10-03, branch `served-engine-pages`)
+
+Josh: *"a module can simply provide its own kind of DR32 engine plugin with minimum friction for
+the developer"*, runtime, no DR32 release per engine. Test case: `schwung-omega` (its fork's branch
+`dr32-engine`: `src/dr32_engine.c`, `make dr32_engine.so`).
+
+- **The contract is `dsp/dr32_engine_api.h`** (MIT, so any module can vendor it): a module ships
+  `dr32_engine.so` beside its own files, exporting `dr32_engine_plugin`. Engines, params (BARE keys)
+  and models, the same shape as `dr32_engine_ops` / `dr32_model`.
+- **`dsp/dr32_plugins.c`** finds them in DR32's SIBLING module folders, on its OWN THREAD started by
+  the first `create_instance` (a directory walk + dlopen on the SPI callback is the kit-catalogue
+  mistake again). Filled privately, PUBLISHED ONCE, never changed, never unloaded. A saved kit
+  naming a plugin model before that waits (`dr32_plugins_wait`, in `dr32_kit_set_model`).
+- **Ids are per process** (`DR32_ENG_COUNT`+, discovery order sorted by folder name), family
+  `DR32_FAM_PLUGIN`. What a kit SAVES is the slug `<plugin id>/<model>` and the full keys
+  `x_<plugin id>_<engine>_<key>`. The built-in models keep their indices (ours first).
+- **Pages are built at run time from `src/engine_tpl.json`**, which `gen_engine_ui.mjs` writes so
+  the page shape has one owner. Served per kit like ours; a plugin engine in use also puts its keys
+  into the four base banks' copy lists (after `"sample","model"`, found by that exact text).
+- **The picker** reads `plugin_models` on open (`loadPlugins` in `src/browser.js`).
+- A plugin that breaks a rule is refused WHOLE and the reason is logged (`dr32: engine plugin ...
+  refused: ...`). `tests/test_plugins.c` loads a toy plugin, a rule-breaking one and a junk file
+  through the real `create_instance`.
+- ⚠ NOT DONE: a kit saved with a plugin pad, opened WITHOUT the plugin, restores that pad empty and
+  the next save drops it. `ui_engine`'s declared max in chain_params is still the built-in count.
+
 ### 🥁 The kit ports: 9W9, 6W6, 8W8, CW-78 (2026-09-22)
 
 Josh: *"let's start porting the other engines over"*. Four whole drum MACHINES by athousanddetails

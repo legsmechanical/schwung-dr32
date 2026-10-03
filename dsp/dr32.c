@@ -26,6 +26,10 @@
 
 static const host_api_v1_t *g_host = NULL;
 
+/* Room for the plugin engines' pages, and the base banks' copy lists. */
+#define DR32_PLUG_PAGES 192
+#define DR32_COPY_LISTS 8
+
 typedef struct {
     dr32_kit kit;
     float    scratch[2 * 1024];   // float mix before int16 conversion
@@ -57,6 +61,14 @@ typedef struct {
     struct dr32_eng_page *eng_pages;
     int      n_eng_pages;
     unsigned char *eng_served;   /* per page: is it in ui_hierarchy_src         */
+    /* ...and the pages of engines OTHER MODULES bring (dr32_plugins.c), which
+     * are the process's, not this instance's: `plug_served[i]` is the same
+     * flag for dr32_plugin_page_at(i). A base bank's copy list also takes the
+     * keys of each plugin engine in use, at `base_copy_at`. */
+    unsigned char plug_served[DR32_PLUG_PAGES];
+    long     base_copy_at[DR32_COPY_LISTS];
+    int      n_base_copy;
+    int      plug_logged;
     // src/chain_params.json, served as `chain_params` so the PAD cell's
     // `custom:padnum` viz reaches the host (which is what makes it load
     // canvas.js). It is the host's OWN fallback list plus that viz and
@@ -405,6 +417,12 @@ static void load_engine_ui(dr32_instance *in, const char *module_dir) {
                     in->n_eng_pages = n;
                     in->base_nav_at = entry_close + 1;
                     in->base_lv_at = hl_close;
+                    /* Each base bank's copy list, right after `model`: where a
+                     * plugin engine's keys go (written in order, so after the
+                     * model that makes the target pad that engine). */
+                    static const char COPY[] = "\"sample\",\"model\"";
+                    for (const char *c = hier; (c = strstr(c, COPY)) && in->n_base_copy < DR32_COPY_LISTS; c += sizeof(COPY) - 1)
+                        in->base_copy_at[in->n_base_copy++] = (long)(c - hier) + (long)sizeof(COPY) - 1;
                     ok = 1;
                 }
             }
@@ -417,15 +435,25 @@ static void load_engine_ui(dr32_instance *in, const char *module_dir) {
     }
 }
 
+static int engine_in_use(const dr32_kit *kit, int engine) {
+    for (int i = 0; i < DR32_PADS; i++) if (kit->pads[i].engine == engine) return 1;
+    return 0;
+}
+
 /* Does any pad run the engine (or family) this page is gated on? */
 static int eng_page_wanted(const dr32_kit *kit, const dr32_eng_page *p) {
     if (p->value < 0) return 1;
+    if (!p->by_family) return engine_in_use(kit, p->value);
     for (int i = 0; i < DR32_PADS; i++) {
         const dr32_pad_slot *s = &kit->pads[i];
-        if (!s->engine) continue;
-        if (p->by_family ? (s->eops && s->eops->family == p->value) : s->engine == p->value) return 1;
+        if (s->engine && s->eops && s->eops->family == p->value) return 1;
     }
     return 0;
+}
+
+static int plug_pages(void) {
+    int n = dr32_plugin_page_count();
+    return n < DR32_PLUG_PAGES ? n : DR32_PLUG_PAGES;
 }
 
 /* Is `ui_hierarchy_src` built for the engines the kit holds NOW? */
@@ -433,45 +461,100 @@ static int dr32_src_current(const dr32_instance *in) {
     if (!in->ui_hierarchy_src) return 0;
     for (int i = 0; i < in->n_eng_pages; i++)
         if (in->eng_served[i] != (unsigned char)eng_page_wanted(&in->kit, &in->eng_pages[i])) return 0;
+    for (int i = 0, n = plug_pages(); i < n; i++)
+        if (in->plug_served[i] != (unsigned char)engine_in_use(&in->kit, dr32_plugin_page_at(i)->engine)) return 0;
     return 1;
+}
+
+/* One thing to put into the base, at a byte offset. */
+typedef struct { long at; int kind; } dr32_insert;      /* kind: 0 copy keys, 1 nav, 2 levels */
+static int by_offset(const void *a, const void *b) {
+    long d = ((const dr32_insert *)a)->at - ((const dr32_insert *)b)->at;
+    return d < 0 ? -1 : d > 0;
 }
 
 /** `ui_hierarchy_src` = the base plus the pages of the engines in use: nav
  *  entries right after the `nav_after` level's entry, levels at the end of
- *  `levels`. Rebuilt only when that set changes. */
+ *  `levels`, and each plugin engine's keys in the base banks' copy lists
+ *  (their own built-in keys are in module.json already). Rebuilt only when
+ *  that set changes. */
 static void dr32_build_src(dr32_instance *in) {
     if (!in->ui_hierarchy_base || dr32_src_current(in)) return;
     const char *base = in->ui_hierarchy_base;
     size_t base_len = (size_t)in->ui_hierarchy_base_len, cap = base_len + 1;
-    int merge = in->base_nav_at >= 0;
+    int merge = in->base_nav_at >= 0, np = merge ? plug_pages() : 0;
+
+    /* What goes in, and how much room it takes. */
+    size_t copy_len = 0;
     for (int i = 0; merge && i < in->n_eng_pages; i++) {
         in->eng_served[i] = (unsigned char)eng_page_wanted(&in->kit, &in->eng_pages[i]);
         if (in->eng_served[i]) cap += (size_t)in->eng_pages[i].nav_len + (size_t)in->eng_pages[i].level_len + 2;
     }
+    for (int i = 0; i < np; i++) {
+        const dr32_plugin_page *p = dr32_plugin_page_at(i);
+        in->plug_served[i] = (unsigned char)engine_in_use(&in->kit, p->engine);
+        if (in->plug_served[i]) cap += (size_t)p->nav_len + (size_t)p->level_len + 2;
+    }
+    for (int e = 0, ne = merge ? dr32_plugin_engine_count() : 0; e < ne; e++)
+        if (engine_in_use(&in->kit, DR32_ENG_COUNT + e)) copy_len += strlen(dr32_plugin_engine_keys(DR32_ENG_COUNT + e));
+    cap += copy_len * (size_t)in->n_base_copy;
+
     char *out = (char *)malloc(cap);
     if (!out) return;
-    size_t n = 0;
-    if (!merge) {
-        memcpy(out, base, base_len); n = base_len;
-    } else {
-        size_t nav_at = (size_t)in->base_nav_at, lv_at = (size_t)in->base_lv_at;
-        memcpy(out + n, base, nav_at); n += nav_at;
-        for (int i = 0; i < in->n_eng_pages; i++) {
-            const dr32_eng_page *p = &in->eng_pages[i];
-            if (!in->eng_served[i] || !p->nav) continue;
-            out[n++] = ','; memcpy(out + n, p->nav, (size_t)p->nav_len); n += (size_t)p->nav_len;
-        }
-        memcpy(out + n, base + nav_at, lv_at - nav_at); n += lv_at - nav_at;
-        for (int i = 0; i < in->n_eng_pages; i++) {
-            const dr32_eng_page *p = &in->eng_pages[i];
-            if (!in->eng_served[i]) continue;
-            out[n++] = ','; memcpy(out + n, p->level, (size_t)p->level_len); n += (size_t)p->level_len;
-        }
-        memcpy(out + n, base + lv_at, base_len - lv_at); n += base_len - lv_at;
+    size_t n = 0, from = 0;
+    dr32_insert ins[DR32_COPY_LISTS + 2];
+    int ni = 0;
+    if (merge) {
+        for (int i = 0; copy_len && i < in->n_base_copy; i++) ins[ni++] = (dr32_insert){ in->base_copy_at[i], 0 };
+        ins[ni++] = (dr32_insert){ in->base_nav_at, 1 };
+        ins[ni++] = (dr32_insert){ in->base_lv_at, 2 };
+        qsort(ins, (size_t)ni, sizeof(ins[0]), by_offset);
     }
+    for (int k = 0; k < ni; k++) {
+        size_t at = (size_t)ins[k].at;
+        memcpy(out + n, base + from, at - from); n += at - from;
+        from = at;
+        if (ins[k].kind == 0) {
+            for (int e = 0, ne = dr32_plugin_engine_count(); e < ne; e++) {
+                if (!engine_in_use(&in->kit, DR32_ENG_COUNT + e)) continue;
+                const char *keys = dr32_plugin_engine_keys(DR32_ENG_COUNT + e);
+                size_t kl = strlen(keys);
+                memcpy(out + n, keys, kl); n += kl;
+            }
+            continue;
+        }
+        for (int i = 0; i < in->n_eng_pages; i++) {
+            const dr32_eng_page *p = &in->eng_pages[i];
+            const char *t = ins[k].kind == 1 ? p->nav : p->level;
+            size_t tl = (size_t)(ins[k].kind == 1 ? p->nav_len : p->level_len);
+            if (!in->eng_served[i] || !t) continue;
+            out[n++] = ','; memcpy(out + n, t, tl); n += tl;
+        }
+        for (int i = 0; i < np; i++) {
+            const dr32_plugin_page *p = dr32_plugin_page_at(i);
+            const char *t = ins[k].kind == 1 ? p->nav : p->level;
+            size_t tl = (size_t)(ins[k].kind == 1 ? p->nav_len : p->level_len);
+            if (!in->plug_served[i]) continue;
+            out[n++] = ','; memcpy(out + n, t, tl); n += tl;
+        }
+    }
+    memcpy(out + n, base + from, base_len - from); n += base_len - from;
     out[n] = '\0';
     free(in->ui_hierarchy_src);
     in->ui_hierarchy_src = out;
+
+    /* What the scan found, once it has: the host thread logs, the scan's does not. */
+    if (!in->plug_logged && dr32_plugins_ready()) {
+        in->plug_logged = 1;
+        const char *r = dr32_plugins_report();
+        for (const char *line = r; line && *line;) {
+            const char *nl = strchr(line, '\n');
+            char msg[512];
+            snprintf(msg, sizeof(msg), "%.*s", nl ? (int)(nl - line) : (int)strlen(line), line);
+            logmsg(msg);
+            line = nl ? nl + 1 : NULL;
+        }
+    }
 }
 
 /** Pull the ui_hierarchy object out of our own module.json, so the UI contract
@@ -589,6 +672,8 @@ static void *create_instance(const char *module_dir, const char *json_defaults) 
     /* Where 9W9 finds its cymbal WAVs. Only the path is kept here: the PCM is
      * decoded when a 9W9 model is first picked, never on the SPI callback. */
     dr32_engines_set_module_dir(module_dir);
+    /* Other modules' engines: found on a thread of their own, see dr32_plugins.c. */
+    dr32_plugins_start(module_dir);
     /* Empty, and NOT scanned yet: most instances never open the browser. The
      * browser's first read starts the scan on its own thread — see get_param. */
     in->kits = dr32_kits_create();
@@ -1040,6 +1125,15 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
         if (!in->chain_params || in->chain_params_len >= buf_len) return -1;
         memcpy(buf, in->chain_params, (size_t)in->chain_params_len + 1);
         return in->chain_params_len;
+    }
+    /* The picker's extra sections: the models other modules bring. "[]"
+     * until the scan has published, which is long before a hand gets here. */
+    if (!strcmp(key, "plugin_models")) {
+        const char *j = dr32_plugin_families_json();
+        int jl = (int)strlen(j);
+        if (jl >= buf_len) return -1;
+        memcpy(buf, j, (size_t)jl + 1);
+        return jl;
     }
     if (!strcmp(key, "ui_hierarchy")) {
         /* The pages follow the kit's engines. Every path that gives a pad an

@@ -157,16 +157,48 @@ const FAMILIES = [
 ];
 /* END GENERATED MODELS */
 
+/*
+ * ⭐ ...AND THE ENGINES OTHER MODULES BRING. A module that ships a
+ * `dr32_engine.so` offers DR32 its models (dsp/dr32_plugins.c); the DSP finds
+ * them at run time, so they cannot be in the generated list above. It serves
+ * them as `plugin_models`, in the same shape, and they follow our own
+ * sections. Read on OPEN: what is installed does not change while you browse.
+ * Anything but a well-formed list reads as none.
+ */
+let PLUGINS = [];
+function loadPlugins(ctx) {
+    const out = [];
+    try {
+        const raw = JSON.parse(ctx.getParam('plugin_models') || '[]');
+        for (let i = 0; Array.isArray(raw) && i < raw.length; i++) {
+            const f = raw[i];
+            if (!f || typeof f.id !== 'string' || typeof f.label !== 'string' || !Array.isArray(f.models)) continue;
+            if (familyOfBuiltin(f.id)) continue;      /* ours wins; the DSP refuses these too */
+            out.push({ id: f.id, label: f.label, models: f.models.filter((m) =>
+                m && typeof m.slug === 'string' && typeof m.name === 'string') });
+        }
+    } catch (e) { /* none */ }
+    PLUGINS = out;
+}
+
 /* The top menu: samples, then one section per engine family. */
 const SAMPLE_SECTION = 'sample';
 function sections() {
     const out = [{ label: 'Sample', section: SAMPLE_SECTION }];
     for (let i = 0; i < FAMILIES.length; i++)
         out.push({ label: FAMILIES[i].label, section: FAMILIES[i].id });
+    for (let i = 0; i < PLUGINS.length; i++)
+        out.push({ label: PLUGINS[i].label, section: PLUGINS[i].id });
     return out;
 }
-function familyOf(id) {
+function familyOfBuiltin(id) {
     for (let i = 0; i < FAMILIES.length; i++) if (FAMILIES[i].id === id) return FAMILIES[i];
+    return null;
+}
+function familyOf(id) {
+    const f = familyOfBuiltin(id);
+    if (f) return f;
+    for (let i = 0; i < PLUGINS.length; i++) if (PLUGINS[i].id === id) return PLUGINS[i];
     return null;
 }
 /* "simian/kick" -> the Simian family. */
@@ -771,6 +803,7 @@ globalThis.canvas_overlay = {
         const st = ctx.state;
         st.pad = focusedPad(ctx);
         st.loaded = '';
+        loadPlugins(ctx);
 
         /*
          * A pad that already HAS a sample opens on that sample's folder, with

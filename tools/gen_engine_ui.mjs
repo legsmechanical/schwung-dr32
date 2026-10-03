@@ -15,6 +15,8 @@
  *   module.json  every engine key plus `model` in each pad level's
  *                child_copy_keys; the `ui_engine` gate in chain_params.
  *   browser.js   the picker's model list, between its GENERATED markers.
+ *   engine_tpl.json  the page TEMPLATE for engines other modules bring
+ *                (dsp/dr32_plugins.c fills it in at run time).
  *
  * ⭐ WHY THE ENGINE PAGES ARE NOT IN module.json. The host's C loader
  * (chain_params.c parse_chain_params) refuses a module.json over 64 KB, and
@@ -42,6 +44,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MJ = join(ROOT, 'src/module.json');
 const BR = join(ROOT, 'src/browser.js');
 const EU = join(ROOT, 'src/engine_ui.json');
+const TP = join(ROOT, 'src/engine_tpl.json');
 
 /* ---- ask the engines ---------------------------------------------------- */
 function dumpEngines() {
@@ -61,7 +64,7 @@ function dumpEngines() {
                 '-c', join(ROOT, 'dsp/engines', f), '-o', o]);
             objs.push(o);
         }
-        for (const f of ['dsp/dr32_engine.c', 'tools/dump_engines.c']) {
+        for (const f of ['dsp/dr32_engine.c', 'dsp/dr32_plugins.c', 'tools/dump_engines.c']) {
             const o = join(dir, f.replace(/\W/g, '_') + '.o');
             execFileSync('cc', ['-std=c11', '-O1', '-I' + join(ROOT, 'dsp'), '-c', join(ROOT, f), '-o', o]);
             objs.push(o);
@@ -323,6 +326,23 @@ const outEu = JSON.stringify({
     levels: Object.fromEntries(genLevels),
 }) + '\n';
 
+/* ---- engine_tpl.json: the page of an engine ANOTHER MODULE brings --------
+ *
+ * dsp/dr32_plugins.c builds those pages at run time, and the shape of a page
+ * (the pad template, the copy list every pad level shares) is decided HERE.
+ * So this writes one level with tokens where an engine's own parts go, and the
+ * DSP fills them in: "@NAME@" the page name, "@ID@" the engine id (the quotes
+ * go with it), "@KEYS@" the engine's keys, ["@PARAMS@"] and ["@KNOBS@"] the
+ * whole arrays. Same key order as a generated level, so a plugin's page and a
+ * built-in's differ only in what the engine said.
+ */
+const tplLevel = { name: '@NAME@', visible_if: { param: 'ui_engine', equals: '@ID@' } };
+for (const t of TEMPLATE) tplLevel[t] = shape[t];
+tplLevel.child_copy_keys = withKeys(['@KEYS@']);
+tplLevel.params = ['@PARAMS@'];
+tplLevel.knobs = ['@KNOBS@'];
+const outTp = JSON.stringify({ level: tplLevel }) + '\n';
+
 /* ---- browser.js model list -------------------------------------------- */
 /* A section's label, where capitalising its slug prefix is not the name. */
 const FAMILY_LABEL = { '9w9': '9W9', '6w6': '6W6', '8w8': '8W8', cw78: 'CW-78', chowkick: 'ChowKick', fm: 'FM' };
@@ -423,6 +443,9 @@ const stale = [];
 let euText = '';
 try { euText = readFileSync(EU, 'utf8'); } catch { /* first run */ }
 if (outEu !== euText) stale.push('src/engine_ui.json');
+let tpText = '';
+try { tpText = readFileSync(TP, 'utf8'); } catch { /* first run */ }
+if (outTp !== tpText) stale.push('src/engine_tpl.json');
 if (outMj !== text) stale.push('src/module.json');
 if (outBr !== br) stale.push('src/browser.js');
 let cpText = '';
@@ -438,6 +461,7 @@ if (check) {
     writeFileSync(MJ, outMj);
     writeFileSync(BR, outBr);
     writeFileSync(EU, outEu);
+    writeFileSync(TP, outTp);
     writeFileSync(CP, outCp);
     console.log(`gen_engine_ui: wrote ${stale.length ? stale.join(', ') : 'nothing (up to date)'} — ` +
                 `${engines.length} engines, ${genLevels.length} pages, ${models.length} models, ` +

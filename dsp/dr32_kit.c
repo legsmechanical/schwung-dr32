@@ -213,6 +213,13 @@ const char *dr32_pad_model_name(const dr32_pad_slot *s) {
 int dr32_kit_set_model(dr32_kit *k, int pad, const char *slug) {
     if (!k || pad < 0 || pad >= DR32_PADS) return 0;
     int mi = dr32_model_find(slug);
+    if (mi < 0 && !dr32_plugins_ready()) {
+        /* Not one of ours, and the plugin scan has not published: a saved kit
+         * naming another module's model would otherwise restore as an empty
+         * pad. Host thread, and a kit load already reads files here. */
+        dr32_plugins_wait();
+        mi = dr32_model_find(slug);
+    }
     const dr32_model *m = dr32_model_at(mi);
     const dr32_engine_ops *e = m ? dr32_engine_get(m->engine) : NULL;
     if (!e) return 0;

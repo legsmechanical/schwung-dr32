@@ -26,6 +26,16 @@ for src in dsp/engines/*.c; do
   cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -Idsp/engines \
       -c "$src" -o "dist/tests/eng_$(basename "${src%.c}").o"
 done
+# Engines other modules bring (tests/test_plugins.c): a module tree as the
+# device has it, with DR32's own folder beside a good plugin, one that breaks a
+# rule, and a file that is not a shared object.
+mkdir -p dist/tests/plug/toy dist/tests/plug/bad dist/tests/plug/junk
+ln -s ../../../src dist/tests/plug/dr32
+cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared \
+   tests/fixtures/plugin/toy_engine.c -o dist/tests/plug/toy/dr32_engine.so -lm
+cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared -DTOY_BAD \
+   tests/fixtures/plugin/toy_engine.c -o dist/tests/plug/bad/dr32_engine.so -lm
+echo "not a shared object" > dist/tests/plug/junk/dr32_engine.so
 for src in tests/test_*.c; do
   name=$(basename "$src" .c)
   cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$src" -o "dist/tests/$name.o"
@@ -33,7 +43,7 @@ for src in tests/test_*.c; do
     cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$c" -o "dist/tests/$(basename "${c%.c}").o"
   done
   c++ -o "dist/tests/$name" "dist/tests/$name.o" dist/tests/dr32.o dist/tests/dr32_*.o dist/tests/wav.o \
-      dist/tests/eng_*.o -lm
+      dist/tests/eng_*.o -lm -ldl -lpthread
   "./dist/tests/$name" "$@" || fail=1
 done
 # module.json must satisfy the host's constraints (duplicate keys reject the
@@ -86,5 +96,5 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/render_score.o -c test
 c++ -o dist/tests/render_score dist/tests/render_score.o \
    dist/tests/dr32_params.o dist/tests/dr32_kit.o dist/tests/dr32_voice.o \
    dist/tests/dr32_effects.o dist/tests/dr32_preset.o dist/tests/dr32_json.o dist/tests/wav.o \
-   dist/tests/dr32_engine.o dist/tests/eng_*.o -lm || fail=1
+   dist/tests/dr32_engine.o dist/tests/dr32_plugins.o dist/tests/eng_*.o -lm -ldl -lpthread || fail=1
 exit $fail
