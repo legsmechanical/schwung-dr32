@@ -293,6 +293,14 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
   sends go silent. module.json is 18 KB now. The engine params are consequently absent from the
   host's C metadata; nothing reads them there. `build.sh` must ship the file
   (`check_build_script` pins it), and `check_module_json` checks the MERGED document.
+- ⭑ **Engine pages are served PER KIT** (branch `served-engine-pages`): a page is in the served
+  hierarchy only while some pad runs the engine (or kit-port family) its `visible_if` names
+  (`dr32_build_src` in `dsp/dr32.c`; `engine_ui.json` is cut into pages at create). A kit with no
+  synth pad serves 20 KB; every engine at once, 99 KB. The host re-reads on the `is_loading` edge a
+  `_model` / `_sample` write already arms, and `get_param("ui_hierarchy")` rebuilds if the set is
+  stale, so an engine in use is never without its pages. ⚠ `test_state.c` therefore puts one model
+  per GATE on pads 4+ before writing `served_hierarchy.json` — that is what keeps `pages_check`
+  validating all 41 engine pages. A page whose gate it cannot read is served always.
 - The SERVED hierarchy crosses the host's value channel (SHADOW_PARAM_VALUE_LEN: **128 KB** since
   host 1.3.0, upstream #444; 64 KB before), so it is minified, and an engine page's
   `child_copy_keys` carry only ITS engine's keys (it only shows on that engine's pads). Served

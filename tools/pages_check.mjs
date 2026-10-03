@@ -3,7 +3,8 @@
 //
 // The host plans every page from get_param("ui_hierarchy"), not from
 // module.json, so the input here is the served text (tests/test_state.c writes
-// it to dist/tests/served_hierarchy.json after loading two samples). The
+// it to dist/tests/served_hierarchy.json after loading two samples and a
+// model for every engine, so every engine page is in it). The
 // library is imported from a Schwung checkout — the upstream tree, not a fork —
 // because the rules that matter (viz groups must sit contiguously on one row,
 // child levels must resolve, voices must number 32 at notes 36..67) are the
@@ -63,7 +64,11 @@ voices.forEach((v, i) => {
 });
 const named = voices.filter((v) => !/^Pad \d+$/.test(v.name)).map((v) => v.name);
 console.log(`  voices: ${voices.length}, notes ${voices[0]?.note}..${voices[voices.length - 1]?.note}, named from the kit: ${JSON.stringify(named)}`);
-if (named.length !== 2) bad("expected exactly the two loaded samples to carry names");
+/* test_state loads two samples on pads 1-2, leaves pad 3 empty, then puts one
+ * model per engine gate on the pads after it so every engine page is served. */
+if (named[0] !== "dr32_state_kick" || named[1] !== "dr32_state_snare" || !/^Pad \d+$/.test(voices[2]?.name))
+    bad("expected the two loaded samples to name pads 1 and 2, and pad 3 to stay unnamed");
+if (named.length < 3) bad("no synth pad carries its model's name — the engine pages under test are not all served");
 
 // ---- contract validation, the host's rules
 const { findings } = validateContract({ id: "dr32", hierarchy, chainParams, capabilities: mod.capabilities });

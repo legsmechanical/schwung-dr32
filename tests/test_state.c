@@ -342,15 +342,72 @@ int main(void) {
                       "pad names wrong at splice %d: %.80s", spliced, q);
             }
             CHECK(anchors >= 3, "only %d child_index_param anchors — the three pad banks are gone", anchors);
-            /* Four base banks plus the synth engines' pages (41 today). An
-             * engine page that loses its names reads "Pad 7" over a pad the
-             * Pad bank calls "Kick". */
-            CHECK(anchors == 45, "%d pad levels; expected 45 (4 banks + 41 engine pages, merged from engine_ui.json)", anchors);
+            /* ⭑ ENGINE PAGES ARE SERVED PER KIT. Two sample pads run no
+             * engine, so the document is the four base banks and not one
+             * engine page: a page no pad can show is bytes of the host's value
+             * channel spent on nothing. */
+            CHECK(anchors == 4, "%d pad levels on a kit with no synth pad; expected the 4 base banks only", anchors);
+            CHECK(strstr(h, "\"eng_") == NULL, "an engine page is served with no synth pad in the kit");
             CHECK(spliced == anchors,
                   "child_names spliced %d times for %d anchors — every pad bank needs its own names",
                   spliced, anchors);
+            int n_samples_only = n;
+
+            /* One pad per GATE (each engine, and each kit port's family) brings
+             * every engine page in: 41 today, beside the four banks. Pad 3 is
+             * left empty, so the names above still read the same. An engine
+             * page that loses its names reads "Pad 7" over a pad the Pad bank
+             * calls "Kick". */
+            int pad = 4, last_pad = 0;
+            unsigned char seen_eng[DR32_ENG_COUNT] = {0}, seen_fam[16] = {0};
+            for (int i = 0; i < dr32_model_count() && pad <= DR32_PADS; i++) {
+                const dr32_model *m = dr32_model_at(i);
+                const dr32_engine_ops *e = dr32_engine_get(m->engine);
+                if (!e) continue;
+                int port = e->family >= DR32_FAM_9W9 && e->family <= DR32_FAM_CW78;
+                unsigned char *seen = port ? &seen_fam[e->family] : &seen_eng[m->engine];
+                if (*seen) continue;
+                *seen = 1;
+                char key[32];
+                snprintf(key, sizeof(key), "pad%d_model", pad);
+                api->set_param(inst, key, m->slug);
+                last_pad = pad++;
+            }
+            char lv[8];
+            api->get_param(inst, "is_loading", lv, (int)sizeof lv);
+            CHECK(!strcmp(lv, "1"), "a model change did not arm is_loading ('%s') — the host would never read the new pages", lv);
+            n = api->get_param(inst, "ui_hierarchy", h, (int)sizeof(h));
+            CHECK(n > 2, "ui_hierarchy not served with synth pads (%d bytes)", n);
+            anchors = spliced = 0;
+            for (const char *q = h; (q = strstr(q, "\"child_index_param\"")); q++) anchors++;
+            for (const char *q = h; (q = strstr(q, "\"child_names\": [")); q++) {
+                spliced++;
+                CHECK(strstr(q, "\"dr32_state_kick\", \"dr32_state_snare\", \"\"") == q + 16,
+                      "pad names wrong at splice %d: %.80s", spliced, q);
+            }
+            CHECK(anchors == 45, "%d pad levels; expected 45 (4 banks + 41 engine pages) with every engine in the kit", anchors);
+            CHECK(spliced == anchors,
+                  "child_names spliced %d times for %d anchors — every pad bank needs its own names",
+                  spliced, anchors);
+            printf("  served hierarchy: %d bytes with no synth pad, %d with every engine\n", n_samples_only, n);
+            /* Every page, so tools/pages_check.mjs runs the host's validator
+             * over all of them. */
             FILE *f = fopen("dist/tests/served_hierarchy.json", "w");
             if (f) { fputs(h, f); fclose(f); }
+
+            /* ...and a pad that stops running an engine takes its pages away:
+             * the last one becomes a sample pad. */
+            if (last_pad) {
+                static char h2[131072];
+                char key[32];
+                snprintf(key, sizeof(key), "pad%d_sample", last_pad);
+                api->set_param(inst, key, wa);
+                int n2 = api->get_param(inst, "ui_hierarchy", h2, (int)sizeof(h2));
+                int a2 = 0;
+                for (const char *q = h2; (q = strstr(q, "\"child_index_param\"")); q++) a2++;
+                CHECK(n2 > 2 && a2 >= 4 && a2 < 45,
+                      "%d pad levels after the last engine left the kit; its pages should have gone", a2);
+            }
 
             /* chain_params: served verbatim from src/chain_params.json (the
              * host's fallback plus the PAD cell's viz — its equivalence to the
