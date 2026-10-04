@@ -165,9 +165,10 @@ the device too, under Module Help.
 - **A pad that plays another module's engine needs that module installed.** Open the set on a
   Move without it and the pad is silent and reads "*name* missing". Nothing is lost: the pad's
   sound and settings are kept, and it plays again once the module is back.
-- **A kit holds a limited number of *different* engines** once other modules' engines are in it.
-  Past the limit the picker says "TOO MANY ENGINES IN KIT" and leaves the pad alone. Any number of
-  pads can share an engine that is already in the kit.
+- **In a kit with very many *different* engines, a pad's engine pages can take a moment to appear.**
+  DR32's own engines all fit together. Add enough engines from other modules and DR32 keeps the
+  pages of the pad you are on and the engines you used last; moving to a pad whose engine is not
+  among them shows Pad and Mix first, and its engine pages a fraction of a second later.
 - **A newly installed module's engines appear after the Move restarts.** DR32 looks for them once,
   when it starts.
 - A synth pad's velocity response is the engine's own, so its **Vel Vol** starts at 0. Turn it up to

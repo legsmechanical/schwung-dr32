@@ -456,7 +456,7 @@ function clampScroll(st) {
 function refusal(ctx, st) {
     if (!st.wrote) return false;
     if (ctx.getParam('model_refused') !== st.pad + ':' + st.wrote) return false;
-    st.notice = 'TOO MANY ENGINES IN KIT';
+    st.notice = 'ENGINE TOO BIG';
     if (st.loaded === st.wrote) st.loaded = '';
     return true;
 }
@@ -470,9 +470,10 @@ function audition(ctx, st) {
         /* A model: the same one-write rule, on the model key. */
         if (row.model === st.loaded) return;
         ctx.setParam('pad' + st.pad + '_model', row.model);
-        /* ⭑ THE DSP MAY REFUSE IT: a kit's engine pages have a budget, and a
-         * model whose engine would pass it is turned down with the pad left as
-         * it was (dsp/dr32.c, dr32_model_fits). `wrote` is what refusal() looks
+        /* ⭑ THE DSP MAY REFUSE IT: an engine whose pages could not be served
+         * even alone is turned down with the pad left as it was (dsp/dr32.c,
+         * dr32_model_fits; no engine that keeps the plugin rules is that big,
+         * so this is a backstop). `wrote` is what refusal() looks
          * for: the answer is not asked for here, because a host may deliver
          * the write some frames after this call (dAVEBOx confirms its writes),
          * and an answer read now would be about the write before. */

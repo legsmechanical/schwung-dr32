@@ -131,7 +131,7 @@
 </header>
 
 <div class="note">
-  <p><strong>This manual is for DR32 0.5.0, which requires Schwung 1.5.0 or later.</strong> 1.5.0
+  <p><strong>This manual is for DR32 0.5.1, which requires Schwung 1.5.0 or later.</strong> 1.5.0
   is where a synth pad's pages learned to follow the pad, where the Resample page became
   something you can click into, and where the envelope picture learned DR32's two envelope
   modes. Install and update DR32 from Schwung Manager.</p>
@@ -427,11 +427,11 @@ switched.</p>
       lossless and reopen correctly on Move &mdash; but they are not played back.</li>
   <li>Return-chain effects saved inside a Move kit are preserved, but not set up for you.</li>
   <li>Browsing kits has no undo, as above.</li>
-  <li>A kit can hold only so many <em>different</em> engines, because each one's pages take room
-      in what DR32 hands the host. DR32's own engines all fit together. With engines from other
-      modules in the kit you can reach the limit: the picker then says &ldquo;TOO MANY ENGINES IN
-      KIT&rdquo; and leaves the pad as it was. More pads of an engine already in the kit are
-      always fine.</li>
+  <li>In a kit with very many <em>different</em> engines, a pad's engine pages can take a moment
+      to appear. Each engine's pages take room in what DR32 hands the host. DR32's own engines all
+      fit together. With enough engines from other modules in the kit, DR32 keeps the pages of the
+      pad you are on and of the engines you used last; move to a pad whose engine is not among
+      them and you see Pad and Mix first, and its engine pages a fraction of a second later.</li>
   <li>An engine from another module needs that module installed; without it the pad is silent
       until the module is back.</li>
   <li>Each drum-machine pad is a whole machine of its own, so two 8W8 hat pads do not share their

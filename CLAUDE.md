@@ -372,27 +372,46 @@ ours and may never ship one upstream: name no specific module in the doc, the he
 - **Version policy**: a plugin refuses only a host OLDER than its header; DR32 keeps a reader for
   every contract version it has shipped. The validator requires equality today only because 1 is
   the only version there is.
-- ⭑ **A model whose pages would pass the BUDGET is REFUSED** (Josh, 2026-10-04: "build refusal
-  first"). `set_param` asks `dr32_model_fits` before applying a `pad<N>_model` write: the document
-  as it WOULD be (the `_if` helpers take a what-if pad and engine). Refused, the pad is untouched,
-  `model_refused` reads `<pad>:<slug>` and `browser.js` shows "TOO MANY ENGINES IN KIT" (no colon:
-  the picker's font has no glyph for one).
-  - 🔴 **The budget is 100 KB (`DR32_PAGE_BUDGET`), NOT the channel's 128.** First built against
-    128: a test kit served at 127.5 KB made the page view jump to My Presets under dAVEBOx on the
-    device. The channel is shared: dAVEBOx's bulk GET packs `ui_hierarchy`, `chain_params` and
-    `state` into ONE 128 KB reply (`shim_handle_param_bulk`). 98 KB is what 0.4.x served every kit
-    on both hosts, so 100 is the size known to work. ⚠ The bulk overflow is my reading of the host
-    code, not a traced fact; the 100 KB figure rests on 0.4.x's record, not on that reading.
-  - **Pad NAMES are not counted**, or a kit 0.4.x served could be refused a built-in engine because
-    of what its samples are called. Our own engines' pages total 92 KB, so a kit of only ours is
-    never refused (`test_state.c` pins it).
+- ⭑ **Over the page BUDGET, a kit is served the engines IN HAND** (0.5.1; Josh, 2026-10-04: "i like
+  that second option"; 0.5.0 refused the model that tipped a kit over). `dr32_select_engines` in
+  `dsp/dr32.c`: every engine the kit runs while they fit `DR32_PAGE_BUDGET`; past it, the FOCUSED
+  pad's engine first, then the engines focused most recently, each taken if it still fits. Under
+  the budget nothing changed: the served document is byte-identical to 0.5.0's (checked against a
+  0.5.0 worktree with one model per gate on the pads).
+  - **Focus on an unserved engine is found in the `is_loading` read**, which rebuilds the document
+    and answers "1" for `DR32_FOCUS_SETTLE_BLOCKS` (20 = 58 ms; the read that finds it is itself
+    the "1", so the window only has to be over by the next poll). 🔴 Not where focus moves: that is
+    the audio thread (`dr32_kit.c`, a pad hit) and the rebuild allocates. `get_param("ui_hierarchy")`
+    rebuilds too, so a host that reads before it polls gets the pages with no pulse.
+  - **The recency order is what stops a re-read per pad change.** Stamps are taken on the host's
+    reads (`note_focus`), not on the audio thread; an engine focused and left between two polls is
+    simply not remembered.
+  - **The copy lists follow the SERVED set**, and the focused pad is always in it, so Copy from the
+    pad in hand always carries its engine's keys.
+  - 🔴 **The budget is 100 KB, NOT the channel's 128.** First built against 128: a test kit served
+    at 127.5 KB made the page view jump to My Presets under dAVEBOx on the device. The channel is
+    shared: dAVEBOx's bulk GET packs `ui_hierarchy`, `chain_params` and `state` into ONE 128 KB
+    reply (`shim_handle_param_bulk`). 98 KB is what 0.4.x served every kit on both hosts, so 100 is
+    the size known to work. ⚠ The bulk overflow is my reading of the host code, not a traced fact.
+  - **Pad NAMES are not counted**, or what a kit serves would depend on what its samples are
+    called. Our own engines' pages total 92 KB, so a kit of only ours serves them all
+    (`test_state.c` pins it).
+  - **The refusal is now only a BACKSTOP**: `dr32_model_fits` turns down an engine whose pages
+    ALONE pass the budget (`model_refused` = `<pad>:<slug>`, picker notice "ENGINE TOO BIG"). No
+    plugin that keeps the rules is that big, so the tests reach it with `DR32_PAGE_BUDGET` in the
+    environment (read at `create_instance`).
   - 🔴 **The picker must not ask "was my write refused" right after `setParam`.** dAVEBOx delivers
     a write frames later and confirms it (it rewrites three times: its log says "write
-    UNCONFIRMED"), so an immediate read answers for the write BEFORE. On the device: no notice, and
-    the click closed the browser on an unchanged pad. `refusal()` is asked on every draw and on a
-    click, and a refused click does not close. `check_browser_nav` §14 delivers the answer late. Only on `set_param`: a
-  state restore applies keys straight to the kit, since a saved set did fit. An engine already in
-  the kit costs nothing more. `test_plugins.c` 6d: seven 32-knob engines fit, the eighth is refused.
+    UNCONFIRMED"), so an immediate read answers for the write BEFORE. `refusal()` is asked on every
+    draw and on a click, and a refused click does not close. `check_browser_nav` §14 delivers the
+    answer late.
+  - `test_plugins.c` 6d: twelve 32-knob engines on pads, six fit together; every one is reachable
+    by focus, the last six focused are the ones kept, moving among them re-reads nothing. 6e: the
+    backstop. ⚠ The test must not read the hierarchy between moving focus and polling `is_loading`:
+    that read rebuilds, and there is nothing left for the pulse to announce (the first version of
+    the test passed with the pulse removed for exactly this reason).
+  - Not pinned: the key roll-back in `dr32_select_engines` when an engine is turned down (it only
+    matters for engines that SHARE keys, i.e. kit-port lanes, and those cannot pass the budget).
 - Should a restore still go over, `dr32_refresh_hierarchy` drops pad names first, then stops
   updating, and LOGS which (it was silent).
 - **`dsp/dr32_plugin_validate.c` is the rules, with no dependency but the API header**, because the

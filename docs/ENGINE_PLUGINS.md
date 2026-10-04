@@ -615,10 +615,15 @@ What to expect either way:
   DR32 serves pages only for the engines a kit is using, and a page costs
   roughly 2 to 3 KB, so one kit has room for about 30 engine pages in total
   across every engine on its pads. An engine with three pages leaves room for
-  more variety in a kit than one with six. A model whose engine would take the
-  kit past the limit is refused: the pad stays as it was, and the picker says
-  "TOO MANY ENGINES IN KIT". An engine already on another pad costs nothing
-  more, so the limit is on how many *different* engines a kit holds.
+  more variety in a kit than one with six. A kit whose engines need more than
+  the budget still loads and plays in full: DR32 then serves the pages of the
+  focused pad's engine and of the engines focused most recently, and when focus
+  moves to a pad whose engine is not among them it rebuilds the description and
+  has the host read it again. The user sees that pad's engine pages arrive a
+  fraction of a second after the pad's own. So the fewer pages your engine
+  needs, the more engines a kit can show without that pause. (An engine whose
+  pages alone passed the budget would be refused, with "ENGINE TOO BIG" in the
+  picker; the limits above keep every valid plugin far below that.)
 
 ## Checklist
 
