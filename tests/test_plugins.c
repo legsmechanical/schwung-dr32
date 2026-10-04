@@ -26,6 +26,10 @@
 
 extern plugin_api_v2_t *move_plugin_init_v2(const host_api_v1_t *host);
 
+/* dsp/dr32.c's DR32_FOCUS_SETTLE_BLOCKS: how long is_loading holds after focus
+ * lands on an engine that was not being served. */
+#define DR32_TEST_FOCUS_BLOCKS 20
+
 static int checks, fails;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
@@ -280,68 +284,179 @@ int main(void) {
         api->destroy_instance(g);
     }
 
-    /* ---- 6d. a model whose pages would not fit is REFUSED ---------------- */
+    /* ---- 6d. more engines than fit: the ones in hand are served --------- */
     {
-        /* The host carries a module's page description in 128 KB, and DR32
-         * serves pages for the engines a kit runs. Twelve 32-knob engines do
-         * not fit. The one that would tip it over must be turned down with its
-         * pad left exactly as it was — the alternative is a synth pad that
-         * plays and has no pages, with nothing to say why. */
+        /* DR32 serves pages for the engines a kit runs, inside a 100 KB budget.
+         * Twelve 32-knob engines do not fit it together. All twelve go on pads
+         * anyway; what is served is the focused pad's engine and the ones
+         * focused most recently, and focusing an engine that is not served
+         * rebuilds the document and pulses is_loading so the host re-reads. */
         void *g = api->create_instance("dist/tests/plug/dr32", NULL);
-        char key[32], slug[32];
-        api->set_param(g, "pad12_model", "toy/low");       /* what the refused pad must keep */
-        api->set_param(g, "pad12_x_toy_sine_pitch", "222");
-        int accepted = 0, first_refused = -1;
+        static char h2[131072];
+        char key[32], slug[32], want[64];
+        #define FOCUS(e) (snprintf(key, sizeof key, "%d", (e) + 1), api->set_param(g, "ui_current_pad", key))
+        #define LOADING() (v[0] = 0, api->get_param(g, "is_loading", v, (int)sizeof v), v[0] == '1')
+        #define SERVED(doc, e) (snprintf(want, sizeof want, "\"eng_x_zzbig_e%d_alpha\"", (e)), strstr(doc, want) != NULL)
+        #define SETTLE(n) do { for (int b_ = 0; b_ < (n); b_++) api->render_block(g, out, 128); } while (0)
+        api->set_param(g, "ui_current_pad", "32");          /* a sample pad: nothing is forced in */
+        const char *log0 = logbuf + strlen(logbuf);
+        int under_ok = 1, fit = 0;
         for (int e = 0; e < 12; e++) {
             snprintf(key, sizeof key, "pad%d_model", e + 1);
             snprintf(slug, sizeof slug, "zzbig/e%d", e);
             api->set_param(g, key, slug);
             v[0] = 0; api->get_param(g, key, v, (int)sizeof v);
-            int took = !strcmp(v, slug);
+            CHECK(!strcmp(v, slug), "engine %d was not taken (reads '%s'): a kit over the budget is not refused a model", e, v);
             char why[64] = ""; api->get_param(g, "model_refused", why, (int)sizeof why);
-            if (took) {
-                accepted++;
-                CHECK(first_refused < 0, "engine %d was accepted after engine %d had been refused for room", e, first_refused);
-                CHECK(!why[0], "model_refused reads '%s' after a model was accepted", why);
-            } else {
-                if (first_refused < 0) first_refused = e;
-                char want[48];
-                snprintf(want, sizeof want, "%d:%s", e + 1, slug);
-                CHECK(!strcmp(why, want), "engine %d was not taken and model_refused reads '%s', want '%s'", e, why, want);
-            }
-            /* Whatever was decided, what is served fits, whole, with its names. */
+            CHECK(!why[0], "model_refused reads '%s' after engine %d was accepted", why, e);
             int hn = api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
             CHECK(hn > 2 && hn < 110000, "after engine %d the hierarchy is %d bytes: the pages are budgeted at 100 KB and this kit's names are short", e, hn);
             CHECK(count(h, "\"child_names\": [") == count(h, "\"child_index_param\""),
                   "after engine %d the served hierarchy lost its pad names (%d bytes)", e, hn);
-            if (took) {
-                char want[48];
-                snprintf(want, sizeof want, "\"eng_x_zzbig_e%d_alpha\"", e);
-                CHECK(strstr(h, want) != NULL, "engine %d is on a pad and its pages are not served", e);
-            }
+            int all = 1;
+            for (int k = 0; k <= e; k++) all = all && SERVED(h, k);
+            if (all && under_ok) fit = e + 1; else under_ok = 0;
         }
-        CHECK(accepted >= 4 && accepted < 12, "%d of the 12 big engines were accepted; some must fit and not all can", accepted);
-        printf("  a kit holds %d of these 32-knob engines; the next is refused\n", accepted);
-        /* The pad that was refused last is untouched: still the toy, still its edit. */
+        CHECK(fit >= 4 && fit < 12, "%d of the 12 big engines were served together; some must fit and not all can", fit);
+        CHECK(strstr(log0, "serving the focused pad's engine and the most recently used"), "going over the budget was not logged");
+        CHECK(count(log0, "serving the focused pad's engine") == 1, "going over the budget was logged %d times, want once", count(log0, "serving the focused pad's engine"));
+        printf("  %d of these 32-knob engines are served together; a kit of 12 serves the ones in hand\n", fit);
+        SETTLE(130);
+        (void)LOADING();                                     /* the model writes' own pulse, spent */
+        CHECK(!LOADING(), "is_loading still reads 1 long after the last model write");
+
+        /* Every engine can be reached: focus it, and its pages and copy keys are there. */
+        int unserved_seen = 0;
+        api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+        for (int e = 0; e < 12; e++) {
+            /* ⚠ `h` is what the host HOLDS (the last read). Reading the
+             * hierarchy again here would rebuild it around the new focus, and
+             * there would be nothing left for is_loading to announce. */
+            int was = SERVED(h, e);
+            unserved_seen += !was;
+            FOCUS(e);
+            int pulse = LOADING();
+            CHECK(pulse == !was, "focus on engine %d (%s before): is_loading read %d", e, was ? "served" : "not served", pulse);
+            if (pulse) {
+                SETTLE(DR32_TEST_FOCUS_BLOCKS - 2);
+                CHECK(LOADING(), "focus on engine %d: is_loading fell before %d blocks; a second reader would miss it", e, DR32_TEST_FOCUS_BLOCKS - 2);
+                SETTLE(3);
+            }
+            CHECK(!LOADING(), "focus on engine %d: is_loading did not fall after %d blocks", e, DR32_TEST_FOCUS_BLOCKS + 1);
+            int hn = api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+            CHECK(SERVED(h, e), "engine %d is in focus and its pages are not served", e);
+            CHECK(hn < 110000, "focused on engine %d the hierarchy is %d bytes", e, hn);
+            CHECK(count(h, "\"child_names\": [") == count(h, "\"child_index_param\""), "focused on engine %d the pad names were lost", e);
+            /* Copy copies FROM the focused pad, so its engine's keys must be in the base banks' lists. */
+            const char *cl = strstr(h, "\"sample\",\"model\"");
+            const char *ce = cl ? strchr(cl, ']') : NULL;
+            snprintf(want, sizeof want, "\"x_zzbig_e%d_knob_number_00\"", e);
+            const char *ck = cl ? strstr(cl, want) : NULL;
+            CHECK(ck && ce && ck < ce, "engine %d is in focus and its keys are not in the base copy list", e);
+        }
+
+        CHECK(unserved_seen >= 12 - fit, "only %d of the focus steps landed on an unserved engine; the walk tested nothing", unserved_seen);
+
+        /* ⭑ THE RECENCY ORDER: the engines focused last (11, 10, 9 ...) are the
+         * ones served, so going back over them re-reads nothing. */
+        api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+        int kept = 0;
+        for (int e = 0; e < 12; e++) kept += SERVED(h, e);
+        CHECK(kept == fit, "%d engines are served in the 12-engine kit, want the %d that fit", kept, fit);
+        for (int e = 12 - fit; e < 12; e++) CHECK(SERVED(h, e), "engine %d was focused among the last %d and is not served", e, fit);
+        for (int round = 0; round < 2; round++)
+            for (int e = 12 - fit; e < 12; e++) {
+                FOCUS(e);
+                CHECK(!LOADING(), "moving among served engines pulsed is_loading (engine %d)", e);
+                api->get_param(g, "ui_hierarchy", h2, (int)sizeof h2);
+                CHECK(!strcmp(h, h2), "moving among served engines changed the document (engine %d)", e);
+            }
+        /* One step outside, and it is the OLDEST of them that gives way. */
+        FOCUS(0);
+        CHECK(LOADING(), "focus on an unserved engine did not pulse is_loading");
+        api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+        CHECK(SERVED(h, 0) && !SERVED(h, 12 - fit), "engine 0 took focus: served 0=%d, the oldest (%d)=%d; want 1 and 0", SERVED(h, 0), 12 - fit, SERVED(h, 12 - fit));
+        for (int e = 12 - fit + 1; e < 12; e++) CHECK(SERVED(h, e), "engine %d was dropped though an older one could go", e);
+        /* The net under the pulse: a host that reads the hierarchy before it
+         * polls gets the focused engine's pages from that read. */
+        SETTLE(DR32_TEST_FOCUS_BLOCKS + 1); (void)LOADING();
+        FOCUS(1);
+        CHECK(!SERVED(h, 1), "engine 1 should have been unserved here; the check below tests nothing");
+        api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+        CHECK(SERVED(h, 1), "a hierarchy read with an unserved engine in focus did not serve it");
+        /* A sample pad in focus asks for nothing. */
+        SETTLE(DR32_TEST_FOCUS_BLOCKS + 1); (void)LOADING();
+        api->set_param(g, "ui_current_pad", "32");
+        CHECK(!LOADING(), "focus on a sample pad pulsed is_loading");
+        api->get_param(g, "ui_hierarchy", h2, (int)sizeof h2);
+        CHECK(!strcmp(h, h2), "focus on a sample pad changed the document");
+
+        /* Both render paths and a saved kit: the set comes back whole, over budget or not. */
+        static char st[65536];
+        int sn = api->get_param(g, "state", st, (int)sizeof st);
+        CHECK(sn > 0, "no state from the 12-engine kit");
+        void *r = api->create_instance("dist/tests/plug/dr32", NULL);
+        api->set_param(r, "state", st);
+        for (int e = 0; e < 12; e++) {
+            snprintf(key, sizeof key, "pad%d_model", e + 1);
+            snprintf(slug, sizeof slug, "zzbig/e%d", e);
+            v[0] = 0; api->get_param(r, key, v, (int)sizeof v);
+            CHECK(!strcmp(v, slug), "restored: pad %d reads '%s', want %s", e + 1, v, slug);
+        }
+        int rn = api->get_param(r, "ui_hierarchy", h2, (int)sizeof h2);
+        CHECK(rn > 2 && rn < 110000, "restored: the hierarchy is %d bytes", rn);
+        api->destroy_instance(r);
+
+        /* Back under the budget, every engine is served whatever is in focus. */
+        for (int e = fit; e < 12; e++) {
+            snprintf(key, sizeof key, "pad%d_model", e + 1);
+            api->set_param(g, key, "toy/high");
+        }
+        api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+        for (int e = 0; e < fit; e++) CHECK(SERVED(h, e), "under the budget again and engine %d is not served", e);
+        SETTLE(130); (void)LOADING();
+        for (int e = 0; e < fit; e++) {
+            FOCUS(e);
+            CHECK(!LOADING(), "under the budget, focus on engine %d pulsed is_loading", e);
+            api->get_param(g, "ui_hierarchy", h2, (int)sizeof h2);
+            CHECK(!strcmp(h, h2), "under the budget, focus on engine %d changed the document", e);
+        }
+        api->destroy_instance(g);
+        #undef FOCUS
+        #undef LOADING
+        #undef SERVED
+        #undef SETTLE
+    }
+
+    /* ---- 6e. an engine too big to serve ALONE is refused ----------------- */
+    {
+        /* The backstop. No plugin that passes the rules is this big, so the
+         * budget is brought down to where one is: room for the toy, not for a
+         * 32-knob engine. The pad must be left exactly as it was — the
+         * alternative is a synth pad that plays and can never have pages. */
+        void *g = api->create_instance("dist/tests/plug/dr32", NULL);
+        int empty = api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+        api->destroy_instance(g);
+        char budget[16];
+        snprintf(budget, sizeof budget, "%d", empty + 5000);
+        setenv("DR32_PAGE_BUDGET", budget, 1);
+        g = api->create_instance("dist/tests/plug/dr32", NULL);
+        unsetenv("DR32_PAGE_BUDGET");
+        api->set_param(g, "pad12_model", "toy/low");
+        api->set_param(g, "pad12_x_toy_sine_pitch", "222");
+        v[0] = 0; api->get_param(g, "pad12_model", v, (int)sizeof v);
+        CHECK(!strcmp(v, "toy/low"), "the small engine was refused under a %s byte budget (reads '%s')", budget, v);
+        api->set_param(g, "pad12_model", "zzbig/e3");
         v[0] = 0; api->get_param(g, "pad12_model", v, (int)sizeof v);
         CHECK(!strcmp(v, "toy/low"), "the refused pad did not keep its model (reads '%s')", v);
         v[0] = 0; api->get_param(g, "pad12_x_toy_sine_pitch", v, (int)sizeof v);
         CHECK(atof(v) == 222.0, "the refused pad lost its knob value (reads %s)", v);
-        CHECK(strstr(logbuf, "refused: with it the kit's engine pages would pass"), "the refusal was not logged");
-        /* Room made is room that can be used: one big engine out, the refused one in. */
-        if (first_refused >= 0) {
-            api->set_param(g, "pad1_model", "toy/high");
-            snprintf(key, sizeof key, "pad%d_model", first_refused + 1);
-            snprintf(slug, sizeof slug, "zzbig/e%d", first_refused);
-            api->set_param(g, key, slug);
-            v[0] = 0; api->get_param(g, key, v, (int)sizeof v);
-            CHECK(!strcmp(v, slug), "with one engine removed, the refused model is still refused (reads '%s')", v);
-        }
-        /* An engine ALREADY in the kit costs nothing more: a second pad takes it. */
-        snprintf(slug, sizeof slug, "zzbig/e%d", accepted - 1);
-        api->set_param(g, "pad20_model", slug);
-        v[0] = 0; api->get_param(g, "pad20_model", v, (int)sizeof v);
-        CHECK(!strcmp(v, slug), "a model whose engine the kit already runs was refused (reads '%s')", v);
+        char why[64] = ""; api->get_param(g, "model_refused", why, (int)sizeof why);
+        CHECK(!strcmp(why, "12:zzbig/e3"), "model_refused reads '%s', want '12:zzbig/e3'", why);
+        CHECK(strstr(logbuf, "refused: its engine's pages alone pass"), "the refusal was not logged");
+        api->set_param(g, "pad5_model", "toy/high");
+        why[0] = 0; api->get_param(g, "model_refused", why, (int)sizeof why);
+        CHECK(!why[0], "model_refused reads '%s' after a model was accepted", why);
         api->destroy_instance(g);
     }
 

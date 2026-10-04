@@ -499,8 +499,8 @@ check('...and stays put, for the host to close', sect(), '');
 
 /* ── 14. A REFUSED MODEL ──────────────────────────────────────────────────
  *
- * The DSP turns down a model whose engine would take the kit past its page
- * budget (dsp/dr32.c, dr32_model_fits) and says so through `model_refused`,
+ * The DSP turns down a model whose engine's pages could not be served even
+ * alone (dsp/dr32.c, dr32_model_fits) and says so through `model_refused`,
  * as "<pad>:<slug>". Three things have to hold here:
  *   - the header says why, or the row just looks dead
  *   - a CLICK does not close the browser on a model that did not load
@@ -536,7 +536,7 @@ check('...and stays put, for the host to close', sect(), '');
     check('the DSP said which', params.model_refused, '7:' + wrote);
     const noticed = headerInk();
     check('the header changes to the notice', noticed !== plain && noticed > 0, true);
-    check('...and it is the notice', ctx.state.notice, 'TOO MANY ENGINES IN KIT');
+    check('...and it is the notice', ctx.state.notice, 'ENGINE TOO BIG');
     click();
     deliver(true);
     check('clicking a refused model does NOT close the browser', closed, 0);
