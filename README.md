@@ -54,6 +54,11 @@ Link, Copy and Delete, and the per-pad buses all treat a synth pad the same as a
 | **ChowKick** | [ChowKick](https://github.com/Chowdhury-DSP/ChowKick), Chowdhury DSP's kick synth: a pulse shaped by a modelled diode circuit, rung through a nonlinear resonant filter. Its five factory presets are the models | Pulse · Body · Noise |
 | **FM** | DR32's own FM drums, after the idea of the Machinedrum's EFM machines: a swept sine carrier, a modulator with feedback, and a filtered noise layer. Four engines, each with knob ranges sized for its drums: **FM Kick** (Kick, Tom), **FM Snare** (Snare, Clap, Rim; its noise can fire repeated Bursts), **FM Metal** (hats, cymbal, cowbell, from three cross-modulated operator pairs) and **FM Perc** (wide ranges plus a Mangle page for strange sounds). How hard you hit can move pitch, sweep, decay, FM depth and noise. 14 drums | Tone · FM (Metal) · Noise · (Mangle) · Output · Velocity |
 
+**Other modules can add engines of their own.** A module installed beside DR32 can offer its
+voices to it, and they show up as one more section of the picker, named after that module, with the
+module's own knobs on the pad's pages. Nothing needs setting up: if a module you have installed
+supports DR32, its section is there. These pads behave like any other synth pad.
+
 Each drum starts from the engine's own factory values and is yours to change from there. The pages
 follow the pad: hit a Simian pad and you get its Tone and Noise pages, hit a sample pad and you get
 Shape. A synth pad has no Start/End, Shape or Punch, because those belong to the sampler.
@@ -157,6 +162,14 @@ the device too, under Module Help.
   stay lossless and reopen correctly on Move; DR32 just plays the plain sampler.
 - **Synth pads are saved in the Schwung set, not in a kit file.** A Move kit is samples only, so
   loading one turns every pad back into a sample pad. A mixed kit lives in your set.
+- **A pad that plays another module's engine needs that module installed.** Open the set on a
+  Move without it and the pad is silent and reads "*name* missing". Nothing is lost: the pad's
+  sound and settings are kept, and it plays again once the module is back.
+- **A kit holds a limited number of *different* engines** once other modules' engines are in it.
+  Past the limit the picker says "TOO MANY ENGINES IN KIT" and leaves the pad alone. Any number of
+  pads can share an engine that is already in the kit.
+- **A newly installed module's engines appear after the Move restarts.** DR32 looks for them once,
+  when it starts.
 - A synth pad's velocity response is the engine's own, so its **Vel Vol** starts at 0. Turn it up to
   add DR32's velocity-to-volume on top.
 - **Transpose on a drum-machine pad moves its Tune.** 9W9's kick is the exception: its Tune is the
@@ -199,6 +212,13 @@ nicer.
 
 ## For developers
 
+**Making another module's voices playable in DR32:** a module ships one extra file,
+`dr32_engine.so`, and its sounds appear in DR32's engine picker. The spec and a walkthrough are in
+[`docs/ENGINE_PLUGINS.md`](docs/ENGINE_PLUGINS.md); the contract is the one header
+[`dsp/dr32_engine_api.h`](dsp/dr32_engine_api.h). There is a starter plugin in
+[`docs/plugin_template/`](docs/plugin_template/) and a checker to run on your own machine,
+[`tools/plugin_check.c`](tools/plugin_check.c).
+
 ```sh
 ./scripts/build.sh          # cross-compiles the DSP for the device (Docker)
 ./scripts/install.sh        # deploys and ALWAYS restarts the stack
@@ -218,7 +238,7 @@ for `==> done:` before trusting an install.
 | `src/` | `module.json` (the served hierarchy), `engine_ui.json` (the synth engines' pages, generated), `help.json`, the browser and Resample canvases, the PAD cell widget |
 | `lib/` | `.ablpreset` reading/writing |
 | `tests/` · `tools/` | the off-device suite and the validators |
-| `docs/` | the [manual](https://legsmechanical.github.io/schwung-dr32/manual.html) and design notes |
+| `docs/` | the [manual](https://legsmechanical.github.io/schwung-dr32/manual.html), [`ENGINE_PLUGINS.md`](docs/ENGINE_PLUGINS.md) and design notes |
 
 The conventions, and the traps worth knowing before changing anything, are in
 [`CLAUDE.md`](CLAUDE.md).

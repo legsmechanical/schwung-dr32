@@ -68,6 +68,9 @@ enum {
     DR32_FAM_CW78   = 6,
     DR32_FAM_CHOWKICK = 7,
     DR32_FAM_FM     = 8,
+    /* Every engine another module brings (dr32_plugins.c). Their pages are
+     * gated on ui_engine alone; this only says "not one of ours". */
+    DR32_FAM_PLUGIN = 9,
 };
 
 #define DR32_ENG_MAX_PARAMS 32
@@ -137,6 +140,11 @@ const dr32_model *dr32_model_at(int i);
 /** Index of the model with this slug, or -1. */
 int               dr32_model_find(const char *slug);
 
+/** Does any model share this slug's family ("mysynth/" of "mysynth/kick")? False
+ *  means the module that brings it is not installed, as opposed to a model
+ *  name nobody has. */
+int               dr32_model_family_known(const char *slug);
+
 /** Index of `key` in the engine's table, or -1. `key` is the full prefixed
  *  key ("sm_pitch"). */
 int dr32_engine_param_index(const dr32_engine_ops *e, const char *key);
@@ -168,6 +176,43 @@ const dr32_model *dr32_fm_models(int *count);
 void dr32_simian_class_init(int sample_rate);
 void dr32_urchin_class_init(int sample_rate);
 void dr32_9w9_class_init(int sample_rate);
+
+/* ---- engines other modules bring (dr32_plugins.c, dr32_engine_api.h) ----
+ *
+ * Their ids start at DR32_ENG_COUNT and are assigned per PROCESS; what a kit
+ * saves is the model slug and the params' full keys. dr32_engine_get and the
+ * dr32_model_* calls above already include them once the scan has published,
+ * so nothing else needs to ask which kind an engine is. */
+
+/** Start the scan of `module_dir`'s sibling folders, once per process, on its
+ *  own thread. Host thread. */
+void dr32_plugins_start(const char *module_dir);
+/** Has the scan published? Until it has, there are no plugin engines. */
+int  dr32_plugins_ready(void);
+/** Block until it has (a no-op if it never started). Host thread only: this
+ *  is for a saved kit that names a plugin model before the scan is done. */
+void dr32_plugins_wait(void);
+
+const dr32_engine_ops *dr32_plugin_engine(int id);
+int               dr32_plugin_engine_count(void);
+/** `,"key","key"` — the engine's full keys, ready to drop into a copy list. */
+const char       *dr32_plugin_engine_keys(int id);
+int               dr32_plugin_model_count(void);
+const dr32_model *dr32_plugin_model_at(int i);
+
+/** One served page of a plugin engine, built from src/engine_tpl.json. */
+typedef struct dr32_plugin_page {
+    int engine;                         /* gated on ui_engine == this          */
+    const char *nav;   int nav_len;     /* {"level":"eng_x_...","label":"Tone"} */
+    const char *level; int level_len;   /* "eng_x_...":{...}                    */
+} dr32_plugin_page;
+int                     dr32_plugin_page_count(void);
+const dr32_plugin_page *dr32_plugin_page_at(int i);
+
+/** The picker's extra sections: [{"id","label","models":[{"slug","name"}]}]. */
+const char *dr32_plugin_families_json(void);
+/** What the scan found and refused, one line each, or NULL. For the log. */
+const char *dr32_plugins_report(void);
 
 #ifdef __cplusplus
 }

@@ -1,4 +1,5 @@
 #include "dr32_kit.h"
+#include "dr32_engine_api.h"   /* DR32X_RENDER_*: what a plugin engine's render says */
 
 #include <dirent.h>
 #include <math.h>
@@ -177,10 +178,71 @@ void dr32_kit_free(dr32_kit *k) {
         s->eops = s->eops_retired = NULL;
         s->engine = 0;
         s->model = -1;
+        free(s->orphan);
+        s->orphan = NULL;
     }
 }
 
 /* ---------- synth engines ------------------------------------------------ */
+
+/* ---- a model whose module is not installed (dr32_kit.h, `orphan`) ---- */
+static void orphan_clear(dr32_pad_slot *s) { free(s->orphan); s->orphan = NULL; }
+
+const char *dr32_pad_orphan_model(const dr32_pad_slot *s) {
+    static _Thread_local char slug[64];
+    if (!s || !s->orphan) return NULL;
+    const char *nl = strchr(s->orphan, '\n');
+    snprintf(slug, sizeof(slug), "%.*s", nl ? (int)(nl - s->orphan) : (int)strlen(s->orphan), s->orphan);
+    return slug;
+}
+
+const char *dr32_pad_orphan_name(const dr32_pad_slot *s, char *buf, int cap) {
+    const char *slug = dr32_pad_orphan_model(s);
+    if (!slug) return NULL;
+    snprintf(buf, (size_t)cap, "%s missing", slug);
+    return buf;
+}
+
+void dr32_kit_orphan_begin(dr32_kit *k, int pad, const char *slug) {
+    if (!k || pad < 0 || pad >= DR32_PADS || !slug || !slug[0] || strlen(slug) > 60) return;
+    dr32_pad_slot *s = &k->pads[pad];
+    /* The saved state says this pad plays that model, so whatever the kit file
+     * put here goes, exactly as it would if the model had loaded. (Also clears
+     * a previous orphan.) */
+    dr32_kit_load_sample(k, pad, NULL);
+    size_t n = strlen(slug);
+    s->orphan = (char *)malloc(n + 2);
+    if (!s->orphan) return;
+    memcpy(s->orphan, slug, n);
+    s->orphan[n] = '\n';
+    s->orphan[n + 1] = '\0';
+}
+
+void dr32_kit_orphan_param(dr32_kit *k, int pad, const char *key, const char *val) {
+    if (!k || pad < 0 || pad >= DR32_PADS || !key || !val) return;
+    dr32_pad_slot *s = &k->pads[pad];
+    if (!s->orphan || strpbrk(key, "\t\n") || strpbrk(val, "\t\n")) return;
+    size_t kl = strlen(key), vl = strlen(val), have = strlen(s->orphan);
+    if (have + kl + vl + 3 > 8192) return;                  /* 32 params fit in a quarter of this */
+    /* The same key again replaces its line: a knob has one value. */
+    char *out = (char *)malloc(have + kl + vl + 3);
+    if (!out) return;
+    size_t n = 0;
+    for (const char *line = s->orphan; *line;) {
+        const char *nl = strchr(line, '\n');
+        size_t len = nl ? (size_t)(nl - line) + 1 : strlen(line);
+        int same = len > kl && !strncmp(line, key, kl) && line[kl] == '\t';
+        if (!same) { memcpy(out + n, line, len); n += len; }
+        line += len;
+    }
+    memcpy(out + n, key, kl); n += kl;
+    out[n++] = '\t';
+    memcpy(out + n, val, vl); n += vl;
+    out[n++] = '\n';
+    out[n] = '\0';
+    free(s->orphan);
+    s->orphan = out;
+}
 
 /* Same retire discipline as a sample buffer: the audio thread checks
  * `synth.active` before touching `eng`, so stop the voice first, and destroy
@@ -199,6 +261,7 @@ static void retire_engine(dr32_pad_slot *s) {
 void dr32_kit_drop_engine(dr32_kit *k, int pad) {
     if (!k || pad < 0 || pad >= DR32_PADS) return;
     if (k->pads[pad].engine) retire_engine(&k->pads[pad]);
+    orphan_clear(&k->pads[pad]);
 }
 
 int dr32_pad_sounding(const dr32_pad_slot *s) {
@@ -213,6 +276,13 @@ const char *dr32_pad_model_name(const dr32_pad_slot *s) {
 int dr32_kit_set_model(dr32_kit *k, int pad, const char *slug) {
     if (!k || pad < 0 || pad >= DR32_PADS) return 0;
     int mi = dr32_model_find(slug);
+    if (mi < 0 && !dr32_plugins_ready()) {
+        /* Not one of ours, and the plugin scan has not published: a saved kit
+         * naming another module's model would otherwise restore as an empty
+         * pad. Host thread, and a kit load already reads files here. */
+        dr32_plugins_wait();
+        mi = dr32_model_find(slug);
+    }
     const dr32_model *m = dr32_model_at(mi);
     const dr32_engine_ops *e = m ? dr32_engine_get(m->engine) : NULL;
     if (!e) return 0;
@@ -260,6 +330,7 @@ static void synth_start(dr32_pad_slot *s, int velocity) {
     dr32_pan_gains(p->pan, &v->panl, &v->panr);
     v->choke_gain = 1.0f;
     v->choke_mul = 1.0f;
+    v->quiet = 0;
     float vel01 = (float)velocity / 127.0f;
     s->eops->note_on(s->eng, vel01 < 0 ? 0 : (vel01 > 1 ? 1 : vel01),
                      p->transpose + p->detune / 100.0f);
@@ -281,10 +352,29 @@ static void synth_choke(dr32_pad_slot *s) {
  * dr32_voice_render. A choked pad keeps computing, muted, until the engine's
  * own silence gate stops it: freezing it instead would leave a ringing model
  * to resume under the next hit. */
+#define PLUGIN_GATE        1.0e-4f                     /* -80 dB */
+#define PLUGIN_GATE_FRAMES ((int)(0.100f * DR32_SR))   /* 100 ms */
 static void synth_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
     float *m = k->eng_mono;
     dr32_synth *v = &s->synth;
     int alive = s->eops->render(s->eng, m, frames);
+
+    /* ⭑ AN ENGINE ANOTHER MODULE BRINGS IS GATED HERE, so that it does not have
+     * to work out for itself when it has gone quiet (dr32_engine_api.h): under
+     * -80 dB for 100 ms ends it, as our own kit ports are ended (kit_port.h).
+     * Measured on the ENGINE's output, before the pad's level, so the pad's
+     * Volume does not change when a tail is cut. A voice that says HOLD has a
+     * gap in it and ends itself. Ours are not touched: they return what they
+     * always did. */
+    if (alive == DR32X_RENDER_ALIVE && s->eops->family == DR32_FAM_PLUGIN) {
+        float peak = 0.0f;
+        for (int i = 0; i < frames; i++) {
+            float a = m[i] < 0.0f ? -m[i] : m[i];
+            if (a > peak) peak = a;
+        }
+        v->quiet = peak < PLUGIN_GATE ? v->quiet + frames : 0;
+        if (v->quiet >= PLUGIN_GATE_FRAMES) alive = DR32X_RENDER_DONE;
+    }
 
     /* ⭑ FILTER HOOK POINT — see dr32_synth in dr32_kit.h. Nothing runs here
      * today, by decision, not omission. */
@@ -670,6 +760,7 @@ int dr32_kit_load_sample(dr32_kit *k, int pad, const char *path) {
     // A pad is a sample pad OR a synth pad. Anything that loads (or clears) a
     // sample makes it a sample pad again.
     if (s->engine) retire_engine(s);
+    orphan_clear(s);
 
     // One-deep retire. The buffer we displace now is freed on the NEXT load of
     // this pad — by which time many audio blocks have passed. Freeing it here
@@ -717,6 +808,7 @@ void dr32_kit_adopt_sample(dr32_kit *k, int pad, float *data, size_t frames,
      * pointer moves, retire rather than free. */
     s->voice.active = 0;
     if (s->engine) retire_engine(s);
+    orphan_clear(s);
     free(s->retired);
     s->retired = s->sample;
     s->sample = data;

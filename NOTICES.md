@@ -13,6 +13,7 @@ them is a combined work under the GPL. Earlier releases stay MIT.
 | | |
 |---|---|
 | **DR32**: `dsp/*.c`, `src/`, `tools/`, `tests/` | Copyright (c) 2026 **Josh Gaines / legsmechanical**, GPL-3.0-or-later. Earlier versions of this code were released under MIT, and **Charles Vestal**'s contributions (two audio-callback fixes, PRs #2 and #3) were made under that licence. The MIT notice below covers them. |
+| **The engine plugin contract**: `dsp/dr32_engine_api.h`, `dsp/dr32_engine_kit.h` | Copyright (c) 2026 Josh Gaines / legsmechanical, **MIT** (the notice is in `dr32_engine_api.h`). MIT so that a module of any licence can copy them; linked into `dsp.so` they are part of the GPL work like the rest. `docs/plugin_template/` is **MIT-0**: a starting point to copy with no notice required. Neither is in the built module's tarball. |
 | **OneTrick SIMIAN 2 DSP**: `dsp/engines/simian/faust/` | Copyright (c) 2024 **Punk Labs LLC**, GPL-3.0-or-later. Unmodified, vendored from [schwung-simian](https://github.com/legsmechanical/schwung-simian). |
 | **OneTrick URCHIN DSP**: `dsp/engines/urchin/faust/` | Copyright (c) 2023 **Punk Labs LLC**, GPL-3.0-or-later. Unmodified, vendored from schwung-urchin. |
 | **The engines' factory values**: `dsp/engines/*/factory_bank.h` | Punk Labs' factory kits, converted by the ports' own tools. The synth models are rows of the "Basic" (SIMIAN) and "Init" (URCHIN) kits. |

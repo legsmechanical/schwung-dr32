@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT-0  (copy and change freely, no notice required)
+#
+# Build the DR32 engine plugin beside your dsp.so.
+#
+#   -fvisibility=hidden  only dr32_engine_plugin (marked DR32X_EXPORT) is exported
+#   -Wl,-Bsymbolic       the plugin never binds to your dsp.so's copy of the same symbols
+#
+# Add your voice sources after dr32_engine.c. Ship dist/<module>/dr32_engine.so
+# in your release tarball and install script.
+
+XCC ?= aarch64-linux-gnu-gcc
+
+dr32_engine.so: src/dr32_engine.c
+	$(XCC) -O2 -shared -fPIC -fvisibility=hidden -Wl,-Bsymbolic \
+	    -o dist/$(MODULE_ID)/dr32_engine.so src/dr32_engine.c -lm
+
+# Check it on your own machine before it goes near a device: build it natively
+# and run DR32's checker over it (tools/plugin_check.c in the DR32 repo).
+dr32-check: src/dr32_engine.c
+	cc -O2 -shared -fPIC -fvisibility=hidden -o build/dr32_engine_native.so src/dr32_engine.c -lm
+	dr32-plugin-check build/dr32_engine_native.so

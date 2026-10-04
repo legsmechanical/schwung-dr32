@@ -293,6 +293,16 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
   sends go silent. module.json is 18 KB now. The engine params are consequently absent from the
   host's C metadata; nothing reads them there. `build.sh` must ship the file
   (`check_build_script` pins it), and `check_module_json` checks the MERGED document.
+- ⭑ **Engine pages are served PER KIT** (branch `served-engine-pages`): a page is in the served
+  hierarchy only while some pad runs the engine (or kit-port family) its `visible_if` names
+  (`dr32_build_src` in `dsp/dr32.c`; `engine_ui.json` is cut into pages at create). A kit with no
+  synth pad served 20 KB at that point; every engine at once, 99 KB. The host re-reads on the `is_loading` edge a
+  `_model` / `_sample` write already arms, and `get_param("ui_hierarchy")` rebuilds if the set is
+  stale, so an engine in use is never without its pages. The base banks' copy lists follow the kit
+  too: module.json carries NO engine keys there, and the DSP adds those of the engines in use right
+  after `"sample","model"` (that exact text is the anchor). A sample kit serves 9 KB. ⚠ `test_state.c` therefore puts one model
+  per GATE on pads 4+ before writing `served_hierarchy.json` — that is what keeps `pages_check`
+  validating all 41 engine pages. A page whose gate it cannot read is served always.
 - The SERVED hierarchy crosses the host's value channel (SHADOW_PARAM_VALUE_LEN: **128 KB** since
   host 1.3.0, upstream #444; 64 KB before), so it is minified, and an engine page's
   `child_copy_keys` carry only ITS engine's keys (it only shows on that engine's pads). Served
@@ -313,6 +323,87 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
   cannot say "drum OR snare", and duplicating the drum pages would repeat their keys.
 - LINK spreads an engine param only to pads running the same engine (the key simply is not the
   other pads'). `model` is never linked.
+
+### 🔌 Engines OTHER MODULES bring (2026-10-03, branch `served-engine-pages`)
+
+Josh: *"a module can simply provide its own kind of DR32 engine plugin with minimum friction for
+the developer"*, runtime, no DR32 release per engine. Developer-facing spec:
+`docs/ENGINE_PLUGINS.md`. ⚠ It was proven against adapters written for two modules that are NOT
+ours and may never ship one upstream: name no specific module in the doc, the header or comments.
+
+- **The contract is `dsp/dr32_engine_api.h`** (MIT, so any module can vendor it): a module ships
+  `dr32_engine.so` beside its own files, exporting `dr32_engine_plugin`. Engines, params (BARE keys)
+  and models, the same shape as `dr32_engine_ops` / `dr32_model`.
+- **`dsp/dr32_plugins.c`** finds them in DR32's SIBLING module folders, on its OWN THREAD started by
+  the first `create_instance` (a directory walk + dlopen on the SPI callback is the kit-catalogue
+  mistake again). Filled privately, PUBLISHED ONCE, never changed, never unloaded. A saved kit
+  naming a plugin model before that waits (`dr32_plugins_wait`, in `dr32_kit_set_model`).
+- **Ids are per process** (`DR32_ENG_COUNT`+, discovery order sorted by folder name), family
+  `DR32_FAM_PLUGIN`. What a kit SAVES is the slug `<plugin id>/<model>` and the full keys
+  `x_<plugin id>_<engine>_<key>`. The built-in models keep their indices (ours first).
+- **Pages are built at run time from `src/engine_tpl.json`**, which `gen_engine_ui.mjs` writes so
+  the page shape has one owner. Served per kit like ours; a plugin engine in use also puts its keys
+  into the four base banks' copy lists (after `"sample","model"`, found by that exact text).
+- **The picker** reads `plugin_models` on open (`loadPlugins` in `src/browser.js`).
+- A plugin that breaks a rule is refused WHOLE and the reason is logged (`dr32: engine plugin ...
+  refused: ...`). `tests/test_plugins.c` loads a toy plugin, a rule-breaking one and a junk file
+  through the real `create_instance`.
+- **A model whose module is NOT installed is KEPT** (`dr32_pad_slot.orphan`): the pad is silent,
+  reads as `<slug> missing`, and its model, saved `x_` knobs and mix values are written back out on
+  the next save. Only when the slug's whole FAMILY is absent (`dr32_model_family_known`); an unknown
+  name in a family we have changes nothing, as before. Not copied by Copy (its keys are in no list).
+- **The scan's report is also `<dr32 folder>/plugins.log`**, rewritten each start: the host's log is
+  best-effort and can be off, and this is what a module author needs when an engine does not show.
+- **What DR32 does FOR a plugin engine** (2026-10-04): `choke` may be NULL (the loader puts a no-op
+  there; DR32's 3 ms fade is the choke) and `render` may always return `DR32X_RENDER_ALIVE`, because
+  `synth_render` gates a `DR32_FAM_PLUGIN` voice itself (-80 dB for 100 ms, on the engine's output
+  before the pad's level). `DR32X_RENDER_HOLD` (2) opts a voice with a silent gap out of the gate.
+  Our own engines are not gated: they return what they always did. A choked plugin voice still
+  RINGS OUT unheard, by decision: stopping it would resume stale state under the next hit.
+- 🔴 **`destroy_instance` JOINS the plugin scan** (`dr32_plugins_wait`). The host `dlclose`s the
+  module right after the last destroy; a scan thread still running was a host SEGFAULT, reproduced
+  in review (swap DR32 out during its first seconds with a plugin installed). After a reload the
+  scan runs again and a plugin's entry is called a second time.
+- **Contract rules that exist because of a real failure**: engine slugs have no underscore (else
+  `x_<id>_a_b_c` is two different keys); an enum option may not start with a digit or `-` (the
+  param path reads such a value as an INDEX, so "909" restored as another option); two page names
+  may not differ only in case or punctuation (one level key, served twice); the validator checks
+  every param's own fields BEFORE comparing params (it crashed on a later param's NULL page).
+- **Version policy**: a plugin refuses only a host OLDER than its header; DR32 keeps a reader for
+  every contract version it has shipped. The validator requires equality today only because 1 is
+  the only version there is.
+- ⭑ **A model whose pages would pass the BUDGET is REFUSED** (Josh, 2026-10-04: "build refusal
+  first"). `set_param` asks `dr32_model_fits` before applying a `pad<N>_model` write: the document
+  as it WOULD be (the `_if` helpers take a what-if pad and engine). Refused, the pad is untouched,
+  `model_refused` reads `<pad>:<slug>` and `browser.js` shows "TOO MANY ENGINES IN KIT" (no colon:
+  the picker's font has no glyph for one).
+  - 🔴 **The budget is 100 KB (`DR32_PAGE_BUDGET`), NOT the channel's 128.** First built against
+    128: a test kit served at 127.5 KB made the page view jump to My Presets under dAVEBOx on the
+    device. The channel is shared: dAVEBOx's bulk GET packs `ui_hierarchy`, `chain_params` and
+    `state` into ONE 128 KB reply (`shim_handle_param_bulk`). 98 KB is what 0.4.x served every kit
+    on both hosts, so 100 is the size known to work. ⚠ The bulk overflow is my reading of the host
+    code, not a traced fact; the 100 KB figure rests on 0.4.x's record, not on that reading.
+  - **Pad NAMES are not counted**, or a kit 0.4.x served could be refused a built-in engine because
+    of what its samples are called. Our own engines' pages total 92 KB, so a kit of only ours is
+    never refused (`test_state.c` pins it).
+  - 🔴 **The picker must not ask "was my write refused" right after `setParam`.** dAVEBOx delivers
+    a write frames later and confirms it (it rewrites three times: its log says "write
+    UNCONFIRMED"), so an immediate read answers for the write BEFORE. On the device: no notice, and
+    the click closed the browser on an unchanged pad. `refusal()` is asked on every draw and on a
+    click, and a refused click does not close. `check_browser_nav` §14 delivers the answer late. Only on `set_param`: a
+  state restore applies keys straight to the kit, since a saved set did fit. An engine already in
+  the kit costs nothing more. `test_plugins.c` 6d: seven 32-knob engines fit, the eighth is refused.
+- Should a restore still go over, `dr32_refresh_hierarchy` drops pad names first, then stops
+  updating, and LOGS which (it was silent).
+- **`dsp/dr32_plugin_validate.c` is the rules, with no dependency but the API header**, because the
+  loader and `tools/plugin_check.c` (the developer's off-device checker) must never disagree. What
+  depends on what else is installed (id collisions, capacity) stays in `dr32_plugins.c`. Its list
+  of our own families is pinned to the built-in slugs by `test_plugins.c`.
+- `dsp/dr32_engine_kit.h` (optional helpers) and `docs/plugin_template/` (a starter plugin) are
+  compiled and checked by `tests/run.sh`, so neither can drift from the contract.
+- Full keys must fit DR32's 64-byte key buffers with `pad32_`: plugin id and engine slug <= 12
+  chars, a param key <= 16. `ui_engine` / `ui_family` declare a max that covers the plugin ids
+  (`gen_engine_ui.mjs`: +64 engines, family 9).
 
 ### 🥁 The kit ports: 9W9, 6W6, 8W8, CW-78 (2026-09-22)
 

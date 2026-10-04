@@ -36,6 +36,7 @@ typedef struct {
     float    amp, panl, panr;
     float    choke_gain;     // 1 until choked, then ramps to 0
     float    choke_mul;      // per-sample multiplier; 1 = not choking
+    int      quiet;          // frames under the gate (an engine another module brings)
 } dr32_synth;
 
 /* Wide (Josh, 2026-09-22: "a haas stereo spread ... and a knob to set a
@@ -103,6 +104,13 @@ typedef struct {
     const dr32_engine_ops *eops_retired;
     void   *eng_retired;
     float   eparam[DR32_ENG_MAX_PARAMS];   // display units, the knobs' values
+    /* A MODEL THIS BUILD CANNOT RUN — its module is not installed (an engine
+     * another module brings, dr32_plugins.c). The pad is silent and empty to
+     * play, but what was saved for it is KEPT here and written back out, so
+     * opening a set without the module does not cost the pad on the next
+     * save. "slug\n" then "key\tvalue\n" per saved engine param. Host thread
+     * only; cleared by anything that gives the pad a sample or a model. */
+    char   *orphan;
     dr32_synth synth;        // DR32's stage around the engine
     dr32_wide  wide;         // the Wide stage's state (dr32_kit.c)
 } dr32_pad_slot;
@@ -320,6 +328,15 @@ int dr32_pad_sounding(const dr32_pad_slot *s);
 /** The pad's display name: the model's name on a synth pad, "" otherwise
  *  (a sample pad's name is its file, which callers already derive). */
 const char *dr32_pad_model_name(const dr32_pad_slot *s);
+
+/** The slug of a model this pad was saved with and cannot run, or NULL. */
+const char *dr32_pad_orphan_model(const dr32_pad_slot *s);
+/** What the pad reads as while it is one: "mysynth/kick missing". */
+const char *dr32_pad_orphan_name(const dr32_pad_slot *s, char *buf, int cap);
+/** The pad becomes that missing model: whatever it held is unloaded. Host thread. */
+void dr32_kit_orphan_begin(dr32_kit *k, int pad, const char *slug);
+/** Remember one of its saved engine params (full key, no pad prefix). */
+void dr32_kit_orphan_param(dr32_kit *k, int pad, const char *key, const char *val);
 
 void dr32_kit_note_on(dr32_kit *k, int note, int velocity);
 void dr32_kit_note_off(dr32_kit *k, int note);

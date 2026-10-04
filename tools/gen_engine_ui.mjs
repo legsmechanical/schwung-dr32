@@ -12,9 +12,12 @@
  *                == id` and carrying its params inline, plus the root nav
  *                entries for them. dsp/dr32.c MERGES this into the hierarchy
  *                it serves (after the Shape entry, at the end of `levels`).
- *   module.json  every engine key plus `model` in each pad level's
- *                child_copy_keys; the `ui_engine` gate in chain_params.
+ *   module.json  `model` in each pad level's child_copy_keys (the engines' own
+ *                keys are added by the DSP for the engines in use); the
+ *                `ui_engine` gate in chain_params.
  *   browser.js   the picker's model list, between its GENERATED markers.
+ *   engine_tpl.json  the page TEMPLATE for engines other modules bring
+ *                (dsp/dr32_plugins.c fills it in at run time).
  *
  * ⭐ WHY THE ENGINE PAGES ARE NOT IN module.json. The host's C loader
  * (chain_params.c parse_chain_params) refuses a module.json over 64 KB, and
@@ -42,6 +45,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MJ = join(ROOT, 'src/module.json');
 const BR = join(ROOT, 'src/browser.js');
 const EU = join(ROOT, 'src/engine_ui.json');
+const TP = join(ROOT, 'src/engine_tpl.json');
 
 /* ---- ask the engines ---------------------------------------------------- */
 function dumpEngines() {
@@ -61,7 +65,7 @@ function dumpEngines() {
                 '-c', join(ROOT, 'dsp/engines', f), '-o', o]);
             objs.push(o);
         }
-        for (const f of ['dsp/dr32_engine.c', 'tools/dump_engines.c']) {
+        for (const f of ['dsp/dr32_engine.c', 'dsp/dr32_plugins.c', 'dsp/dr32_plugin_validate.c', 'tools/dump_engines.c']) {
             const o = join(dir, f.replace(/\W/g, '_') + '.o');
             execFileSync('cc', ['-std=c11', '-O1', '-I' + join(ROOT, 'dsp'), '-c', join(ROOT, f), '-o', o]);
             objs.push(o);
@@ -287,9 +291,14 @@ const withKeys = (keys) => {
     base.splice(base.indexOf('sample') + 1, 0, 'model', ...keys);
     return base;
 };
+/* ⭑ THE BASE BANKS CARRY NO ENGINE KEYS HERE. They need the keys of every
+ * engine a pad might be running, and that is what dsp/dr32.c puts in at run
+ * time, for the engines the KIT is running (dr32_build_src, right after
+ * `"sample","model"`): all 276 in four lists was 13 KB of a 20 KB document,
+ * served to kits that use none of them. */
 const allKeys = [...new Set(engines.flatMap((e) => e.params.map((p) => p.key)))];
 for (const lv of Object.values(newLevels))
-    if (Array.isArray(lv.child_copy_keys)) lv.child_copy_keys = withKeys(allKeys);
+    if (Array.isArray(lv.child_copy_keys)) lv.child_copy_keys = withKeys([]);
 for (const [, lv] of genLevels) {
     /* In the base banks' ORDER, not the page's: a kit port's page lays its
      * lanes' extras out beside the knobs they belong to, which is not the
@@ -302,13 +311,18 @@ for (const [, lv] of genLevels) {
 /* The gate, in chain_params: that is the table the grid's condition evaluator
  * reads through. It is on NO level, deliberately (docs/MODULES.md, "The gate
  * does not need a cell"; schwung-urchin's ui_engine note). */
+/* ⭑ THE RANGE COVERS THE ENGINES OTHER MODULES BRING. Their ids follow ours
+ * (dsp/dr32_plugins.c: up to PL_MAX_ENGINES of them, family DR32_FAM_PLUGIN),
+ * and a declared max that stops at the last built-in would be a range the
+ * value leaves the moment a plugin pad is focused. */
+const PLUGIN_ENGINES = 64, FAM_PLUGIN = 9;
 const gate = { key: 'ui_engine', name: 'Engine', type: 'int', min: 0,
-               max: Math.max(...engines.map((e) => e.id)), default: 0 };
+               max: Math.max(...engines.map((e) => e.id)) + PLUGIN_ENGINES, default: 0 };
 const gi = caps.chain_params.findIndex((p) => p.key === 'ui_engine');
 if (gi >= 0) caps.chain_params[gi] = gate; else caps.chain_params.push(gate);
 /* The second gate: the kit ports' page sets follow the INSTRUMENT. */
 const fgate = { key: 'ui_family', name: 'Instrument', type: 'int', min: 0,
-                max: Math.max(...engines.map((e) => e.family)), default: 0 };
+                max: Math.max(FAM_PLUGIN, ...engines.map((e) => e.family)), default: 0 };
 const fi = caps.chain_params.findIndex((p) => p.key === 'ui_family');
 if (fi >= 0) caps.chain_params[fi] = fgate;
 else caps.chain_params.splice(caps.chain_params.findIndex((p) => p.key === 'ui_engine') + 1, 0, fgate);
@@ -322,6 +336,23 @@ const outEu = JSON.stringify({
     nav: genLevels.map(([k, lv]) => ({ level: k, label: lv.name })),
     levels: Object.fromEntries(genLevels),
 }) + '\n';
+
+/* ---- engine_tpl.json: the page of an engine ANOTHER MODULE brings --------
+ *
+ * dsp/dr32_plugins.c builds those pages at run time, and the shape of a page
+ * (the pad template, the copy list every pad level shares) is decided HERE.
+ * So this writes one level with tokens where an engine's own parts go, and the
+ * DSP fills them in: "@NAME@" the page name, "@ID@" the engine id (the quotes
+ * go with it), "@KEYS@" the engine's keys, ["@PARAMS@"] and ["@KNOBS@"] the
+ * whole arrays. Same key order as a generated level, so a plugin's page and a
+ * built-in's differ only in what the engine said.
+ */
+const tplLevel = { name: '@NAME@', visible_if: { param: 'ui_engine', equals: '@ID@' } };
+for (const t of TEMPLATE) tplLevel[t] = shape[t];
+tplLevel.child_copy_keys = withKeys(['@KEYS@']);
+tplLevel.params = ['@PARAMS@'];
+tplLevel.knobs = ['@KNOBS@'];
+const outTp = JSON.stringify({ level: tplLevel }) + '\n';
 
 /* ---- browser.js model list -------------------------------------------- */
 /* A section's label, where capitalising its slug prefix is not the name. */
@@ -423,6 +454,9 @@ const stale = [];
 let euText = '';
 try { euText = readFileSync(EU, 'utf8'); } catch { /* first run */ }
 if (outEu !== euText) stale.push('src/engine_ui.json');
+let tpText = '';
+try { tpText = readFileSync(TP, 'utf8'); } catch { /* first run */ }
+if (outTp !== tpText) stale.push('src/engine_tpl.json');
 if (outMj !== text) stale.push('src/module.json');
 if (outBr !== br) stale.push('src/browser.js');
 let cpText = '';
@@ -438,6 +472,7 @@ if (check) {
     writeFileSync(MJ, outMj);
     writeFileSync(BR, outBr);
     writeFileSync(EU, outEu);
+    writeFileSync(TP, outTp);
     writeFileSync(CP, outCp);
     console.log(`gen_engine_ui: wrote ${stale.length ? stale.join(', ') : 'nothing (up to date)'} — ` +
                 `${engines.length} engines, ${genLevels.length} pages, ${models.length} models, ` +

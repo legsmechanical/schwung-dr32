@@ -36,7 +36,7 @@ const dr32_engine_ops *dr32_engine_get(int id) {
         if (id >= PORTS[p].base && id < PORTS[p].base + n)
             return PORTS[p].lanes(id - PORTS[p].base, NULL);
     }
-    return NULL;
+    return dr32_plugin_engine(id);      /* another module's, or NULL */
 }
 
 static char g_module_dir[512];
@@ -66,6 +66,8 @@ static const family_fn FAMILIES[] = {
 };
 #define N_FAMILIES ((int)(sizeof(FAMILIES) / sizeof(FAMILIES[0])))
 
+/* Ours first, then the plugins': a pad holds a model INDEX, so the built-in
+ * ones must not move when a plugin is installed. */
 int dr32_model_count(void) {
     int total = 0;
     for (int f = 0; f < N_FAMILIES; f++) {
@@ -73,7 +75,7 @@ int dr32_model_count(void) {
         FAMILIES[f](&n);
         total += n;
     }
-    return total;
+    return total + dr32_plugin_model_count();
 }
 
 const dr32_model *dr32_model_at(int i) {
@@ -84,7 +86,7 @@ const dr32_model *dr32_model_at(int i) {
         if (i < n) return &m[i];
         i -= n;
     }
-    return NULL;
+    return dr32_plugin_model_at(i);
 }
 
 int dr32_model_find(const char *slug) {
@@ -93,6 +95,16 @@ int dr32_model_find(const char *slug) {
     for (int i = 0; i < total; i++)
         if (!strcmp(dr32_model_at(i)->slug, slug)) return i;
     return -1;
+}
+
+int dr32_model_family_known(const char *slug) {
+    const char *cut = slug ? strchr(slug, '/') : NULL;
+    if (!cut) return 0;
+    size_t n = (size_t)(cut - slug) + 1;            /* with the slash */
+    int total = dr32_model_count();
+    for (int i = 0; i < total; i++)
+        if (!strncmp(dr32_model_at(i)->slug, slug, n)) return 1;
+    return 0;
 }
 
 int dr32_engine_param_index(const dr32_engine_ops *e, const char *key) {

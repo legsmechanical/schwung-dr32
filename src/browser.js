@@ -157,16 +157,48 @@ const FAMILIES = [
 ];
 /* END GENERATED MODELS */
 
+/*
+ * ⭐ ...AND THE ENGINES OTHER MODULES BRING. A module that ships a
+ * `dr32_engine.so` offers DR32 its models (dsp/dr32_plugins.c); the DSP finds
+ * them at run time, so they cannot be in the generated list above. It serves
+ * them as `plugin_models`, in the same shape, and they follow our own
+ * sections. Read on OPEN: what is installed does not change while you browse.
+ * Anything but a well-formed list reads as none.
+ */
+let PLUGINS = [];
+function loadPlugins(ctx) {
+    const out = [];
+    try {
+        const raw = JSON.parse(ctx.getParam('plugin_models') || '[]');
+        for (let i = 0; Array.isArray(raw) && i < raw.length; i++) {
+            const f = raw[i];
+            if (!f || typeof f.id !== 'string' || typeof f.label !== 'string' || !Array.isArray(f.models)) continue;
+            if (familyOfBuiltin(f.id)) continue;      /* ours wins; the DSP refuses these too */
+            out.push({ id: f.id, label: f.label, models: f.models.filter((m) =>
+                m && typeof m.slug === 'string' && typeof m.name === 'string') });
+        }
+    } catch (e) { /* none */ }
+    PLUGINS = out;
+}
+
 /* The top menu: samples, then one section per engine family. */
 const SAMPLE_SECTION = 'sample';
 function sections() {
     const out = [{ label: 'Sample', section: SAMPLE_SECTION }];
     for (let i = 0; i < FAMILIES.length; i++)
         out.push({ label: FAMILIES[i].label, section: FAMILIES[i].id });
+    for (let i = 0; i < PLUGINS.length; i++)
+        out.push({ label: PLUGINS[i].label, section: PLUGINS[i].id });
     return out;
 }
-function familyOf(id) {
+function familyOfBuiltin(id) {
     for (let i = 0; i < FAMILIES.length; i++) if (FAMILIES[i].id === id) return FAMILIES[i];
+    return null;
+}
+function familyOf(id) {
+    const f = familyOfBuiltin(id);
+    if (f) return f;
+    for (let i = 0; i < PLUGINS.length; i++) if (PLUGINS[i].id === id) return PLUGINS[i];
     return null;
 }
 /* "simian/kick" -> the Simian family. */
@@ -416,13 +448,35 @@ function clampScroll(st) {
  * that same write, and the blob is a DELTA — a Hold the user set back to 0.3
  * equals the baseline, is never saved, and would restore as Inf.
  */
+/*
+ * Was the model this browser last wrote turned down? Asked on every draw and
+ * on a click. When it was: say so, and forget it as "loaded", so the row can
+ * be tried again once the kit has room.
+ */
+function refusal(ctx, st) {
+    if (!st.wrote) return false;
+    if (ctx.getParam('model_refused') !== st.pad + ':' + st.wrote) return false;
+    st.notice = 'TOO MANY ENGINES IN KIT';
+    if (st.loaded === st.wrote) st.loaded = '';
+    return true;
+}
+
 function audition(ctx, st) {
+    st.notice = '';                        /* whatever was refused, the cursor has moved on */
+    st.wrote = '';
     const row = st.rows[st.cursor];
     if (!row || row.dir || row.section) return;   /* a folder must not clear the pad */
     if (row.model) {
         /* A model: the same one-write rule, on the model key. */
         if (row.model === st.loaded) return;
         ctx.setParam('pad' + st.pad + '_model', row.model);
+        /* ⭑ THE DSP MAY REFUSE IT: a kit's engine pages have a budget, and a
+         * model whose engine would pass it is turned down with the pad left as
+         * it was (dsp/dr32.c, dr32_model_fits). `wrote` is what refusal() looks
+         * for: the answer is not asked for here, because a host may deliver
+         * the write some frames after this call (dAVEBOx confirms its writes),
+         * and an answer read now would be about the write before. */
+        st.wrote = row.model;
         st.loaded = row.model;
         return;
     }
@@ -454,7 +508,12 @@ function enterRow(ctx, st) {
         return;
     }
     if (!row.dir) {
+        /* ⭑ A REFUSED MODEL DOES NOT CLOSE THE BROWSER. Clicking is "this one,
+         * I'm done", and leaving on a row that did not load would look exactly
+         * like success until you hit the pad. Stay, with the reason on screen. */
+        if (row.model && refusal(ctx, st)) return;
         audition(ctx, st);
+        if (row.model && refusal(ctx, st)) return;
         if (typeof ctx.close === 'function') ctx.close();
         return;
     }
@@ -680,6 +739,16 @@ function fitSmall(ctx, t, maxW) {
  * which is the one fact on this screen that must not be ambiguous.
  */
 function drawHeader(ctx, st) {
+    /* A refusal takes the whole header until the cursor moves: it is the answer
+     * to the gesture just made. Asked for here, every draw, because the write
+     * it answers may land after the call that made it (see audition). */
+    refusal(ctx, st);
+    if (st.notice) {
+        const t = fitSmall(ctx, st.notice, ctx.width - 2 * HDR_PAD);
+        printSmall(ctx, Math.max(HDR_PAD, Math.floor((ctx.width - textW(ctx, t)) / 2)), HDR_Y, t, 1);
+        ctx.fillRect(0, HDR_RULE_Y, ctx.width, 1, 1);
+        return;
+    }
     const left = 'PAD ' + st.pad;
     const mid = 'BROWSER';
     const midW = textW(ctx, mid);
@@ -771,6 +840,7 @@ globalThis.canvas_overlay = {
         const st = ctx.state;
         st.pad = focusedPad(ctx);
         st.loaded = '';
+        loadPlugins(ctx);
 
         /*
          * A pad that already HAS a sample opens on that sample's folder, with

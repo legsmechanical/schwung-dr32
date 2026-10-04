@@ -285,6 +285,13 @@ if (isBuild && !/cp\s+src\/engine_ui\.json\s/.test(src)) {
                 'the served hierarchy by name, and without it every synth pad loses its engine pages, silently.');
 }
 
+/* ...and so is the template the pages of OTHER modules' engines are built
+ * from (dsp/dr32_plugins.c): missing, their models play with no pages. */
+if (isBuild && !/cp\s+src\/engine_tpl\.json\s/.test(src)) {
+    errors.push('build.sh never copies src/engine_tpl.json into dist/<id>/ — dsp.so builds plugin engines\' ' +
+                'pages from it by name, and without it they have none, silently.');
+}
+
 /* 9W9's cymbals are WAVs the DSP opens by path at class init — silent if
  * missing, the same shape again. */
 if (isBuild && !/cp\s+-R\s+src\/samples\s/.test(src)) {

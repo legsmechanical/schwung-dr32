@@ -213,12 +213,12 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
          * could have shaped, and skipping them keeps a typical 16-pad kit well
          * under half the blob a full 32 would produce. */
         const dr32_pad_slot *slot = &kit->pads[pad];
-        if (!slot->sample && !slot->path[0] && !slot->engine) continue;
+        if (!slot->sample && !slot->path[0] && !slot->engine && !slot->orphan) continue;
         for (int f = 0; PAD_FIELDS[f]; f++) {
             char key[64];
             /* A synth pad's `sample` reads as its model's NAME (the engine
              * cell shows it), which is not a path and must not be saved as one. */
-            if (slot->engine && f == 0) continue;
+            if ((slot->engine || slot->orphan) && f == 0) continue;
             /* ⚠⚠ `pad + 1`, NOT `pad`. PR #3 branched before the surface went
              * 1-based on 2026-09-09, so taking its line wholesale would have
              * silently reintroduced the off-by-one — every persisted pad key
@@ -236,6 +236,20 @@ int dr32_state_write(const dr32_kit *kit, const char *kit_path,
             snprintf(key, sizeof(key), "pad%d_%s", pad + 1, slot->eops->params[i].key);
             n = emit_param(kit, key, base_params, &base_cursor, buf, buf_len, n, &first);
             if (n >= buf_len - 8) { dr32_json_free(base_root); return 0; }
+        }
+        /* A model whose module is not installed: its saved knobs go back out
+         * exactly as they came in (`model` itself went with the fields above). */
+        for (const char *line = slot->orphan ? strchr(slot->orphan, '\n') : NULL; line && line[1];) {
+            const char *tab = strchr(++line, '\t'), *nl = strchr(line, '\n');
+            if (!tab || !nl || tab > nl) break;
+            char val[256], vesc[520];
+            snprintf(val, sizeof(val), "%.*s", (int)(nl - tab - 1), tab + 1);
+            json_escape(vesc, (int)sizeof(vesc), val);
+            n += snprintf(buf + n, buf_len - n, "%s\"pad%d_%.*s\":\"%s\"", first ? "" : ",",
+                          pad + 1, (int)(tab - line), line, vesc);
+            first = 0;
+            if (n >= buf_len - 8) { dr32_json_free(base_root); return 0; }
+            line = nl;
         }
     }
 
