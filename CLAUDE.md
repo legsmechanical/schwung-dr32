@@ -360,6 +360,41 @@ ours and may never ship one upstream: name no specific module in the doc, the he
   before the pad's level). `DR32X_RENDER_HOLD` (2) opts a voice with a silent gap out of the gate.
   Our own engines are not gated: they return what they always did. A choked plugin voice still
   RINGS OUT unheard, by decision: stopping it would resume stale state under the next hit.
+- 🔴 **`destroy_instance` JOINS the plugin scan** (`dr32_plugins_wait`). The host `dlclose`s the
+  module right after the last destroy; a scan thread still running was a host SEGFAULT, reproduced
+  in review (swap DR32 out during its first seconds with a plugin installed). After a reload the
+  scan runs again and a plugin's entry is called a second time.
+- **Contract rules that exist because of a real failure**: engine slugs have no underscore (else
+  `x_<id>_a_b_c` is two different keys); an enum option may not start with a digit or `-` (the
+  param path reads such a value as an INDEX, so "909" restored as another option); two page names
+  may not differ only in case or punctuation (one level key, served twice); the validator checks
+  every param's own fields BEFORE comparing params (it crashed on a later param's NULL page).
+- **Version policy**: a plugin refuses only a host OLDER than its header; DR32 keeps a reader for
+  every contract version it has shipped. The validator requires equality today only because 1 is
+  the only version there is.
+- ⭑ **A model whose pages would pass the BUDGET is REFUSED** (Josh, 2026-10-04: "build refusal
+  first"). `set_param` asks `dr32_model_fits` before applying a `pad<N>_model` write: the document
+  as it WOULD be (the `_if` helpers take a what-if pad and engine). Refused, the pad is untouched,
+  `model_refused` reads `<pad>:<slug>` and `browser.js` shows "TOO MANY ENGINES IN KIT" (no colon:
+  the picker's font has no glyph for one).
+  - 🔴 **The budget is 100 KB (`DR32_PAGE_BUDGET`), NOT the channel's 128.** First built against
+    128: a test kit served at 127.5 KB made the page view jump to My Presets under dAVEBOx on the
+    device. The channel is shared: dAVEBOx's bulk GET packs `ui_hierarchy`, `chain_params` and
+    `state` into ONE 128 KB reply (`shim_handle_param_bulk`). 98 KB is what 0.4.x served every kit
+    on both hosts, so 100 is the size known to work. ⚠ The bulk overflow is my reading of the host
+    code, not a traced fact; the 100 KB figure rests on 0.4.x's record, not on that reading.
+  - **Pad NAMES are not counted**, or a kit 0.4.x served could be refused a built-in engine because
+    of what its samples are called. Our own engines' pages total 92 KB, so a kit of only ours is
+    never refused (`test_state.c` pins it).
+  - 🔴 **The picker must not ask "was my write refused" right after `setParam`.** dAVEBOx delivers
+    a write frames later and confirms it (it rewrites three times: its log says "write
+    UNCONFIRMED"), so an immediate read answers for the write BEFORE. On the device: no notice, and
+    the click closed the browser on an unchanged pad. `refusal()` is asked on every draw and on a
+    click, and a refused click does not close. `check_browser_nav` §14 delivers the answer late. Only on `set_param`: a
+  state restore applies keys straight to the kit, since a saved set did fit. An engine already in
+  the kit costs nothing more. `test_plugins.c` 6d: seven 32-knob engines fit, the eighth is refused.
+- Should a restore still go over, `dr32_refresh_hierarchy` drops pad names first, then stops
+  updating, and LOGS which (it was silent).
 - **`dsp/dr32_plugin_validate.c` is the rules, with no dependency but the API header**, because the
   loader and `tools/plugin_check.c` (the developer's off-device checker) must never disagree. What
   depends on what else is installed (id collisions, capacity) stays in `dr32_plugins.c`. Its list

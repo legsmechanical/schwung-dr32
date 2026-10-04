@@ -28,6 +28,16 @@ static const host_api_v1_t *g_host = NULL;
 
 /* Room for the plugin engines' pages, and the base banks' copy lists. */
 #define DR32_PLUG_PAGES 192
+/* The host's value channel (SHADOW_PARAM_VALUE_LEN, 128 KB since host 1.3.0). */
+#define DR32_VALUE_CAP 131072
+/* ⭑ WHAT A KIT'S PAGES MAY ADD UP TO BEFORE A NEW ENGINE IS REFUSED: 100 KB,
+ * not the channel's 128. The channel is not ours alone. A host that reads
+ * several values in ONE reply (dAVEBOx's bulk GET packs ui_hierarchy,
+ * chain_params and state together) has to fit them all in the same 128 KB,
+ * and a kit served at 127.5 KB left the page view jumping to My Presets on the
+ * device (2026-10-04). 98 KB is what 0.4.x served to every kit on both hosts
+ * for its whole life, so this is the size known to work, with a little over. */
+#define DR32_PAGE_BUDGET 102400
 #define DR32_COPY_LISTS 8
 
 typedef struct {
@@ -67,6 +77,13 @@ typedef struct {
      * of every engine in use, ours or theirs, at `base_copy_at`. */
     unsigned char plug_served[DR32_PLUG_PAGES];
     unsigned eng_sig;            /* which engines the copy lists were built for */
+    int      n_base_anchor;      /* pad levels in the base: one names array each */
+    /* The last model a pad was REFUSED because its engine's pages would not
+     * fit the host's value channel beside the rest of the kit's. "full" until
+     * a model is next accepted; the picker reads it to say why nothing changed. */
+    int      model_refused;
+    char     refused_slug[64];   /* the model, so the picker can tell its own write */
+    int      refused_pad;
     long     base_copy_at[DR32_COPY_LISTS];
     int      n_base_copy;
     int      plug_logged;
@@ -123,6 +140,7 @@ typedef struct {
  *  successful kit load (default kit, picker, preview-cancel restore, state
  *  restore via the same picker path). Failure just leaves no baseline, which
  *  degrades to the full state dump — never an error. */
+static void logmsg(const char *s);
 static void dr32_refresh_hierarchy(dr32_instance *in);
 static void dr32_build_src(dr32_instance *in);
 static int dr32_src_current(const dr32_instance *in);
@@ -229,7 +247,7 @@ static void dr32_refresh_hierarchy(dr32_instance *in) {
      * SHADOW_PARAM_VALUE_LEN, 128 KB since host 1.3.0 (upstream #444; 64 KB
      * before) and 1.3.0 is DR32's min_host_version, so cap the whole thing
      * there and fall back to the plain document if the names would not fit. */
-    const size_t cap = 131072;
+    const size_t cap = DR32_VALUE_CAP;
     char *out = malloc(cap);
     if (!out) return;
 
@@ -264,7 +282,20 @@ static void dr32_refresh_hierarchy(dr32_instance *in) {
     }
 
     if (!ok) {
-        if (src_len >= cap) { free(out); return; }
+        /* ⚠ SAY SO. Over the host's value channel the pad names go first, and
+         * past that the new pages cannot be served at all: the document stays
+         * as it was, which from the outside is "the pad has no pages". A kit
+         * holding more engine pages than fit is the only way here. */
+        char msg[160];
+        if (src_len >= cap) {
+            snprintf(msg, sizeof(msg), "dr32: the kit's engine pages need %zu bytes, over the host's %zu: "
+                     "pages not updated (too many different engines in one kit)", src_len, cap);
+            logmsg(msg);
+            free(out);
+            return;
+        }
+        snprintf(msg, sizeof(msg), "dr32: engine pages leave no room for pad names (%zu of %zu bytes): pads read \"Pad N\"", src_len, cap);
+        logmsg(msg);
         memcpy(out, src, src_len + 1);
         n = src_len;
     }
@@ -427,6 +458,7 @@ static void load_engine_ui(dr32_instance *in, const char *module_dir) {
                     /* Each base bank's copy list, right after `model`: where the
                      * keys of the engines in use go (written in order, so after
                      * the model that makes the target pad that engine). */
+                    for (const char *c = hier; (c = strstr(c, "\"child_index_param\"")); c++) in->n_base_anchor++;
                     static const char COPY[] = "\"sample\",\"model\"";
                     for (const char *c = hier; (c = strstr(c, COPY)) && in->n_base_copy < DR32_COPY_LISTS; c += sizeof(COPY) - 1)
                         in->base_copy_at[in->n_base_copy++] = (long)(c - hier) + (long)sizeof(COPY) - 1;
@@ -442,21 +474,31 @@ static void load_engine_ui(dr32_instance *in, const char *module_dir) {
     }
 }
 
-static int engine_in_use(const dr32_kit *kit, int engine) {
-    for (int i = 0; i < DR32_PADS; i++) if (kit->pads[i].engine == engine) return 1;
+/* The engine pad `i` runs — or WOULD run, were `opad` to take `oeng`: every
+ * question below can be asked of the kit as it is (opad < 0) or as it would be
+ * after one model lands (dr32_model_fits). */
+static int pad_engine(const dr32_kit *kit, int i, int opad, int oeng) {
+    return i == opad ? oeng : kit->pads[i].engine;
+}
+static int pad_family(const dr32_kit *kit, int i, int opad, int oeng) {
+    if (i == opad) { const dr32_engine_ops *e = dr32_engine_get(oeng); return e ? e->family : DR32_FAM_SAMPLE; }
+    return (kit->pads[i].engine && kit->pads[i].eops) ? kit->pads[i].eops->family : DR32_FAM_SAMPLE;
+}
+static int engine_in_use_if(const dr32_kit *kit, int engine, int opad, int oeng) {
+    for (int i = 0; i < DR32_PADS; i++) if (pad_engine(kit, i, opad, oeng) == engine) return 1;
     return 0;
 }
+static int engine_in_use(const dr32_kit *kit, int engine) { return engine_in_use_if(kit, engine, -1, 0); }
 
 /* Does any pad run the engine (or family) this page is gated on? */
-static int eng_page_wanted(const dr32_kit *kit, const dr32_eng_page *p) {
+static int eng_page_wanted_if(const dr32_kit *kit, const dr32_eng_page *p, int opad, int oeng) {
     if (p->value < 0) return 1;
-    if (!p->by_family) return engine_in_use(kit, p->value);
-    for (int i = 0; i < DR32_PADS; i++) {
-        const dr32_pad_slot *s = &kit->pads[i];
-        if (s->engine && s->eops && s->eops->family == p->value) return 1;
-    }
+    if (!p->by_family) return engine_in_use_if(kit, p->value, opad, oeng);
+    for (int i = 0; i < DR32_PADS; i++)
+        if (pad_engine(kit, i, opad, oeng) && pad_family(kit, i, opad, oeng) == p->value) return 1;
     return 0;
 }
+static int eng_page_wanted(const dr32_kit *kit, const dr32_eng_page *p) { return eng_page_wanted_if(kit, p, -1, 0); }
 
 /* The engines the kit is running, as one number: the copy lists follow the
  * ENGINES, not the pages (two lanes of a kit port share a page and differ in a
@@ -471,11 +513,11 @@ static unsigned engines_sig(const dr32_kit *kit) {
 /* `,"key","key"` for every engine in use, in engine order, each key once (a
  * kit port's lanes share most of theirs). malloc'd; NULL when no pad runs an
  * engine or on failure. */
-static char *engine_copy_keys(const dr32_kit *kit, size_t *len) {
+static char *engine_copy_keys_if(const dr32_kit *kit, size_t *len, int opad, int oeng) {
     size_t cap = 0, n = 0;
     char *out = NULL;
     for (int id = 1, top = DR32_ENG_COUNT + dr32_plugin_engine_count(); id < top; id++) {
-        const dr32_engine_ops *e = engine_in_use(kit, id) ? dr32_engine_get(id) : NULL;
+        const dr32_engine_ops *e = engine_in_use_if(kit, id, opad, oeng) ? dr32_engine_get(id) : NULL;
         for (int i = 0; e && i < e->nparams; i++) {
             const char *key = e->params[i].key;
             size_t kl = strlen(key);
@@ -496,6 +538,7 @@ static char *engine_copy_keys(const dr32_kit *kit, size_t *len) {
     *len = n;
     return out;
 }
+static char *engine_copy_keys(const dr32_kit *kit, size_t *len) { return engine_copy_keys_if(kit, len, -1, 0); }
 
 static int plug_pages(void) {
     int n = dr32_plugin_page_count();
@@ -510,6 +553,49 @@ static int dr32_src_current(const dr32_instance *in) {
     for (int i = 0, n = plug_pages(); i < n; i++)
         if (in->plug_served[i] != (unsigned char)engine_in_use(&in->kit, dr32_plugin_page_at(i)->engine)) return 0;
     return 1;
+}
+
+/**
+ * Would the hierarchy still fit the host's value channel if `pad` ran `engine`?
+ *
+ * ⭑ WHY ASK BEFORE, NOT FIND OUT AFTER. A kit's pages are served for the
+ * engines its pads run, and the channel is 128 KB. Past it the document cannot
+ * be served at all, so the pad that tipped it over would play and have NO
+ * PAGES — a synth pad you cannot edit, with nothing on screen to say why. A
+ * model that would do that is refused while the pad is still what it was.
+ * (Josh, 2026-10-04: "build refusal first".)
+ *
+ * Counted as dr32_build_src will build it: the base, each wanted page with its
+ * nav entry, and the engines' keys in every base copy list.
+ */
+static int dr32_model_fits(dr32_instance *in, int pad, int engine) {
+    if (!in->ui_hierarchy_base || in->base_nav_at < 0) return 1;      /* no engine pages are served */
+    const dr32_kit *kit = &in->kit;
+    size_t total = (size_t)in->ui_hierarchy_base_len;
+    int levels = in->n_base_anchor;
+    for (int i = 0; i < in->n_eng_pages; i++) {
+        if (!eng_page_wanted_if(kit, &in->eng_pages[i], pad, engine)) continue;
+        total += (size_t)in->eng_pages[i].nav_len + (size_t)in->eng_pages[i].level_len + 2;
+        levels++;
+    }
+    for (int i = 0, n = plug_pages(); i < n; i++) {
+        const dr32_plugin_page *p = dr32_plugin_page_at(i);
+        if (!engine_in_use_if(kit, p->engine, pad, engine)) continue;
+        total += (size_t)p->nav_len + (size_t)p->level_len + 2;
+        levels++;
+    }
+    size_t copy_len = 0;
+    free(engine_copy_keys_if(kit, &copy_len, pad, engine));
+    total += copy_len * (size_t)in->n_base_copy;
+
+    /* ⚠ THE PAD NAMES ARE NOT COUNTED. Every pad level carries the kit's 32
+     * names, and long sample names can add many KB; counting them would
+     * refuse a built-in engine in a kit 0.4.x served, because of what its
+     * SAMPLES are called. All of our own engines' pages together are under the
+     * budget (tests/test_state.c), so a kit of them is never refused; names
+     * that do not fit the channel are dropped, as they always were. */
+    (void)levels;
+    return total + 256 < DR32_PAGE_BUDGET;
 }
 
 /* One thing to put into the base, at a byte offset. */
@@ -773,6 +859,12 @@ static void destroy_instance(void *instance) {
      * waiting on a kit about to be freed. */
     dr32_rs_job_destroy(in->rs);
     dr32_kitjob_destroy(in->kj);     /* frees a plan it never handed over */
+    /* 🔴 THE HOST dlclose()s THIS MODULE RIGHT AFTER THE LAST DESTROY, and the
+     * plugin scan is a thread running OUR code (dr32_plugins.c). Swap DR32 out
+     * while it was still scanning and it resumed in unmapped memory: a host
+     * segfault, reproduced. So wait for it here. It is a no-op once the scan
+     * has finished, which is every time but the first seconds of a start. */
+    dr32_plugins_wait();
     dr32_kit_free(&in->kit);
     dr32_kits_destroy(in->kits);
     free(in->ui_hierarchy_base);
@@ -1052,6 +1144,37 @@ static void set_param(void *instance, const char *key, const char *val) {
         return;
     }
 
+    /* ⭑ A MODEL WHOSE PAGES WOULD NOT FIT IS REFUSED, and the pad stays as it
+     * was (dr32_model_fits). Only here: a state restore applies its keys
+     * straight to the kit, because a set that was saved did fit. */
+    {
+        size_t kl = strlen(key);
+        int pad = -1, n = 0;
+        if (!strcmp(key, "pad_model")) pad = in->kit.ui_current_pad;
+        else if (kl > 9 && sscanf(key, "pad%d_model%n", &pad, &n) == 1 && (size_t)n == kl) pad -= 1;
+        else pad = -1;
+        if (pad >= 0 && pad < DR32_PADS && val[0]) {
+            int mi = dr32_model_find(val);
+            if (mi < 0 && !dr32_plugins_ready()) { dr32_plugins_wait(); mi = dr32_model_find(val); }
+            const dr32_model *m = dr32_model_at(mi);
+            if (m && !dr32_model_fits(in, pad, m->engine)) {
+                /* Once per model and pad: a host that confirms its writes
+                 * (dAVEBOx) sends the same one three times more. */
+                if (!in->model_refused || in->refused_pad != pad || strcmp(in->refused_slug, val)) {
+                    char msg[200];
+                    snprintf(msg, sizeof(msg), "dr32: pad %d: model %s refused: with it the kit's engine pages would "
+                             "pass %d KB (too many different engines in one kit)", pad + 1, val, DR32_PAGE_BUDGET / 1024);
+                    logmsg(msg);
+                }
+                in->model_refused = 1;
+                in->refused_pad = pad;
+                snprintf(in->refused_slug, sizeof(in->refused_slug), "%s", val);
+                return;
+            }
+            if (m) in->model_refused = 0;
+        }
+    }
+
     dr32_apply_param(&in->kit, key, val);
 
     /* A per-pad sample swap (browser, or a browse step) renames that pad in
@@ -1171,6 +1294,14 @@ static int get_param(void *instance, const char *key, char *buf, int buf_len) {
     }
     /* The picker's extra sections: the models other modules bring. "[]"
      * until the scan has published, which is long before a hand gets here. */
+    /* The model last refused for want of room, as "<pad>:<slug>" (pad 1-based),
+     * or "" once a model has been accepted since. The picker compares it with
+     * what it wrote: a host may deliver a write some frames after the call
+     * that made it, so "did my last write fail" cannot be asked any sooner. */
+    if (!strcmp(key, "model_refused")) {
+        if (!in->model_refused) return snprintf(buf, buf_len, "%s", "");
+        return snprintf(buf, buf_len, "%d:%s", in->refused_pad + 1, in->refused_slug);
+    }
     if (!strcmp(key, "plugin_models")) {
         const char *j = dr32_plugin_families_json();
         int jl = (int)strlen(j);

@@ -2,7 +2,7 @@
   "id": "dr32",
   "name": "DrumRack32",
   "abbrev": "DR32",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "author": "legsmechanical",
   "license": "GPL-3.0-or-later",
   "description": "Ableton Move's Drum Rack with 32 pads instead of 16, where any pad can also be a synthesised drum. Loads Move's own .ablpreset drum kits and plays them through a reconstruction of the same Drum Sampler voice (playback region, transpose/detune, A-H-D / A-S-R envelope, four filter types, velocity modulation, choke groups, Punch), and lets any pad play a drum from SIMIAN, URCHIN, 9W9, 6W6, 8W8, CW-78, ChowKick or DR32's own FM drum instead. Every pad has a Send A / Send B into the host's return buses.",

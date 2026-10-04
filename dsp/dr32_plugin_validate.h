@@ -18,6 +18,8 @@ const char *dr32_plugin_validate(const dr32x_plugin *pl);
 /** Option `idx` of "A|B|C" into `out`; 0 if there is none or it does not fit. */
 int dr32x_option_at(const char *opts, int idx, char *out, size_t cap);
 int dr32x_option_count(const char *opts);
+/** A page name as the level key spells it: "FM Env" -> "fm_env". */
+void dr32x_page_slug(const char *page, char *out, size_t cap);
 /** Is `f` a whole number? What makes a knob an int rather than a float. */
 int dr32x_whole(float f);
 

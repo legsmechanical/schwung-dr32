@@ -173,25 +173,39 @@ High". A pad playing either one has a **Tone** page with Pitch and Decay.
 const dr32x_plugin *dr32_engine_plugin(const dr32x_host *host);
 ```
 
-Called once per process, off the audio thread, so it may read files and build
-tables. Return `NULL` to offer nothing. Whatever it returns, and everything
-that points to, must stay valid for the life of the process: use static
-storage.
+Called off the audio thread, so it may read files and build tables. Return
+`NULL` to offer nothing. Whatever it returns, and everything that points to,
+must stay valid for the life of the process: use static storage. It is
+normally called once; if the host unloads and reloads DR32 it is called again,
+and must return the same thing.
 
 `host` tells you what DR32 expects, and is only valid during the call:
 
 | Field | Meaning |
 |---|---|
-| `api_version` | The version DR32 speaks. Return `NULL` if it is not `DR32X_API_VERSION`. |
+| `api_version` | The version DR32 speaks. Return `NULL` only if it is **lower** than `DR32X_API_VERSION`, the one you were built against. See [Versions](#versions). |
 | `sample_rate` | 44100 today. Return `NULL` if you cannot run at the rate given. |
 | `module_dir` | Your module's own folder, for samples or tables you need to read. |
+
+### Versions
+
+`DR32X_API_VERSION` is 1. A later DR32 will keep reading every version of this
+contract it has shipped, so a plugin built against today's header keeps
+loading. For that to work, refuse only a host **older** than you:
+
+```c
+if (host->api_version < DR32X_API_VERSION) return NULL;
+```
+
+Do not test for equality. A plugin that does stops loading the day DR32's
+version goes up.
 
 ### `dr32x_plugin`
 
 | Field | Meaning |
 |---|---|
 | `api_version` | `DR32X_API_VERSION` |
-| `struct_size` | `sizeof(dr32x_plugin)` |
+| `struct_size` | `sizeof(dr32x_plugin)`. Refused if smaller. |
 | `id` | Your plugin's permanent id: `[a-z0-9]`, 1 to 12 characters. Normally your module id. |
 | `name` | The picker section's label, up to 24 characters. |
 | `nengines`, `engines` | Your engines. |
@@ -201,11 +215,11 @@ storage.
 
 | Field | Meaning |
 |---|---|
-| `slug` | Permanent: `[a-z0-9_]`, 1 to 12 characters, unique in the plugin. |
+| `slug` | Permanent: `[a-z0-9]`, no underscore, 1 to 12 characters, unique in the plugin. |
 | `name` | Up to 24 characters. |
 | `nparams`, `params` | 1 to 32 parameters. See [Parameters and pages](#parameters-and-pages). |
-| `create(sample_rate)` | Make one voice. Never the audio thread; may allocate. Return `NULL` on failure. |
-| `destroy(e)` | Free it. Never the audio thread. |
+| `create(sample_rate)` | Make one voice. May allocate. Return `NULL` on failure. |
+| `destroy(e)` | Free it. |
 | `set(e, idx, display)` | Write parameter `idx`, in display units. Audio thread. |
 | `note_on(e, vel01, tune_st)` | Start a hit. Audio thread. |
 | `choke(e)` | **Optional** (may be `NULL`). The pad was cut short. Audio thread. |
@@ -259,16 +273,20 @@ knobs out in table order. A page holds at most **8** knobs. An engine has at
 most **32** parameters.
 
 Do not name a page after one of DR32's own: Pad, Shape, Mix, Stereo, Master,
-Resample, Category, Kit. A plugin that does is refused.
+Resample, Category, Kit. Two pages of one engine must differ in more than case
+or punctuation ("Tone" and "tone" are the same page to DR32). A plugin that
+breaks either rule is refused.
 
 **Integer or float.** A parameter whose `min`, `max`, `def` and `step` are all
-whole numbers is an integer knob. Give it a fractional `step` (0.1, 0.01) to
-make it a float knob.
+whole numbers is an integer knob, and it always moves in steps of 1 whatever
+`step` says. Give it a fractional `step` (0.1, 0.01) to make it a float knob.
 
 **Enums.** Set `options` to the choices separated by `|`. The value is the
 index, so `min` must be 0, `max` must be the number of options minus one, and
 `def` a whole number in between. `set` receives the index as a float. The whole
-string is at most 255 characters and each option under 64.
+string is at most 255 characters and each option under 64. An option may not
+start with a digit or `-`: a kit saves an enum by name, and a name that looks
+like a number would be read back as an index.
 
 **The knob is linear.** One detent moves 0.5% of the range, and there is no
 taper. A range of 20 to 20000 Hz therefore puts every useful low frequency in
@@ -281,7 +299,11 @@ the first few detents. Two ways round it:
   shows a position, not a time or a frequency. The helper header has the
   mapping (`dr32x_exp`) and its inverse.
 
-**Units.** `unit` is a short label ("hz", "ms", "%", "dB", "st") or `NULL`.
+**Units.** `unit` is a short label of at most 8 characters ("hz", "ms", "%",
+"dB", "st") or `NULL`.
+
+**Text limits.** `key`: `[a-z0-9_]`, up to 16 characters. `name`: up to 32.
+`short_name`: up to 8. `page`: up to 16. All printable ASCII.
 
 ## Models
 
@@ -319,11 +341,11 @@ Your output is mono. DR32 pans it.
 
 ## Rules
 
-**Threads.** `create` and `destroy` never run on the audio thread and may
-allocate. They can be called from more than one thread (DR32 resamples a pad on
-a worker, with an instance of its own), so they must not share unguarded state.
-`set`, `note_on`, `choke` and `render` run on the audio thread: no allocation,
-no file I/O, no locks, no logging.
+**Threads.** `create` and `destroy` may allocate. They can be called from more
+than one thread (DR32 resamples a pad on a worker, with an instance of its
+own), so they must not share unguarded state, and they should be quick: a
+model is chosen while audio is running. `set`, `note_on`, `choke` and `render`
+must be real-time safe: no allocation, no file I/O, no locks, no logging.
 
 **One instance per pad.** Up to 32 can exist at once, and each is created and
 destroyed independently. Keep instance state inside the instance: no globals
@@ -374,7 +396,9 @@ Changing a parameter's range or meaning under the same key changes how old kits
 sound.
 
 To keep the full key within DR32's limits, the plugin id and engine slug are at
-most 12 characters and a parameter key at most 16.
+most 12 characters and a parameter key at most 16. Neither the id nor an
+engine slug may contain an underscore, so the three parts of a key can always
+be told apart.
 
 **If your module is not installed** when a kit is opened, the pad is silent and
 reads "`<model>` missing". DR32 keeps the model and its saved values and writes
@@ -503,7 +527,7 @@ Every reason a plugin can be refused:
 | `exports no dr32_engine_plugin` | The entry point is missing or hidden. |
 | `offers no engines` | The entry point returned `NULL`. |
 | `speaks API n, DR32 speaks m` | `api_version` mismatch. |
-| `struct_size is too small` | `struct_size` is not `sizeof(dr32x_plugin)`. |
+| `struct_size is too small` | `struct_size` is less than `sizeof(dr32x_plugin)`. |
 | `id must be [a-z0-9], 1-12 chars` | |
 | `id is one of DR32's own engine families` | The id is taken by a built-in. |
 | `id is already an engine family` | Another installed plugin uses that id. |
@@ -514,15 +538,20 @@ Every reason a plugin can be refused:
 | `an engine needs 1-32 params` | |
 | `engine X param N: key, name, short_name, page or unit is malformed` | Empty, too long, or wrong characters. |
 | `engine X param N: key is repeated` | |
+| `engine X param N: options malformed` | The options string is empty, over 255 characters, or not printable. |
+| `engine X param N: an option is empty or too long` | An option is empty or 64 characters or more. |
+| `engine X param N: an option may not start with a digit or '-'` | |
 | `engine X param N: an enum runs 0..count-1` | `min`, `max` or `def` do not match the options. |
 | `engine X param N: needs min < max, def inside, step > 0` | |
 | `engine X param N: its page has the name of one of DR32's own` | |
 | `engine X param N: its page has more than 8 knobs` | |
+| `engine X param N: its page name differs from another's only in case or punctuation` | |
 | `a model's slug or name is malformed` | |
 | `two models share a slug` | |
 | `a model names no engine or has no values` | |
 | `a model's value is outside its param's range` | |
 | `too many plugin engines installed` / `... models installed` | See [Limits](#limits). |
+| `refused: out of memory` | Also reported when the 192-page capacity is exceeded. |
 
 ## Adapting an existing module
 
@@ -579,17 +608,23 @@ What to expect either way:
 - **Capacity across all installed plugins:** 64 engines, 256 models, 192 pages.
 - **Scanned once per start**, from the folders beside DR32's own
   (`modules/sound_generators/`).
-- **Page budget.** The host caps a module's served page description at 128 KB.
+- **Scan and reload.** If the host unloads DR32 and loads it again without a
+  restart, the scan runs again.
+- **Page budget.** The host carries a module's page description in 128 KB, a
+  space DR32's pages share with other values, so DR32 budgets 100 KB for them.
   DR32 serves pages only for the engines a kit is using, and a page costs
-  roughly 2 to 3 KB, so one kit has room for about 40 engine pages in total
+  roughly 2 to 3 KB, so one kit has room for about 30 engine pages in total
   across every engine on its pads. An engine with three pages leaves room for
-  more variety in a kit than one with six.
+  more variety in a kit than one with six. A model whose engine would take the
+  kit past the limit is refused: the pad stays as it was, and the picker says
+  "TOO MANY ENGINES IN KIT". An engine already on another pad costs nothing
+  more, so the limit is on how many *different* engines a kit holds.
 
 ## Checklist
 
 - [ ] `dr32_engine.so` exports `dr32_engine_plugin` and nothing else
 - [ ] Built with `-fvisibility=hidden -Wl,-Bsymbolic` for aarch64
-- [ ] The entry point returns `NULL` for an API version or sample rate it cannot serve
+- [ ] The entry point returns `NULL` for a host older than its header, or a sample rate it cannot serve, and does not test the version for equality
 - [ ] `dr32-plugin-check` reports no errors, and you have read its warnings
 - [ ] Nothing on the audio thread allocates, locks, logs or touches a file
 - [ ] `render` returns `HOLD` only for a voice with a silent gap, and then `DONE` when it ends

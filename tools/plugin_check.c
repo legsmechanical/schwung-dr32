@@ -160,7 +160,7 @@ int main(int argc, char **argv) {
         for (int m = 0; m < pl->nmodels; m++) if (pl->models[m].engine == e) used++;
         if (!used) warn("engine %s has no model: nothing in the picker reaches it", x->slug);
     }
-    printf("\n%d pages in all. A kit serves about 2-3 KB per page of each engine on its pads.\n", total_pages);
+    printf("\n%d pages in all. A kit has room for about 30 plugin pages across the engines on its pads.\n", total_pages);
 
     /* ---- every model, played --------------------------------------------- */
     printf("\nmodels (velocity 100, no transpose):\n");

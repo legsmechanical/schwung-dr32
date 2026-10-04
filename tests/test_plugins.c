@@ -59,9 +59,9 @@ int main(void) {
     int builtin = dr32_model_count() - dr32_plugin_model_count();
     dr32_plugins_wait();
     CHECK(dr32_plugins_ready(), "the scan never published");
-    CHECK(dr32_plugin_engine_count() == 3, "%d plugin engines; toy has 1, zraw 2, and the bad one must add none", dr32_plugin_engine_count());
-    CHECK(dr32_plugin_model_count() == 4, "%d plugin models, want toy's 2 and zraw's 2", dr32_plugin_model_count());
-    CHECK(dr32_model_count() == builtin + 4, "the plugins' models are not in the model list");
+    CHECK(dr32_plugin_engine_count() == 15, "%d plugin engines; toy has 1, zraw 2, zzbig 12, and the bad one must add none", dr32_plugin_engine_count());
+    CHECK(dr32_plugin_model_count() == 16, "%d plugin models, want toy's 2, zraw's 2 and zzbig's 12", dr32_plugin_model_count());
+    CHECK(dr32_model_count() == builtin + 16, "the plugins' models are not in the model list");
     /* Ours do not move: a pad holds a model INDEX. */
     CHECK(dr32_model_find("simian/kick") == 0, "a built-in model moved when a plugin was installed");
     int mi = dr32_model_find("toy/low");
@@ -72,10 +72,16 @@ int main(void) {
 
     /* The picker reads this. */
     api->get_param(inst, "plugin_models", h, (int)sizeof h);
-    CHECK(!strcmp(h, "[{\"id\":\"toy\",\"label\":\"Toy\",\"models\":[{\"slug\":\"toy/low\",\"name\":\"Toy Low\"},"
-                     "{\"slug\":\"toy/high\",\"name\":\"Toy High\"}]},"
-                     "{\"id\":\"zraw\",\"label\":\"Z Raw\",\"models\":[{\"slug\":\"zraw/raw\",\"name\":\"Raw\"},"
-                     "{\"slug\":\"zraw/late\",\"name\":\"Late\"}]}]"), "plugin_models: %s", h);
+    {
+        /* Our sections first, in folder order; the big fixture's twelve follow. */
+        static const char want[] =
+            "[{\"id\":\"toy\",\"label\":\"Toy\",\"models\":[{\"slug\":\"toy/low\",\"name\":\"Toy Low\"},"
+            "{\"slug\":\"toy/high\",\"name\":\"Toy High\"}]},"
+            "{\"id\":\"zraw\",\"label\":\"Z Raw\",\"models\":[{\"slug\":\"zraw/raw\",\"name\":\"Raw\"},"
+            "{\"slug\":\"zraw/late\",\"name\":\"Late\"}]},"
+            "{\"id\":\"zzbig\",\"label\":\"Big\",\"models\":[{\"slug\":\"zzbig/e0\",";
+        CHECK(!strncmp(h, want, sizeof(want) - 1), "plugin_models: %.300s", h);
+    }
 
     /* ---- 2. no plugin pad: nothing of the plugin's is served ------------ */
     int n0 = api->get_param(inst, "ui_hierarchy", h, (int)sizeof h);
@@ -274,6 +280,71 @@ int main(void) {
         api->destroy_instance(g);
     }
 
+    /* ---- 6d. a model whose pages would not fit is REFUSED ---------------- */
+    {
+        /* The host carries a module's page description in 128 KB, and DR32
+         * serves pages for the engines a kit runs. Twelve 32-knob engines do
+         * not fit. The one that would tip it over must be turned down with its
+         * pad left exactly as it was — the alternative is a synth pad that
+         * plays and has no pages, with nothing to say why. */
+        void *g = api->create_instance("dist/tests/plug/dr32", NULL);
+        char key[32], slug[32];
+        api->set_param(g, "pad12_model", "toy/low");       /* what the refused pad must keep */
+        api->set_param(g, "pad12_x_toy_sine_pitch", "222");
+        int accepted = 0, first_refused = -1;
+        for (int e = 0; e < 12; e++) {
+            snprintf(key, sizeof key, "pad%d_model", e + 1);
+            snprintf(slug, sizeof slug, "zzbig/e%d", e);
+            api->set_param(g, key, slug);
+            v[0] = 0; api->get_param(g, key, v, (int)sizeof v);
+            int took = !strcmp(v, slug);
+            char why[64] = ""; api->get_param(g, "model_refused", why, (int)sizeof why);
+            if (took) {
+                accepted++;
+                CHECK(first_refused < 0, "engine %d was accepted after engine %d had been refused for room", e, first_refused);
+                CHECK(!why[0], "model_refused reads '%s' after a model was accepted", why);
+            } else {
+                if (first_refused < 0) first_refused = e;
+                char want[48];
+                snprintf(want, sizeof want, "%d:%s", e + 1, slug);
+                CHECK(!strcmp(why, want), "engine %d was not taken and model_refused reads '%s', want '%s'", e, why, want);
+            }
+            /* Whatever was decided, what is served fits, whole, with its names. */
+            int hn = api->get_param(g, "ui_hierarchy", h, (int)sizeof h);
+            CHECK(hn > 2 && hn < 110000, "after engine %d the hierarchy is %d bytes: the pages are budgeted at 100 KB and this kit's names are short", e, hn);
+            CHECK(count(h, "\"child_names\": [") == count(h, "\"child_index_param\""),
+                  "after engine %d the served hierarchy lost its pad names (%d bytes)", e, hn);
+            if (took) {
+                char want[48];
+                snprintf(want, sizeof want, "\"eng_x_zzbig_e%d_alpha\"", e);
+                CHECK(strstr(h, want) != NULL, "engine %d is on a pad and its pages are not served", e);
+            }
+        }
+        CHECK(accepted >= 4 && accepted < 12, "%d of the 12 big engines were accepted; some must fit and not all can", accepted);
+        printf("  a kit holds %d of these 32-knob engines; the next is refused\n", accepted);
+        /* The pad that was refused last is untouched: still the toy, still its edit. */
+        v[0] = 0; api->get_param(g, "pad12_model", v, (int)sizeof v);
+        CHECK(!strcmp(v, "toy/low"), "the refused pad did not keep its model (reads '%s')", v);
+        v[0] = 0; api->get_param(g, "pad12_x_toy_sine_pitch", v, (int)sizeof v);
+        CHECK(atof(v) == 222.0, "the refused pad lost its knob value (reads %s)", v);
+        CHECK(strstr(logbuf, "refused: with it the kit's engine pages would pass"), "the refusal was not logged");
+        /* Room made is room that can be used: one big engine out, the refused one in. */
+        if (first_refused >= 0) {
+            api->set_param(g, "pad1_model", "toy/high");
+            snprintf(key, sizeof key, "pad%d_model", first_refused + 1);
+            snprintf(slug, sizeof slug, "zzbig/e%d", first_refused);
+            api->set_param(g, key, slug);
+            v[0] = 0; api->get_param(g, key, v, (int)sizeof v);
+            CHECK(!strcmp(v, slug), "with one engine removed, the refused model is still refused (reads '%s')", v);
+        }
+        /* An engine ALREADY in the kit costs nothing more: a second pad takes it. */
+        snprintf(slug, sizeof slug, "zzbig/e%d", accepted - 1);
+        api->set_param(g, "pad20_model", slug);
+        v[0] = 0; api->get_param(g, "pad20_model", v, (int)sizeof v);
+        CHECK(!strcmp(v, slug), "a model whose engine the kit already runs was refused (reads '%s')", v);
+        api->destroy_instance(g);
+    }
+
     /* ---- 7. the broken ones cost nothing, and say why ------------------- */
     CHECK(strstr(logbuf, "engine plugin bad refused") && strstr(logbuf, "more than 8 knobs"),
           "the refused plugin's reason was not logged:\n%s", logbuf);
@@ -300,6 +371,44 @@ int main(void) {
         CHECK(strstr(pl, "engine plugin toy: 1 engines") && strstr(pl, "engine plugin bad refused"),
               "plugins.log does not carry the scan's report: '%s'", pl);
         remove("dist/tests/plug/dr32/plugins.log");     /* that folder is src/, by symlink */
+    }
+
+    /* ---- 8. the rules, on plugins that break them one at a time ---------- */
+    {
+        /* Each is a plugin a developer could plausibly write. The validator has
+         * to REFUSE it with a reason — and, for the second, without reading
+         * through the NULL it is refusing (it once crashed there, and on the
+         * device that is the host going down instead of a line in the log). */
+        static void *(*const mk)(int) = NULL;
+        (void)mk;
+        const dr32_engine_ops *ok = dr32_engine_get(DR32_ENG_COUNT);    /* the toy: real functions to borrow */
+        static const float v2[2] = { 0, 0 };
+        #define ENGINE1(slug_, params_, n_) { slug_, "E", n_, params_, ok->create, ok->destroy, ok->set, ok->note_on, NULL, ok->render }
+        #define REFUSED(what, needle, eng) do { \
+            dr32x_model md_ = { "m", "M", 0, v2, 0, 0 }; \
+            dr32x_plugin pl_ = { DR32X_API_VERSION, sizeof(dr32x_plugin), "probe", "Probe", 1, eng, 1, &md_ }; \
+            const char *w_ = dr32_plugin_validate(&pl_); \
+            CHECK(w_ && strstr(w_, needle), "%s: %s", what, w_ ? w_ : "ACCEPTED"); } while (0)
+
+        static const dr32x_param good[2]  = { { "a", "A", "A", 0, 1, 0, 1, NULL, "Tone", NULL }, { "b", "B", "B", 0, 1, 0, 1, NULL, "Tone", NULL } };
+        static const dr32x_param nullp[2] = { { "a", "A", "A", 0, 1, 0, 1, NULL, "Tone", NULL }, { "b", "B", "B", 0, 1, 0, 1, NULL, NULL, NULL } };
+        static const dr32x_param digit[2] = { { "a", "A", "A", 0, 2, 0, 1, NULL, "Tone", "808|909|707" }, { "b", "B", "B", 0, 1, 0, 1, NULL, "Tone", NULL } };
+        static const dr32x_param cased[2] = { { "a", "A", "A", 0, 1, 0, 1, NULL, "Tone", NULL }, { "b", "B", "B", 0, 1, 0, 1, NULL, "tone", NULL } };
+        dr32x_engine e_good  = ENGINE1("fine", good, 2),  e_under = ENGINE1("a_b", good, 2);
+        dr32x_engine e_null  = ENGINE1("fine", nullp, 2), e_digit = ENGINE1("fine", digit, 2), e_cased = ENGINE1("fine", cased, 2);
+        {
+            dr32x_model md = { "m", "M", 0, v2, 0, 0 };
+            dr32x_plugin pl = { DR32X_API_VERSION, sizeof(dr32x_plugin), "probe", "Probe", 1, &e_good, 1, &md };
+            const char *w = dr32_plugin_validate(&pl);
+            CHECK(!w, "a plugin that keeps the rules was refused: %s", w);
+        }
+        REFUSED("a later param with a NULL page", "malformed", &e_null);
+        REFUSED("an enum option that starts with a digit", "digit", &e_digit);
+        REFUSED("two pages that differ only in case", "case or punctuation", &e_cased);
+        REFUSED("an engine slug with an underscore", "slug or name is malformed", &e_under);
+        CHECK(dr32_plugin_validate(NULL) != NULL, "a NULL plugin was accepted");
+        #undef ENGINE1
+        #undef REFUSED
     }
 
     api->destroy_instance(inst);

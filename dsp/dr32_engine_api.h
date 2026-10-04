@@ -1,7 +1,27 @@
 // dr32_engine_api.h — how ANOTHER MODULE offers DR32 a synth engine.
 //
 // SPDX-License-Identifier: MIT
-// (This one header, so that a module of any licence can include it. DR32
+// Copyright (c) 2026 Josh Gaines / legsmechanical
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+//
+// (MIT for this header, so that a module of any licence can include it. DR32
 // itself is GPL-3.0-or-later.)
 //
 // ⭐ WHAT YOU SHIP. One extra shared object beside your module's own files:
@@ -25,8 +45,10 @@
 // an engine, and from then on the values are the pad's own.
 //
 // ⚠ THE RULES THE AUDIO THREAD HOLDS YOU TO
-//   - `create` / `destroy` run on the host thread and may allocate. EVERYTHING
-//     ELSE runs on the audio thread: no allocation, no file I/O, no locks.
+//   - `create` / `destroy` may allocate, and may be called from more than one
+//     thread (DR32 resamples a pad on a worker with an instance of its own):
+//     keep them free of unguarded shared state. `set`, `note_on`, `choke` and
+//     `render` must be REAL-TIME SAFE: no allocation, no file I/O, no locks.
 //   - One instance per PAD, up to 32 at once. Keep an instance small.
 //   - `render` OVERWRITES `out` with n mono float frames (n <= 1024) and says
 //     whether the voice is still going (DR32X_RENDER_*). You need not work out
@@ -74,8 +96,9 @@ typedef struct dr32x_param {
     const char *key;        /* bare: [a-z0-9_], <= 16 chars: "pitch"           */
     const char *name;       /* knob label, <= 32 chars: "Pitch"                */
     const char *short_name; /* the cell's label, <= 8 chars: "PITCH"           */
-    float       min, max, def, step;   /* a step < 1 makes it a float knob     */
-    const char *unit;       /* "hz", "%", "dB", "st", "ms" ... or NULL         */
+    float       min, max, def, step;   /* a step < 1 makes it a float knob; a
+                                        * whole-number knob always moves by 1   */
+    const char *unit;       /* <= 8 chars: "hz", "%", "dB", "st", "ms"; or NULL */
     const char *page;       /* the bank it sits on, <= 16 chars: "Tone". Not a
                              * name DR32 uses: Pad, Shape, Mix, Stereo, Master,
                              * Resample, Category, Kit.                        */
@@ -83,7 +106,7 @@ typedef struct dr32x_param {
 } dr32x_param;
 
 typedef struct dr32x_engine {
-    const char *slug;       /* [a-z0-9_], <= 12 chars: "drum"                  */
+    const char *slug;       /* [a-z0-9] (no underscore), <= 12 chars: "drum"   */
     const char *name;       /* "My Drum"                                       */
     int         nparams;    /* 1..DR32X_MAX_PARAMS                             */
     const dr32x_param *params;
@@ -131,9 +154,15 @@ typedef struct dr32x_host {
     const char *module_dir;     /* YOUR module's folder (for samples, tables)  */
 } dr32x_host;
 
-/** The one export. Called once per process, off the audio thread; may read
- *  files. Return NULL to offer nothing. What it returns must stay valid for
- *  the life of the process. */
+/** The one export. Called off the audio thread; may read files. Return NULL to
+ *  offer nothing. What it returns must stay valid for the life of the process.
+ *  Normally called once; it is called again if the host unloads and reloads
+ *  DR32, and must then return the same thing.
+ *
+ *  ⚠ VERSIONS. Refuse only a host OLDER than you were built for
+ *  (`host->api_version < DR32X_API_VERSION`): DR32 keeps reading every
+ *  version of this contract it has shipped, so a newer DR32 still loads a
+ *  plugin built against an older header. */
 const dr32x_plugin *dr32_engine_plugin(const dr32x_host *host);
 
 #ifdef __cplusplus

@@ -131,7 +131,7 @@
 </header>
 
 <div class="note">
-  <p><strong>This manual is for DR32 0.4.1, which requires Schwung 1.5.0 or later.</strong> 1.5.0
+  <p><strong>This manual is for DR32 0.5.0, which requires Schwung 1.5.0 or later.</strong> 1.5.0
   is where a synth pad's pages learned to follow the pad, where the Resample page became
   something you can click into, and where the envelope picture learned DR32's two envelope
   modes. Install and update DR32 from Schwung Manager.</p>
@@ -294,6 +294,18 @@ a sample pad.</p>
 <p>Every drum starts from its engine's own factory values and is yours to change. A synth pad has
 no Start/End, Shape page or Punch, because those belong to the sampler.</p>
 
+<h3>Engines from other modules</h3>
+
+<p>A module installed beside DR32 can offer its own voices as engines. If one of your modules
+does, <strong>ENGN</strong> shows a section named after it, below DR32's own, listing its drums;
+the pad's pages are that module's knobs. There is nothing to set up, and these pads work like any
+other synth pad: volume, pan, choke groups, sends, buses, Copy, Link and Resample all apply.</p>
+
+<p>The module has to be installed for the pad to play. If you open a set on a Move that does not
+have it, the pad is silent and its name reads &ldquo;<em>name</em> missing&rdquo;. Nothing is lost:
+the pad keeps its sound and settings in the set, and plays again once the module is installed. A
+newly installed module's section appears after the Move has restarted.</p>
+
 <h3>The drum machines</h3>
 
 <p>9W9, 6W6, 8W8 and CW-78 each give a pad <strong>one drum of the machine</strong>, played
@@ -415,6 +427,13 @@ switched.</p>
       lossless and reopen correctly on Move &mdash; but they are not played back.</li>
   <li>Return-chain effects saved inside a Move kit are preserved, but not set up for you.</li>
   <li>Browsing kits has no undo, as above.</li>
+  <li>A kit can hold only so many <em>different</em> engines, because each one's pages take room
+      in what DR32 hands the host. DR32's own engines all fit together. With engines from other
+      modules in the kit you can reach the limit: the picker then says &ldquo;TOO MANY ENGINES IN
+      KIT&rdquo; and leaves the pad as it was. More pads of an engine already in the kit are
+      always fine.</li>
+  <li>An engine from another module needs that module installed; without it the pad is silent
+      until the module is back.</li>
   <li>Each drum-machine pad is a whole machine of its own, so two 8W8 hat pads do not share their
       oscillators the way the machine's own hats do.</li>
 </ul>

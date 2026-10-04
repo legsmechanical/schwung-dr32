@@ -42,6 +42,11 @@ mkdir -p dist/tests/plug/zraw
 cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared \
    tests/fixtures/plugin/gate_engine.c -o dist/tests/plug/zraw/dr32_engine.so -lm
 
+# ...and one with more engine pages than a kit can serve (the refusal).
+mkdir -p dist/tests/plug/zzbig
+cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared \
+   tests/fixtures/plugin/big_engine.c -o dist/tests/plug/zzbig/dr32_engine.so -lm
+
 # The developer's checker (tools/plugin_check.c) runs DR32's own rules over a
 # plugin and plays it. It must pass the starter template and the good
 # fixtures, and fail the one that breaks a rule, for the reason DR32 gives.

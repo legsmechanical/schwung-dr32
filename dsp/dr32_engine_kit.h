@@ -1,6 +1,9 @@
 // dr32_engine_kit.h — optional helpers for writing a DR32 engine plugin.
 //
 // SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Josh Gaines / legsmechanical
+// (The MIT permission notice is in dr32_engine_api.h, which this includes and
+// travels with.)
 //
 // Nothing here is part of the contract (that is dr32_engine_api.h, which this
 // includes). It is the code every adapter otherwise writes by hand: the export

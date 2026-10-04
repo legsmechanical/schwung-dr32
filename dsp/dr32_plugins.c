@@ -177,19 +177,6 @@ static const char *validate(const dr32x_plugin *pl) {
     return NULL;
 }
 
-/* "Tone" -> "tone": the page's part of a level key (gen_engine_ui.mjs). */
-static void page_slug(const char *page, char *out, size_t cap) {
-    size_t n = 0;
-    int gap = 0;
-    for (const char *p = page; *p && n + 1 < cap; p++) {
-        char c = *p;
-        if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
-        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') { out[n++] = c; gap = 0; }
-        else if (!gap) { out[n++] = '_'; gap = 1; }
-    }
-    out[n] = '\0';
-}
-
 /* An engine's pages, from the template: one level per distinct `page`. */
 static int make_pages(const dr32_engine_ops *e, const char *keys_csv, const char *tpl) {
     char idtxt[16];
@@ -210,7 +197,7 @@ static int make_pages(const dr32_engine_ops *e, const char *keys_csv, const char
         }
         sb_json(&name, page);
         char ps[32], key[96];
-        page_slug(page, ps, sizeof(ps));
+        dr32x_page_slug(page, ps, sizeof(ps));
         snprintf(key, sizeof(key), "eng_%s%s", e->prefix, ps);
 
         /* The template's params and knobs are one-element arrays holding the

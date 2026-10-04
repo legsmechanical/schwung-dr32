@@ -497,5 +497,58 @@ check('...and stays put, for the host to close', sect(), '');
     check('a list that fits draws no bar', bar.length, 0);
 }
 
+/* ── 14. A REFUSED MODEL ──────────────────────────────────────────────────
+ *
+ * The DSP turns down a model whose engine would take the kit past its page
+ * budget (dsp/dr32.c, dr32_model_fits) and says so through `model_refused`,
+ * as "<pad>:<slug>". Three things have to hold here:
+ *   - the header says why, or the row just looks dead
+ *   - a CLICK does not close the browser on a model that did not load
+ *   - the answer may arrive LATE: a host that confirms its writes (dAVEBOx)
+ *     delivers them after setParam returns, so reading right after the write
+ *     would be asking about the write before. Found on the device: no notice,
+ *     and the click closed the browser onto a pad that had not changed.
+ */
+{
+    const ink = [];
+    const rctx = Object.assign({}, ctx, { fillRect: (x, y, w, h, v) => { if (y < 8 && v) ink.push(x); } });
+    const headerInk = () => { ink.length = 0; ov.draw(rctx); return ink.length; };
+    let closed = 0;
+    ctx.close = () => { closed++; };
+    /* The DSP, as the host would deliver it: the write lands only when told to. */
+    let pending = null;
+    ctx.setParam = (k, v) => { pending = [k, String(v)]; return true; };
+    const deliver = (refuse) => {
+        if (!pending) return;
+        const [k, v] = pending; pending = null;
+        if (refuse) params.model_refused = k.slice(3, k.indexOf('_')) + ':' + v;
+        else { params[k] = v; params.model_refused = ''; }
+    };
+    params = { ui_current_pad: '7' };
+    ov.onOpen(ctx);
+    cursorTo('Urchin'); navRight();
+    const plain = headerInk();                          /* the ordinary header */
+    jog(1);                                             /* onto a model: it is written... */
+    check('a model row writes the model', pending && pending[0], 'pad7_model');
+    const wrote = pending[1];
+    check('...and nothing is said before the DSP has answered', headerInk(), plain);
+    deliver(true);                                      /* ...and refused, a moment later */
+    check('the DSP said which', params.model_refused, '7:' + wrote);
+    const noticed = headerInk();
+    check('the header changes to the notice', noticed !== plain && noticed > 0, true);
+    check('...and it is the notice', ctx.state.notice, 'TOO MANY ENGINES IN KIT');
+    click();
+    deliver(true);
+    check('clicking a refused model does NOT close the browser', closed, 0);
+    check('...and the pad is untouched', params.pad7_model === undefined, true);
+    jog(1);                                             /* another model: this one fits */
+    deliver(false);
+    check('moving on clears the notice', headerInk(), plain);
+    click();
+    check('a model that loaded closes on click, as ever', closed, 1);
+    delete ctx.close;
+    ctx.setParam = (k, v) => { params[k] = String(v); return true; };
+}
+
 console.log(fail ? `check_browser_nav: ${fail} FAILURE(S)` : 'check_browser_nav: OK');
 process.exit(fail ? 1 : 0);

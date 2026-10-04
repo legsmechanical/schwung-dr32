@@ -1,5 +1,9 @@
 /* dr32_engine.c — a starting point for a DR32 engine plugin.
  *
+ * SPDX-License-Identifier: MIT-0
+ * This template is yours to copy, change and ship under any licence, with no
+ * notice required.
+ *
  * Copy this file, dr32_engine_api.h and dr32_engine_kit.h into your module,
  * replace the voice with your own, and build it as dr32_engine.so (see
  * Makefile.snippet beside this file, and docs/ENGINE_PLUGINS.md in DR32).
@@ -131,6 +135,8 @@ static const dr32x_plugin PLUGIN = {
 
 DR32X_EXPORT
 const dr32x_plugin *dr32_engine_plugin(const dr32x_host *host) {
-    if (!host || host->api_version != DR32X_API_VERSION) return NULL;
+    /* Refuse only a DR32 older than this was built for; a newer one still
+     * reads this version of the contract. */
+    if (!host || host->api_version < DR32X_API_VERSION) return NULL;
     return &PLUGIN;
 }

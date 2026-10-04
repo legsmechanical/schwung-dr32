@@ -410,6 +410,15 @@ int main(void) {
                 for (const char *q = pads; q && end && (q = strstr(q, "\"n9_tune\"")) && q < end; q++) n9++;
                 CHECK(n9 == 1, "a kit port's shared key is in the Pad bank's copy list %d times, want once", n9);
             }
+            /* ⭑ EVERY ENGINE OF OURS, IN ONE KIT, IS NEVER REFUSED: 0.4.x served
+             * that kit, and the refusal is for kits that other modules' engines
+             * make bigger. Each model above went through set_param, where the
+             * refusal lives, and all 45 levels are here. */
+            {
+                char why[64] = "x";
+                api->get_param(inst, "model_refused", why, (int)sizeof why);
+                CHECK(!why[0], "one of DR32's own engines was refused for room ('%s') in a kit of only its own", why);
+            }
             printf("  served hierarchy: %d bytes with no synth pad, %d with every engine\n", n_samples_only, n);
             /* Every page, so tools/pages_check.mjs runs the host's validator
              * over all of them. */
