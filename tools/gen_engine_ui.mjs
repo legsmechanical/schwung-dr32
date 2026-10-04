@@ -311,13 +311,18 @@ for (const [, lv] of genLevels) {
 /* The gate, in chain_params: that is the table the grid's condition evaluator
  * reads through. It is on NO level, deliberately (docs/MODULES.md, "The gate
  * does not need a cell"; schwung-urchin's ui_engine note). */
+/* ⭑ THE RANGE COVERS THE ENGINES OTHER MODULES BRING. Their ids follow ours
+ * (dsp/dr32_plugins.c: up to PL_MAX_ENGINES of them, family DR32_FAM_PLUGIN),
+ * and a declared max that stops at the last built-in would be a range the
+ * value leaves the moment a plugin pad is focused. */
+const PLUGIN_ENGINES = 64, FAM_PLUGIN = 9;
 const gate = { key: 'ui_engine', name: 'Engine', type: 'int', min: 0,
-               max: Math.max(...engines.map((e) => e.id)), default: 0 };
+               max: Math.max(...engines.map((e) => e.id)) + PLUGIN_ENGINES, default: 0 };
 const gi = caps.chain_params.findIndex((p) => p.key === 'ui_engine');
 if (gi >= 0) caps.chain_params[gi] = gate; else caps.chain_params.push(gate);
 /* The second gate: the kit ports' page sets follow the INSTRUMENT. */
 const fgate = { key: 'ui_family', name: 'Instrument', type: 'int', min: 0,
-                max: Math.max(...engines.map((e) => e.family)), default: 0 };
+                max: Math.max(FAM_PLUGIN, ...engines.map((e) => e.family)), default: 0 };
 const fi = caps.chain_params.findIndex((p) => p.key === 'ui_family');
 if (fi >= 0) caps.chain_params[fi] = fgate;
 else caps.chain_params.splice(caps.chain_params.findIndex((p) => p.key === 'ui_engine') + 1, 0, fgate);

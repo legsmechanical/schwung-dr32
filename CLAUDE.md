@@ -354,7 +354,8 @@ the developer"*, runtime, no DR32 release per engine. Test case: `schwung-omega`
 - **The scan's report is also `<dr32 folder>/plugins.log`**, rewritten each start: the host's log is
   best-effort and can be off, and this is what a module author needs when an engine does not show.
 - Full keys must fit DR32's 64-byte key buffers with `pad32_`: plugin id and engine slug <= 12
-  chars, a param key <= 16. ⚠ `ui_engine`'s declared max in chain_params is still the built-in count.
+  chars, a param key <= 16. `ui_engine` / `ui_family` declare a max that covers the plugin ids
+  (`gen_engine_ui.mjs`: +64 engines, family 9).
 
 ### 🥁 The kit ports: 9W9, 6W6, 8W8, CW-78 (2026-09-22)
 

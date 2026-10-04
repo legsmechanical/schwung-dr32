@@ -63,7 +63,7 @@
         "name": "Engine",
         "type": "int",
         "min": 0,
-        "max": 58,
+        "max": 122,
         "default": 0
       },
       {
@@ -71,7 +71,7 @@
         "name": "Instrument",
         "type": "int",
         "min": 0,
-        "max": 8,
+        "max": 9,
         "default": 0
       }
     ],
