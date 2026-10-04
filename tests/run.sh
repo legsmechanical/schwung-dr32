@@ -36,6 +36,32 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared \
 cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared -DTOY_BAD \
    tests/fixtures/plugin/toy_engine.c -o dist/tests/plug/bad/dr32_engine.so -lm
 echo "not a shared object" > dist/tests/plug/junk/dr32_engine.so
+# ...and one whose engines leave `choke` out and never say they have finished
+# ("zraw": it sorts after "toy", so the toy keeps the first plugin ids).
+mkdir -p dist/tests/plug/zraw
+cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared \
+   tests/fixtures/plugin/gate_engine.c -o dist/tests/plug/zraw/dr32_engine.so -lm
+
+# The developer's checker (tools/plugin_check.c) runs DR32's own rules over a
+# plugin and plays it. It must pass the starter template and the good
+# fixtures, and fail the one that breaks a rule, for the reason DR32 gives.
+cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/dr32-plugin-check \
+   tools/plugin_check.c dsp/dr32_plugin_validate.c -lm -ldl
+cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -fPIC -fvisibility=hidden -shared \
+   docs/plugin_template/dr32_engine.c -o dist/tests/template_engine.so -lm
+for so in dist/tests/template_engine.so dist/tests/plug/toy/dr32_engine.so dist/tests/plug/zraw/dr32_engine.so; do
+  if dist/tests/dr32-plugin-check "$so" > dist/tests/plugin_check.out 2>&1; then
+    echo "plugin_check: $so OK ($(tail -1 dist/tests/plugin_check.out))"
+  else
+    echo "  FAIL plugin_check refused $so:"; cat dist/tests/plugin_check.out; fail=1
+  fi
+done
+if dist/tests/dr32-plugin-check dist/tests/plug/bad/dr32_engine.so > dist/tests/plugin_check.out 2>&1 \
+   || ! grep -q "more than 8 knobs" dist/tests/plugin_check.out; then
+  echo "  FAIL plugin_check did not refuse the rule-breaking plugin for its page of 9+ knobs"; fail=1
+else
+  echo "plugin_check: refuses the rule-breaking plugin, with the reason"
+fi
 for src in tests/test_*.c; do
   name=$(basename "$src" .c)
   cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -c "$src" -o "dist/tests/$name.o"
@@ -96,5 +122,5 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -Idsp -o dist/tests/render_score.o -c test
 c++ -o dist/tests/render_score dist/tests/render_score.o \
    dist/tests/dr32_params.o dist/tests/dr32_kit.o dist/tests/dr32_voice.o \
    dist/tests/dr32_effects.o dist/tests/dr32_preset.o dist/tests/dr32_json.o dist/tests/wav.o \
-   dist/tests/dr32_engine.o dist/tests/dr32_plugins.o dist/tests/eng_*.o -lm -ldl -lpthread || fail=1
+   dist/tests/dr32_engine.o dist/tests/dr32_plugins.o dist/tests/dr32_plugin_validate.o dist/tests/eng_*.o -lm -ldl -lpthread || fail=1
 exit $fail

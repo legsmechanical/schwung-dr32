@@ -36,6 +36,7 @@ typedef struct {
     float    amp, panl, panr;
     float    choke_gain;     // 1 until choked, then ramps to 0
     float    choke_mul;      // per-sample multiplier; 1 = not choking
+    int      quiet;          // frames under the gate (an engine another module brings)
 } dr32_synth;
 
 /* Wide (Josh, 2026-09-22: "a haas stereo spread ... and a knob to set a
@@ -330,7 +331,7 @@ const char *dr32_pad_model_name(const dr32_pad_slot *s);
 
 /** The slug of a model this pad was saved with and cannot run, or NULL. */
 const char *dr32_pad_orphan_model(const dr32_pad_slot *s);
-/** What the pad reads as while it is one: "omega/fm2 missing". */
+/** What the pad reads as while it is one: "mysynth/kick missing". */
 const char *dr32_pad_orphan_name(const dr32_pad_slot *s, char *buf, int cap);
 /** The pad becomes that missing model: whatever it held is unloaded. Host thread. */
 void dr32_kit_orphan_begin(dr32_kit *k, int pad, const char *slug);

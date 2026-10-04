@@ -327,8 +327,9 @@ Josh's design: *"the UI, signal path, etc. is all DR32, but each pad can pick a 
 ### 🔌 Engines OTHER MODULES bring (2026-10-03, branch `served-engine-pages`)
 
 Josh: *"a module can simply provide its own kind of DR32 engine plugin with minimum friction for
-the developer"*, runtime, no DR32 release per engine. Test case: `schwung-omega` (its fork's branch
-`dr32-engine`: `src/dr32_engine.c`, `make dr32_engine.so`).
+the developer"*, runtime, no DR32 release per engine. Developer-facing spec:
+`docs/ENGINE_PLUGINS.md`. ⚠ It was proven against adapters written for two modules that are NOT
+ours and may never ship one upstream: name no specific module in the doc, the header or comments.
 
 - **The contract is `dsp/dr32_engine_api.h`** (MIT, so any module can vendor it): a module ships
   `dr32_engine.so` beside its own files, exporting `dr32_engine_plugin`. Engines, params (BARE keys)
@@ -353,6 +354,18 @@ the developer"*, runtime, no DR32 release per engine. Test case: `schwung-omega`
   name in a family we have changes nothing, as before. Not copied by Copy (its keys are in no list).
 - **The scan's report is also `<dr32 folder>/plugins.log`**, rewritten each start: the host's log is
   best-effort and can be off, and this is what a module author needs when an engine does not show.
+- **What DR32 does FOR a plugin engine** (2026-10-04): `choke` may be NULL (the loader puts a no-op
+  there; DR32's 3 ms fade is the choke) and `render` may always return `DR32X_RENDER_ALIVE`, because
+  `synth_render` gates a `DR32_FAM_PLUGIN` voice itself (-80 dB for 100 ms, on the engine's output
+  before the pad's level). `DR32X_RENDER_HOLD` (2) opts a voice with a silent gap out of the gate.
+  Our own engines are not gated: they return what they always did. A choked plugin voice still
+  RINGS OUT unheard, by decision: stopping it would resume stale state under the next hit.
+- **`dsp/dr32_plugin_validate.c` is the rules, with no dependency but the API header**, because the
+  loader and `tools/plugin_check.c` (the developer's off-device checker) must never disagree. What
+  depends on what else is installed (id collisions, capacity) stays in `dr32_plugins.c`. Its list
+  of our own families is pinned to the built-in slugs by `test_plugins.c`.
+- `dsp/dr32_engine_kit.h` (optional helpers) and `docs/plugin_template/` (a starter plugin) are
+  compiled and checked by `tests/run.sh`, so neither can drift from the contract.
 - Full keys must fit DR32's 64-byte key buffers with `pad32_`: plugin id and engine slug <= 12
   chars, a param key <= 16. `ui_engine` / `ui_family` declare a max that covers the plugin ids
   (`gen_engine_ui.mjs`: +64 engines, family 9).

@@ -154,7 +154,7 @@ static int append_pad_name(const dr32_pad_slot *s, char *out, int cap) {
         base = dr32_pad_model_name(s);
         len = (int)strlen(base);
     } else if (s->orphan) {
-        /* "omega/fm2 missing" -> "fm2 missing": the model, and why it is silent. */
+        /* "mysynth/kick missing" -> "kick missing": the model, and why it is silent. */
         base = dr32_pad_orphan_name(s, orphan, (int)sizeof orphan);
         if (strchr(base, '/')) base = strchr(base, '/') + 1;
         len = (int)strlen(base);

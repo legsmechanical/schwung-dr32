@@ -1,4 +1,5 @@
 #include "dr32_kit.h"
+#include "dr32_engine_api.h"   /* DR32X_RENDER_*: what a plugin engine's render says */
 
 #include <dirent.h>
 #include <math.h>
@@ -329,6 +330,7 @@ static void synth_start(dr32_pad_slot *s, int velocity) {
     dr32_pan_gains(p->pan, &v->panl, &v->panr);
     v->choke_gain = 1.0f;
     v->choke_mul = 1.0f;
+    v->quiet = 0;
     float vel01 = (float)velocity / 127.0f;
     s->eops->note_on(s->eng, vel01 < 0 ? 0 : (vel01 > 1 ? 1 : vel01),
                      p->transpose + p->detune / 100.0f);
@@ -350,10 +352,29 @@ static void synth_choke(dr32_pad_slot *s) {
  * dr32_voice_render. A choked pad keeps computing, muted, until the engine's
  * own silence gate stops it: freezing it instead would leave a ringing model
  * to resume under the next hit. */
+#define PLUGIN_GATE        1.0e-4f                     /* -80 dB */
+#define PLUGIN_GATE_FRAMES ((int)(0.100f * DR32_SR))   /* 100 ms */
 static void synth_render(dr32_kit *k, dr32_pad_slot *s, float *out, int frames) {
     float *m = k->eng_mono;
     dr32_synth *v = &s->synth;
     int alive = s->eops->render(s->eng, m, frames);
+
+    /* ⭑ AN ENGINE ANOTHER MODULE BRINGS IS GATED HERE, so that it does not have
+     * to work out for itself when it has gone quiet (dr32_engine_api.h): under
+     * -80 dB for 100 ms ends it, as our own kit ports are ended (kit_port.h).
+     * Measured on the ENGINE's output, before the pad's level, so the pad's
+     * Volume does not change when a tail is cut. A voice that says HOLD has a
+     * gap in it and ends itself. Ours are not touched: they return what they
+     * always did. */
+    if (alive == DR32X_RENDER_ALIVE && s->eops->family == DR32_FAM_PLUGIN) {
+        float peak = 0.0f;
+        for (int i = 0; i < frames; i++) {
+            float a = m[i] < 0.0f ? -m[i] : m[i];
+            if (a > peak) peak = a;
+        }
+        v->quiet = peak < PLUGIN_GATE ? v->quiet + frames : 0;
+        if (v->quiet >= PLUGIN_GATE_FRAMES) alive = DR32X_RENDER_DONE;
+    }
 
     /* ⭑ FILTER HOOK POINT — see dr32_synth in dr32_kit.h. Nothing runs here
      * today, by decision, not omission. */

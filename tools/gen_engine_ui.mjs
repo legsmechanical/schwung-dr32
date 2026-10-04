@@ -65,7 +65,7 @@ function dumpEngines() {
                 '-c', join(ROOT, 'dsp/engines', f), '-o', o]);
             objs.push(o);
         }
-        for (const f of ['dsp/dr32_engine.c', 'dsp/dr32_plugins.c', 'tools/dump_engines.c']) {
+        for (const f of ['dsp/dr32_engine.c', 'dsp/dr32_plugins.c', 'dsp/dr32_plugin_validate.c', 'tools/dump_engines.c']) {
             const o = join(dir, f.replace(/\W/g, '_') + '.o');
             execFileSync('cc', ['-std=c11', '-O1', '-I' + join(ROOT, 'dsp'), '-c', join(ROOT, f), '-o', o]);
             objs.push(o);

@@ -28,9 +28,10 @@
 //   - `create` / `destroy` run on the host thread and may allocate. EVERYTHING
 //     ELSE runs on the audio thread: no allocation, no file I/O, no locks.
 //   - One instance per PAD, up to 32 at once. Keep an instance small.
-//   - `render` OVERWRITES `out` with n mono float frames (n <= 1024) and
-//     returns 0 once the voice has been silent long enough to stop computing;
-//     DR32 then skips it until the next `note_on`.
+//   - `render` OVERWRITES `out` with n mono float frames (n <= 1024) and says
+//     whether the voice is still going (DR32X_RENDER_*). You need not work out
+//     when it has gone quiet: DR32 stops calling a voice whose output has
+//     stayed under -80 dB for 100 ms, until the next `note_on`.
 //   - `set` takes effect on a sounding voice where the DSP allows.
 //   - 44100 Hz today; honour the `sample_rate` you are given.
 //
@@ -55,6 +56,13 @@ extern "C" {
 #define DR32X_ENTRY       "dr32_engine_plugin"
 #define DR32X_FILE        "dr32_engine.so"
 
+/* What `render` returns. */
+#define DR32X_RENDER_DONE  0   /* finished: do not call me again until the next note_on  */
+#define DR32X_RENDER_ALIVE 1   /* still going; DR32 may end it once it has gone quiet     */
+#define DR32X_RENDER_HOLD  2   /* still going AND not to be ended on silence: a voice
+                                * with a gap in it longer than 100 ms (a late burst, a
+                                * slow repeat). It must then return DONE itself.         */
+
 #define DR32X_MAX_PARAMS  32   /* per engine                          */
 #define DR32X_PAGE_KNOBS  8    /* per page: a bank holds eight knobs  */
 
@@ -75,8 +83,8 @@ typedef struct dr32x_param {
 } dr32x_param;
 
 typedef struct dr32x_engine {
-    const char *slug;       /* [a-z0-9_], <= 12 chars: "fm2"                   */
-    const char *name;       /* "FM2"                                           */
+    const char *slug;       /* [a-z0-9_], <= 12 chars: "drum"                  */
+    const char *name;       /* "My Drum"                                       */
     int         nparams;    /* 1..DR32X_MAX_PARAMS                             */
     const dr32x_param *params;
 
@@ -87,10 +95,12 @@ typedef struct dr32x_engine {
     /* Start a hit. vel01 is velocity/127; tune_st is the pad's pitch offset in
      * semitones (transpose + detune), 0 = the engine's own pitch. */
     void  (*note_on)(void *e, float vel01, float tune_st);
-    /* Cut the voice short (choke group, all-off). DR32 ramps its own gain too;
-     * this only lets the engine stop costing CPU sooner. */
+    /* OPTIONAL (may be NULL). The pad was cut short (choke group, all-off).
+     * DR32 fades its output over 3 ms itself, so this is never needed for the
+     * sound; it only lets a long-tailed voice stop costing CPU sooner. If you
+     * do stop, fade rather than cut, so the two ramps do not click. */
     void  (*choke)(void *e);
-    /* n MONO frames into `out`; 0 once silent. */
+    /* n MONO frames into `out`; returns a DR32X_RENDER_* value. */
     int   (*render)(void *e, float *out, int n);
 } dr32x_engine;
 
@@ -106,8 +116,8 @@ typedef struct dr32x_model {
 typedef struct dr32x_plugin {
     unsigned    api_version;    /* DR32X_API_VERSION                           */
     unsigned    struct_size;    /* sizeof(dr32x_plugin)                        */
-    const char *id;             /* [a-z0-9], <= 12 chars: "omega"              */
-    const char *name;           /* the picker's section: "Omega"               */
+    const char *id;             /* [a-z0-9], <= 12 chars: "mysynth"            */
+    const char *name;           /* the picker's section: "My Synth"            */
     int         nengines;
     const dr32x_engine *engines;
     int         nmodels;

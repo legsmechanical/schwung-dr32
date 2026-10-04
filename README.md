@@ -199,6 +199,13 @@ nicer.
 
 ## For developers
 
+**Making another module's voices playable in DR32:** a module ships one extra file,
+`dr32_engine.so`, and its sounds appear in DR32's engine picker. The spec and a walkthrough are in
+[`docs/ENGINE_PLUGINS.md`](docs/ENGINE_PLUGINS.md); the contract is the one header
+[`dsp/dr32_engine_api.h`](dsp/dr32_engine_api.h). There is a starter plugin in
+[`docs/plugin_template/`](docs/plugin_template/) and a checker to run on your own machine,
+[`tools/plugin_check.c`](tools/plugin_check.c).
+
 ```sh
 ./scripts/build.sh          # cross-compiles the DSP for the device (Docker)
 ./scripts/install.sh        # deploys and ALWAYS restarts the stack
@@ -218,7 +225,7 @@ for `==> done:` before trusting an install.
 | `src/` | `module.json` (the served hierarchy), `engine_ui.json` (the synth engines' pages, generated), `help.json`, the browser and Resample canvases, the PAD cell widget |
 | `lib/` | `.ablpreset` reading/writing |
 | `tests/` · `tools/` | the off-device suite and the validators |
-| `docs/` | the [manual](https://legsmechanical.github.io/schwung-dr32/manual.html) and design notes |
+| `docs/` | the [manual](https://legsmechanical.github.io/schwung-dr32/manual.html), [`ENGINE_PLUGINS.md`](docs/ENGINE_PLUGINS.md) and design notes |
 
 The conventions, and the traps worth knowing before changing anything, are in
 [`CLAUDE.md`](CLAUDE.md).

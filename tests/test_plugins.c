@@ -16,6 +16,7 @@
 // and a plugin that breaks a rule costs DR32 nothing.
 
 #include "../dsp/dr32_kit.h"
+#include "../dsp/dr32_plugin_validate.h"
 #include "../dsp/host/plugin_api_v1.h"
 
 #include <math.h>
@@ -58,9 +59,9 @@ int main(void) {
     int builtin = dr32_model_count() - dr32_plugin_model_count();
     dr32_plugins_wait();
     CHECK(dr32_plugins_ready(), "the scan never published");
-    CHECK(dr32_plugin_engine_count() == 1, "%d plugin engines; the toy has 1 and the bad one must add none", dr32_plugin_engine_count());
-    CHECK(dr32_plugin_model_count() == 2, "%d plugin models, want the toy's 2", dr32_plugin_model_count());
-    CHECK(dr32_model_count() == builtin + 2, "the plugin's models are not in the model list");
+    CHECK(dr32_plugin_engine_count() == 3, "%d plugin engines; toy has 1, zraw 2, and the bad one must add none", dr32_plugin_engine_count());
+    CHECK(dr32_plugin_model_count() == 4, "%d plugin models, want toy's 2 and zraw's 2", dr32_plugin_model_count());
+    CHECK(dr32_model_count() == builtin + 4, "the plugins' models are not in the model list");
     /* Ours do not move: a pad holds a model INDEX. */
     CHECK(dr32_model_find("simian/kick") == 0, "a built-in model moved when a plugin was installed");
     int mi = dr32_model_find("toy/low");
@@ -72,7 +73,9 @@ int main(void) {
     /* The picker reads this. */
     api->get_param(inst, "plugin_models", h, (int)sizeof h);
     CHECK(!strcmp(h, "[{\"id\":\"toy\",\"label\":\"Toy\",\"models\":[{\"slug\":\"toy/low\",\"name\":\"Toy Low\"},"
-                     "{\"slug\":\"toy/high\",\"name\":\"Toy High\"}]}]"), "plugin_models: %s", h);
+                     "{\"slug\":\"toy/high\",\"name\":\"Toy High\"}]},"
+                     "{\"id\":\"zraw\",\"label\":\"Z Raw\",\"models\":[{\"slug\":\"zraw/raw\",\"name\":\"Raw\"},"
+                     "{\"slug\":\"zraw/late\",\"name\":\"Late\"}]}]"), "plugin_models: %s", h);
 
     /* ---- 2. no plugin pad: nothing of the plugin's is served ------------ */
     int n0 = api->get_param(inst, "ui_hierarchy", h, (int)sizeof h);
@@ -212,11 +215,80 @@ int main(void) {
         api->destroy_instance(g);
     }
 
+    /* ---- 6c. what DR32 does FOR a plugin engine ------------------------- */
+    {
+        /* `raw` has no choke and never says it has finished; `late` is silent
+         * for 250 ms before it sounds. DR32 has to end the first, fade it on a
+         * choke, and NOT end the second in its silence. The instance starts
+         * with its kit, so the pads' voices can be read. */
+        void *g = api->create_instance("dist/tests/plug/dr32", NULL);
+        dr32_kit *kit = (dr32_kit *)g;
+        api->set_param(g, "pad1_model", "zraw/raw");
+        api->set_param(g, "pad2_model", "zraw/late");
+        CHECK(kit->pads[0].engine && kit->pads[1].engine, "the zraw models did not load");
+        uint8_t hit1[3] = { 0x90, 36, 110 }, hit2[3] = { 0x90, 37, 110 };
+
+        /* raw: sounds, then DR32's gate ends it (its tail is under -80 dB by
+         * ~0.6 s; the gate needs 100 ms more). It would otherwise run forever. */
+        api->on_midi(g, hit1, 3, 0);
+        int peak = 0, ended_at = -1;
+        for (int b = 0; b < 700; b++) {
+            api->render_block(g, out, 128);
+            for (int i = 0; i < 256; i++) if (abs(out[i]) > peak) peak = abs(out[i]);
+            if (ended_at < 0 && !kit->pads[0].synth.active) ended_at = b;
+        }
+        CHECK(peak > 500, "the raw engine is silent (peak %d)", peak);
+        CHECK(ended_at > 100 && ended_at < 600, "DR32's gate ended the never-finishing voice at block %d; want after its tail, well before 2 s", ended_at);
+
+        /* raw, choked through its choke group: no `choke` function to call,
+         * and the output is silent within DR32's own 3 ms fade. */
+        api->set_param(g, "pad1_choke", "1");
+        api->set_param(g, "pad3_sample", "");
+        api->set_param(g, "pad3_model", "toy/low");
+        api->set_param(g, "pad3_choke", "1");
+        api->on_midi(g, hit1, 3, 0);
+        for (int b = 0; b < 4; b++) api->render_block(g, out, 128);
+        uint8_t hit3[3] = { 0x90, 38, 1 };            /* pad 3, as quiet as a hit gets */
+        api->set_param(g, "pad3_volume", "-70");
+        api->on_midi(g, hit3, 3, 0);
+        for (int b = 0; b < 4; b++) api->render_block(g, out, 128);   /* 11 ms: the fade is 3 */
+        api->render_block(g, out, 128);
+        int after = 0;
+        for (int i = 0; i < 256; i++) if (abs(out[i]) > after) after = abs(out[i]);
+        CHECK(after < 40, "a choked plugin pad with no choke function is still audible (peak %d)", after);
+
+        /* late: nothing for 250 ms, and the gate must not take that for the end. */
+        api->set_param(g, "pad1_model", "zraw/raw");   /* a fresh, silent pad 1 */
+        api->on_midi(g, hit2, 3, 0);
+        int early = 0, late = 0;
+        for (int b = 0; b < 200; b++) {
+            api->render_block(g, out, 128);
+            int bp = 0;
+            for (int i = 0; i < 256; i++) if (abs(out[i]) > bp) bp = abs(out[i]);
+            if (b < 80) { if (bp > early) early = bp; } else if (bp > late) late = bp;
+        }
+        CHECK(early < 40, "the late voice sounded in its silence (peak %d): pad 3's quiet tail is all there should be", early);
+        CHECK(late > 500, "a voice that says HOLD was ended in its silence: no burst after 250 ms (peak %d)", late);
+        for (int b = 0; b < 400; b++) api->render_block(g, out, 128);
+        CHECK(!kit->pads[1].synth.active, "the late voice said DONE and is still being rendered");
+        api->destroy_instance(g);
+    }
+
     /* ---- 7. the broken ones cost nothing, and say why ------------------- */
     CHECK(strstr(logbuf, "engine plugin bad refused") && strstr(logbuf, "more than 8 knobs"),
           "the refused plugin's reason was not logged:\n%s", logbuf);
     CHECK(strstr(logbuf, "junk") && strstr(logbuf, "did not load"), "the unloadable file was not reported:\n%s", logbuf);
     CHECK(strstr(logbuf, "engine plugin toy: 1 engines, 2 models, 2 pages"), "the good plugin was not reported:\n%s", logbuf);
+    /* The validator's list of DR32's own families is the built-in models' real
+     * prefixes: a plugin may not take one as its id. */
+    for (int i = 0; i < builtin; i++) {
+        char fam[32];
+        const char *slug = dr32_model_at(i)->slug, *cut = strchr(slug, '/');
+        snprintf(fam, sizeof(fam), "%.*s", cut ? (int)(cut - slug) : 0, slug);
+        dr32x_plugin probe = { DR32X_API_VERSION, sizeof(dr32x_plugin), fam, "Probe", 0, NULL, 0, NULL };
+        const char *why = dr32_plugin_validate(&probe);
+        CHECK(why && strstr(why, "DR32's own engine families"), "a plugin could call itself '%s' (%s)", fam, why ? why : "accepted");
+    }
 
     /* ...and in a file of DR32's own, which does not depend on the host's log. */
     {

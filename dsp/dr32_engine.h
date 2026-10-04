@@ -140,7 +140,7 @@ const dr32_model *dr32_model_at(int i);
 /** Index of the model with this slug, or -1. */
 int               dr32_model_find(const char *slug);
 
-/** Does any model share this slug's family ("omega/" of "omega/fm2")? False
+/** Does any model share this slug's family ("mysynth/" of "mysynth/kick")? False
  *  means the module that brings it is not installed, as opposed to a model
  *  name nobody has. */
 int               dr32_model_family_known(const char *slug);
