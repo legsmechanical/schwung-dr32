@@ -65,6 +65,18 @@ const ctx = {
     setParam: (k, v) => { params[k] = String(v); return true; },
 };
 
+/*
+ * 🔴 THE CTX `draw` IS HANDED ON STOCK: the host strips the param accessors
+ * and `close` from the draw-path hooks (shadow_ui.js, canvasHookCtx). This
+ * harness used to draw with the full ctx, which is dAVEBOx's shape, so a
+ * getParam in the draw path passed here and threw on every stock host.
+ * Every draw below goes through this unless it is dAVEBOx's it is testing.
+ */
+const stockDraw = (c) => {
+    const { getParam, setParam, getValue, setValue, close, ...rest } = c;
+    return rest;
+};
+
 const src = readFileSync(new URL('../src/browser.js', import.meta.url), 'utf8');
 const g = { globalThis: null };
 const sandbox = vm.createContext(g);
@@ -324,7 +336,7 @@ check('...and stays put, for the host to close', sect(), '');
         print: (x, y, t) => { if (y >= 50) { fail++; console.log('  FAIL the row used ctx.print: ' + t); } },
         measureText: () => { fail++; console.log('  FAIL the row measured through the host'); return 0; },
     });
-    const draw = () => { boxes.length = 0; ov.draw(pctx); return boxes; };
+    const draw = () => { boxes.length = 0; ov.draw(stockDraw(pctx)); return boxes; };
     const pills = () => boxes.filter((b) => b.h === FONT_H_EXPECTED + 2);
     const ink = () => boxes.filter((b) => b.h === 1);
 
@@ -380,7 +392,7 @@ check('...and stays put, for the host to close', sect(), '');
         fillRect: (x, y, w, h, v) => { if (y < 10) ink.push({ x, y, w, h, v }); },
         print: (x, y, t) => { if (y < 10) { fail++; console.log('  FAIL header used ctx.print: ' + t); } },
     });
-    const drawHdr = () => { ink.length = 0; ov.draw(hctx); return ink; };
+    const drawHdr = () => { ink.length = 0; ov.draw(stockDraw(hctx)); return ink; };
 
     toLibraries();
     drawHdr();
@@ -476,7 +488,7 @@ check('...and stays put, for the host to close', sect(), '');
         setPixel: (x, y) => { if (x === 126 && y < 55) bar.push(y); },
         fillRect: (x, y, w, h) => { if (x === 126 && y < 55) for (let i = 0; i < h; i++) bar.push(y + i); },
     });
-    const drawList = () => { prints.length = 0; bar.length = 0; ov.draw(lctx); };
+    const drawList = () => { prints.length = 0; bar.length = 0; ov.draw(stockDraw(lctx)); };
     params = { ui_current_pad: '5' };
     ov.onOpen(ctx);
     cursorTo('Simian'); navRight();                     /* 11 rows: it scrolls */
@@ -546,6 +558,41 @@ check('...and stays put, for the host to close', sect(), '');
     check('moving on clears the notice', headerInk(), plain);
     click();
     check('a model that loaded closes on click, as ever', closed, 1);
+    delete ctx.close;
+    ctx.setParam = (k, v) => { params[k] = String(v); return true; };
+
+    /* 14b. THE SAME ON STOCK: the write is synchronous and the draw cannot
+     * ask. Reported from two stock devices as "draw error: TypeError" the
+     * moment the jog reached a model row; the overlay is dead from there. */
+    const stockInk = () => { ink.length = 0; ov.draw(stockDraw(rctx)); return ink.length; };
+    let refuse = true;
+    ctx.setParam = (k, v) => {
+        if (/_model$/.test(k) && refuse) params.model_refused = k.slice(3, k.indexOf('_')) + ':' + v;
+        else { params[k] = String(v); if (/_model$/.test(k)) params.model_refused = ''; }
+        return true;
+    };
+    ctx.close = () => { closed++; };
+    closed = 0;
+    params = { ui_current_pad: '7' };
+    ov.onOpen(ctx);
+    cursorTo('9W9'); navRight();
+    const plain9 = stockInk();                          /* this family's ordinary header */
+    jog(1);                                             /* Bass Drum */
+    let threw = '';
+    let n = 0;
+    try { n = stockInk(); } catch (e) { threw = String(e); }
+    check('stock: drawing on a model row does not throw', threw, '');
+    check('stock: the refusal is on screen without the draw asking', ctx.state.notice, 'ENGINE TOO BIG');
+    check('stock: ...and it is drawn', n !== plain9 && n > 0, true);
+    click();
+    check('stock: clicking a refused model does NOT close', closed, 0);
+    refuse = false;
+    jog(1);                                             /* Snare: this one fits */
+    try { n = stockInk(); } catch (e) { threw = String(e); }
+    check('stock: the next model draws the ordinary header', threw || n, plain9);
+    check('stock: ...and is on the pad', params.pad7_model, '9w9/snare');
+    click();
+    check('stock: a model that loaded closes on click', closed, 1);
     delete ctx.close;
     ctx.setParam = (k, v) => { params[k] = String(v); return true; };
 }

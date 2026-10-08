@@ -455,6 +455,13 @@ function clampScroll(st) {
  */
 function refusal(ctx, st) {
     if (!st.wrote) return false;
+    /* 🔴 STOCK HANDS `draw` A CTX WITH NO PARAM ACCESSORS (shadow_ui.js,
+     * canvasHookCtx: getParam / setParam / getValue / setValue / close are
+     * stripped for the draw-path hooks); dAVEBOx leaves them on. Calling it
+     * there threw, and the host disables an overlay on its first throw: "draw
+     * error: TypeError" on every model row, on every stock host (0.5.0-0.5.1).
+     * So the draw asks only where it can, and the jog asks for the rest. */
+    if (typeof ctx.getParam !== 'function') return false;
     if (ctx.getParam('model_refused') !== st.pad + ':' + st.wrote) return false;
     st.notice = 'ENGINE TOO BIG';
     if (st.loaded === st.wrote) st.loaded = '';
@@ -742,7 +749,8 @@ function fitSmall(ctx, t, maxW) {
 function drawHeader(ctx, st) {
     /* A refusal takes the whole header until the cursor moves: it is the answer
      * to the gesture just made. Asked for here, every draw, because the write
-     * it answers may land after the call that made it (see audition). */
+     * it answers may land after the call that made it (see audition) -- on a
+     * host whose draw ctx can ask at all (see refusal). */
     refusal(ctx, st);
     if (st.notice) {
         const t = fitSmall(ctx, st.notice, ctx.width - 2 * HDR_PAD);
@@ -963,6 +971,10 @@ globalThis.canvas_overlay = {
             if (st.cursor >= st.rows.length) st.cursor = st.rows.length - 1;
             clampScroll(st);
             audition(ctx, st);
+            /* Stock's write is a synchronous round trip, so the answer is
+             * there now, and its draw cannot ask (see refusal). Where a write
+             * lands later (dAVEBOx) this reads nothing new and the draw asks. */
+            refusal(ctx, st);
             return;
         }
 
