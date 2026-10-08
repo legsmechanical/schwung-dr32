@@ -405,6 +405,13 @@ ours and may never ship one upstream: name no specific module in the doc, the he
     UNCONFIRMED"), so an immediate read answers for the write BEFORE. `refusal()` is asked on every
     draw and on a click, and a refused click does not close. `check_browser_nav` §14 delivers the
     answer late.
+  - 🔴 **And it must not ask from `draw` on stock** (0.5.2). Stock hands the draw-path hooks a
+    ctx with `getParam` / `setParam` / `getValue` / `setValue` / `close` STRIPPED (`canvasHookCtx`,
+    every version from 1.5.0); dAVEBOx leaves them on. 0.5.0-0.5.1 asked there, so every model row
+    threw "draw error: TypeError" on stock and the host disabled the picker (two Discord reports;
+    never seen here, because the device testing was under dAVEBOx and the harness drew with the
+    full ctx). `refusal()` now asks only where it can and the jog asks after its write (stock's
+    write is synchronous). `check_browser_nav` draws through `stockDraw`, and §14b is stock's case.
   - `test_plugins.c` 6d: twelve 32-knob engines on pads, six fit together; every one is reachable
     by focus, the last six focused are the ones kept, moving among them re-reads nothing. 6e: the
     backstop. ⚠ The test must not read the hierarchy between moving focus and polling `is_loading`:
